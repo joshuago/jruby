@@ -80,7 +80,8 @@ public class MulticastStateManager {
             return;
         }
 
-        for (int i = 0; i < membershipGroups.size(); i++) {
+        int nmg = membershipGroups.size();
+        for (int i = 0; i < nmg; i++) {
             String ipString = (String) membershipGroups.get(i);
             InetAddress group = InetAddress.getByName(ipString);
             multicastSocket.joinGroup(group);
