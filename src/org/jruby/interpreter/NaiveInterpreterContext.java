@@ -5,14 +5,13 @@
 
 package org.jruby.interpreter;
 
-import java.util.HashMap;
-import java.util.Map;
 import org.jruby.Ruby;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.DynamicScope;
 import org.jruby.runtime.Frame;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.RubyException;
 
 import org.jruby.compiler.ir.IRMethod;
 import org.jruby.compiler.ir.operands.Label;
@@ -34,6 +33,7 @@ public class NaiveInterpreterContext implements InterpreterContext {
     protected Block block;
     protected DynamicScope currDynScope = null;
     protected boolean allocatedDynScope = false;
+    protected RubyException currException = null;
 
     private Label methodExitLabel = null;
 
@@ -182,8 +182,6 @@ public class NaiveInterpreterContext implements InterpreterContext {
         
         if (length <= 0) return NO_PARAMS;
 
-        System.out.println("AI: " + argIndex + ", parameters.legnth: " + parameters.length + ", LENGTH: " + length);
-
         IRubyObject[] args = new IRubyObject[length];
         System.arraycopy(parameters, argIndex, args, 0, length);
 
@@ -196,5 +194,17 @@ public class NaiveInterpreterContext implements InterpreterContext {
 
     public Label getMethodExitLabel() {
         return methodExitLabel;
+    }
+
+    // Set the most recently raised exception
+    public void setException(RubyException e) {
+        // SSS FIXME: More things to be done besides this
+        currException = e;
+    }
+
+    // SSS FIXME: Should we get-and-clear instead of just get?
+    // Get the most recently raised exception
+    public RubyException getException() {
+        return currException;
     }
 }

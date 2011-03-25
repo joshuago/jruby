@@ -178,9 +178,12 @@ ifeq ($(OS), linux)
 endif
 
 ifeq ($(OS), solaris)
+  ifeq ($(CPU), i86pc)
+    override CPU = i386
+  endif
   PLATFORM = $(CPU)-SunOS
   CC = gcc
-  CFLAGS += -D__EXTENSIONS__ -std=c99
+  CFLAGS += -D__EXTENSIONS__ 
   LD = /usr/ccs/bin/ld
   SOFLAGS = -shared -static-libgcc -mimpure-text
   LIBS += -ldl
@@ -204,6 +207,10 @@ ifneq ($(findstring bsd, $(OS)),)
   SOFLAGS = -shared -static-libgcc
   CFLAGS += -pthread
   LDFLAGS += -pthread
+endif
+
+ifneq ($(findstring sun4, $(CPU)),)
+  CPU=sparc
 endif
 
 ifeq ($(CPU), sparcv9)

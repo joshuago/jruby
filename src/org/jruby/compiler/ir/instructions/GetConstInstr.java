@@ -1,32 +1,29 @@
+/*
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
 package org.jruby.compiler.ir.instructions;
 
-import org.jruby.compiler.ir.IRScope;
+import java.util.Map;
+import org.jruby.RubyModule;
 import org.jruby.compiler.ir.IRModule;
+import org.jruby.compiler.ir.IRScope;
 import org.jruby.compiler.ir.Operation;
 import org.jruby.compiler.ir.operands.Label;
 import org.jruby.compiler.ir.operands.MetaObject;
 import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
-
-import java.util.Map;
-import org.jruby.RubyModule;
 import org.jruby.interpreter.InterpreterContext;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.builtin.IRubyObject;
 
-// NOTE: the scopeOrObj operand can be a dynamic scope.
-//
-// The runtime method call that GET_CONST is translated to in this case will call
-// a get_constant method on the scope meta-object which does the lookup of the constant table
-// on the meta-object.  In the case of method & closures, the runtime method will delegate
-// this call to the parent scope.
-//
+/**
+ * A constant which we is not lexically scoped.  This instruction will ask
+ * the source operand to get it directly.
+ */
 public class GetConstInstr extends GetInstr {
-    public GetConstInstr(Variable dest, IRScope scope, String constName) {
-        super(Operation.GET_CONST, dest, MetaObject.create(scope), constName);
-    }
-
     public GetConstInstr(Variable dest, Operand scopeOrObj, String constName) {
         super(Operation.GET_CONST, dest, scopeOrObj, constName);
     }
@@ -42,12 +39,11 @@ public class GetConstInstr extends GetInstr {
     }
 
     public Instr cloneForInlining(InlinerInfo ii) {
-        return new GetConstInstr(ii.getRenamedVariable(result), getSource().cloneForInlining(ii), getName());
+        return new SearchConstInstr(ii.getRenamedVariable(result), getSource().cloneForInlining(ii), getName());
     }
 
     @Override
     public Label interpret(InterpreterContext interp, IRubyObject self) {
-//        System.out.println("SOURCE: " + getSource().getClass());
         Object source = getSource().retrieve(interp);
         RubyModule module;
 
@@ -59,10 +55,6 @@ public class GetConstInstr extends GetInstr {
             module = ((Block) source).getBinding().getKlass();
         } else {
             module = (RubyModule) source;
-/*
-            if (getSource() instanceof MetaObject)
-                System.out.println("looking in " + module.getName() + " whose source is " + getSource() + " with hc " + ((MetaObject)getSource()).scope.hashCode());
-*/
         }
 
         getResult().store(interp, module.getConstant(getName()));

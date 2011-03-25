@@ -339,4 +339,13 @@ class TestCommandLineSwitches < Test::Unit::TestCase
   ensure
     ENV['RUBYOPT'] = rubyopt_org
   end
+
+  def test_rubyopts_take_effect_with_double_dash
+    rubyopt_org = ENV['RUBYOPT']
+    ENV['RUBYOPT'] = '-rrubygems -Ilib'
+    jruby("-e \"defined?(::Gem) && $:.include?('lib') or abort\" --")
+    assert_equal 0 ,$?.exitstatus
+  ensure
+    ENV['RUBYOPT'] = rubyopt_org
+  end
 end

@@ -424,9 +424,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         }
         
         if (args.length > 0 && args.length < 3) {
-            IRubyObject fd = TypeConverter.convertToTypeWithCheck(args[0], getRuntime().getFixnum(), "to_int");
-            if (!fd.isNil()) {
-                args[0] = fd;
+            if (args[0] instanceof RubyInteger) {
                 return super.initialize(args, block);
             }
         }
@@ -469,11 +467,16 @@ public class RubyFile extends RubyIO implements EncodingCapable {
 
         try {
             if (args.length > 1) {
-                modes = parseModes19(context, args[1]);
-                if (args[1] instanceof RubyFixnum) {
-                    perm = getFilePermissions(args);
+                if (args[1] instanceof RubyHash) {
+                    modes = parseOptions(context, args[1], modes);
                 } else {
-                    modeString = args[1].convertToString().toString();
+                    modes = parseModes19(context, args[1]);
+                    
+                    if (args[1] instanceof RubyFixnum) {
+                        perm = getFilePermissions(args);
+                    } else {
+                        modeString = args[1].convertToString().toString();
+                    }
                 }
             } else {
                 modes = parseModes19(context, RubyString.newString(runtime, modeString));

@@ -113,11 +113,14 @@ import org.jruby.compiler.ir.instructions.CaseInstr;
 import org.jruby.compiler.ir.instructions.ClosureReturnInstr;
 import org.jruby.compiler.ir.instructions.CopyInstr;
 import org.jruby.compiler.ir.instructions.DECLARE_LOCAL_TYPE_Instr;
+import org.jruby.compiler.ir.instructions.DefineClassMethodInstr;
+import org.jruby.compiler.ir.instructions.DefineInstanceMethodInstr;
 import org.jruby.compiler.ir.instructions.EQQ_Instr;
 import org.jruby.compiler.ir.instructions.FilenameInstr;
 import org.jruby.compiler.ir.instructions.GetArrayInstr;
-import org.jruby.compiler.ir.instructions.GetConstInstr;
+import org.jruby.compiler.ir.instructions.SearchConstInstr;
 import org.jruby.compiler.ir.instructions.GetClassVariableInstr;
+import org.jruby.compiler.ir.instructions.GetConstInstr;
 import org.jruby.compiler.ir.instructions.GetFieldInstr;
 import org.jruby.compiler.ir.instructions.GetGlobalVariableInstr;
 import org.jruby.compiler.ir.instructions.Instr;
@@ -138,8 +141,8 @@ import org.jruby.compiler.ir.instructions.ReceiveClosureArgInstr;
 import org.jruby.compiler.ir.instructions.ReceiveClosureInstr;
 import org.jruby.compiler.ir.instructions.RECV_EXCEPTION_Instr;
 import org.jruby.compiler.ir.instructions.ReceiveOptionalArgumentInstr;
-import org.jruby.compiler.ir.instructions.RESCUED_BODY_START_MARKER_Instr;
-import org.jruby.compiler.ir.instructions.RESCUED_BODY_END_MARKER_Instr;
+import org.jruby.compiler.ir.instructions.ExceptionRegionStartMarkerInstr;
+import org.jruby.compiler.ir.instructions.ExceptionRegionEndMarkerInstr;
 import org.jruby.compiler.ir.instructions.ReturnInstr;
 import org.jruby.compiler.ir.instructions.RubyInternalCallInstr;
 import org.jruby.compiler.ir.instructions.SET_RETADDR_Instr;
@@ -295,8 +298,8 @@ public class IRBuilder {
     }
 
     /* -----------------------------------------------------------------------------------
-     * Every ensure block has a start label and end label, and at the end, it will execute
-     * an jump to an address stored in a return address variable.
+     * Every ensure block has a start label and end label, and at the end, it will jump
+     * to an address stored in a return address variable.
      *
      * This ruby code will translate to the IR shown below
      * -----------------
@@ -328,23 +331,23 @@ public class IRBuilder {
         Label    start;
         Label    end;
         Variable returnAddr;
-            // Flag set if the protected body has a return or if it rethrows exception
-            // -- basically anytime there is a non-fallthru xfer of control flow.
-        boolean  noFallThru;
-            // The end label for an ensure block is not always needed.
-        boolean endLabelNeeded;
 
         public EnsureBlockInfo(IRScope m)
         {
             returnAddr = m.getNewTemporaryVariable();
             start      = m.getNewLabel();
             end        = m.getNewLabel();
-            noFallThru = false;
-            endLabelNeeded = false;
         }
 
         public static void emitJumpChain(IRScope m, Stack<EnsureBlockInfo> ebStack)
         {
+            // SSS: There are 2 ways of encoding this:
+            // 1. Jump to ensure block 1, return back here, jump ensure block 2, return back here, ...
+            //    Generates 3*n instrs. where n is the # of ensure blocks to execute
+            // 2. Jump to ensure block 1, then to block 2, then to 3, ...
+            //    Generates n+1 instrs. where n is the # of ensure blocks to execute
+            // Doesn't really matter all that much since we shouldn't have deep nesting of ensure blocks often
+            // but is there a reason to go with technique 1 at all??
             int n = ebStack.size();
             EnsureBlockInfo[] ebArray = ebStack.toArray(new EnsureBlockInfo[n]);
             for (int i = n-1; i >= 0; i--) {
@@ -352,7 +355,6 @@ public class IRBuilder {
                 m.addInstr(new SET_RETADDR_Instr(ebArray[i].returnAddr, retLabel));
                 m.addInstr(new JumpInstr(ebArray[i].start));
                 m.addInstr(new LABEL_Instr(retLabel));
-                ebArray[i].noFallThru = true;
             }
         }
     }
@@ -438,7 +440,7 @@ public class IRBuilder {
             case COLON2NODE: return buildColon2((Colon2Node) node, m); // done
             case COLON3NODE: return buildColon3((Colon3Node) node, m); // done
             case CONSTDECLNODE: return buildConstDecl((ConstDeclNode) node, m); // done
-            case CONSTNODE: return buildConst((ConstNode) node, m); // done
+            case CONSTNODE: return searchConst(m, ((ConstNode) node).getName()); // done
             case DASGNNODE: return buildDAsgn((DAsgnNode) node, m); // done
             case DEFINEDNODE: return buildDefined(node, m); // SSS FIXME: Incomplete
             case DEFNNODE: return buildDefn((MethodDefNode) node, m); // done
@@ -834,8 +836,10 @@ public class IRBuilder {
         Operand value = build(caseNode.getCaseNode(), m);
 
         // the CASE instruction
-        Label endLabel = m.getNewLabel();
-        Variable result = m.getNewTemporaryVariable();
+        Label     endLabel  = m.getNewLabel();
+        boolean   hasElse   = (caseNode.getElseNode() != null);
+        Label     elseLabel = hasElse ? m.getNewLabel() : null;
+        Variable  result    = m.getNewTemporaryVariable();
         CaseInstr caseInstr = new CaseInstr(result, value, endLabel);
         m.addInstr(caseInstr);
 
@@ -871,6 +875,9 @@ public class IRBuilder {
                 m.addInstr(new BEQInstr(eqqResult, BooleanLiteral.TRUE, bodyLabel));
             }
 
+            // Jump to else or the end in case nothing matches!
+            m.addInstr(new JumpInstr(hasElse ? elseLabel : endLabel));
+
             // SSS FIXME: This doesn't preserve original order of when clauses.  We could consider
             // preserving the order (or maybe not, since we would have to sort the constants first
             // in any case) for outputing jump tables in certain situations.
@@ -880,27 +887,28 @@ public class IRBuilder {
         }
 
         // build "else" if it exists
-        if (caseNode.getElseNode() != null) {
-            Label elseLbl = m.getNewLabel();
-            caseInstr.setElse(elseLbl);
-
-            bodies.put(elseLbl, caseNode.getElseNode());
+        if (hasElse) {
+            caseInstr.setElse(elseLabel);
+            bodies.put(elseLabel, caseNode.getElseNode());
         }
 
         // now emit bodies
         for (Map.Entry<Label, Node> entry : bodies.entrySet()) {
             m.addInstr(new LABEL_Instr(entry.getKey()));
             Operand bodyValue = build(entry.getValue(), m);
-            // Local optimization of break results (followed by a copy & jump) to short-circuit the jump right away
-            // rather than wait to do it during an optimization pass when a dead jump needs to be removed.
-            Label tgt = endLabel;
-            if (bodyValue instanceof BreakResult) {
-                BreakResult br = (BreakResult)bodyValue;
-                bodyValue = br._result;
-                tgt = br._jumpTarget;
+            // bodyValue can be null if the body ends with a return!
+            if (bodyValue != null) {
+               // Local optimization of break results (followed by a copy & jump) to short-circuit the jump right away
+               // rather than wait to do it during an optimization pass when a dead jump needs to be removed.
+               Label tgt = endLabel;
+               if (bodyValue instanceof BreakResult) {
+                   BreakResult br = (BreakResult)bodyValue;
+                   bodyValue = br._result;
+                   tgt = br._jumpTarget;
+               }
+               m.addInstr(new CopyInstr(result, bodyValue));
+               m.addInstr(new JumpInstr(tgt));
             }
-            m.addInstr(new CopyInstr(result, bodyValue));
-            m.addInstr(new JumpInstr(tgt));
         }
 
         // close it out
@@ -994,6 +1002,7 @@ public class IRBuilder {
         Node constNode = constDeclNode.getConstNode();
 
         if (constNode == null) {
+            // SSS FIXME: Shouldn't we be adding a put const instr. here?
             s.getNearestModule().setConstantValue(constDeclNode.getName(), val);
         } else if (constNode.getNodeType() == NodeType.COLON2NODE) {
             Operand module = build(((Colon2Node) constNode).getLeftNode(), s);
@@ -1005,61 +1014,28 @@ public class IRBuilder {
         return val;
     }
 
-    private Operand loadConst(IRScope s, IRScope currScope, String name)
-    {
-/**
- * SSS FIXME: Because of Module.remove_const, all this compile-time resolution of constants won't fly!
- *
- * To be able to use compile-time results safely, we have to guard the looked up value with the
- * version number of the module where the constant came from -- a future optimization!
-
-        if (s instanceof IRMethod) {
-            Operand c = s.getContainer();
-            if (c instanceof MetaObject) {
-                s = ((MetaObject)c).getScope();
-            }
-        }
-
-        // If we could resolve the container scope to an actual 'compile-time' module, we can look up the constant right away
-        // If not, we have to look it up at 'runtime'
-        Operand cv = (s instanceof IRModule) ? ((IRModule)s).getConstantValue(name) : null;
-        if (cv == null) {
-            Variable v = currScope.getNewTemporaryVariable();
-            currScope.addInstr(new GetConstInstr(v, s, name));
-            cv = v;
-        }
-        return cv;
- */
-        Variable v = currScope.getNewTemporaryVariable();
-        currScope.addInstr(new GetConstInstr(v, s, name));
+    private Operand searchConst(IRScope s, String name) {
+        Variable v = s.getNewTemporaryVariable();
+        s.addInstr(new SearchConstInstr(v, s, name));
         return v;
-    }
-
-    public Operand buildConst(ConstNode node, IRScope s) {
-        return loadConst(s, s, node.getName()); 
     }
 
     public Operand buildColon2(final Colon2Node iVisited, IRScope s) {
         Node leftNode = iVisited.getLeftNode();
         final String name = iVisited.getName();
 
-        if (leftNode == null) {
-            return loadConst(s, s, name);
-        } 
-        else if (iVisited instanceof Colon2ConstNode) {
+        // ENEBO: Does this really happen?
+        if (leftNode == null) return searchConst(s, name);
+
+        if (iVisited instanceof Colon2ConstNode) {
             // 1. Load the module first (lhs of node)
             // 2. Then load the constant from the module
             Operand module = build(iVisited.getLeftNode(), s);
-            if (module instanceof MetaObject) {
-                return loadConst(((MetaObject)module).scope, s, name);
-            }
-            else {
-                Variable constVal = s.getNewTemporaryVariable();
-                s.addInstr(new GetConstInstr(constVal, module, name));
-                return constVal;
-            }
-        }
-        else if (iVisited instanceof Colon2MethodNode) {
+            if (module instanceof MetaObject) module = MetaObject.create(((MetaObject)module).scope);
+            Variable constVal = s.getNewTemporaryVariable();
+            s.addInstr(new GetConstInstr(constVal, module, name));
+            return constVal;
+        } else if (iVisited instanceof Colon2MethodNode) {
             Colon2MethodNode c2mNode = (Colon2MethodNode)iVisited;
             List<Operand> args       = setupCallArgs(null, s);
             Operand       block      = setupCallClosure(null, s);
@@ -1075,8 +1051,55 @@ public class IRBuilder {
     public Operand buildColon3(Colon3Node node, IRScope s) {
         Variable cv = s.getNewTemporaryVariable();
         // SSS FIXME: Is this correct?
-        s.addInstr(new GetConstInstr(cv, getSelf(s), node.getName()));
+        s.addInstr(new SearchConstInstr(cv, getSelf(s), node.getName()));
         return cv;
+    }
+
+    interface CodeBlock {
+        public Object run(Object[] args);
+    }
+
+    private Object[] protectCode(IRScope m, CodeBlock protectedCode, Object[] protectedCodeArgs, CodeBlock ensureCode, Object[] ensureCodeArgs) {
+        // This effectively mimics a begin-ensure-end code block
+        // Except this silently swallows all exceptions raised by the protected code
+
+        // Push a new ensure block info node onto the stack of ensure block
+        EnsureBlockInfo ebi = new EnsureBlockInfo(m);
+        _ensureBlockStack.push(ebi);
+        Label rBeginLabel = m.getNewLabel();
+        Label rEndLabel   = ebi.end;
+        List<Label> rescueLabels = new ArrayList<Label>() { };
+
+        // Protected region code
+        m.addInstr(new LABEL_Instr(rBeginLabel));
+        m.addInstr(new ExceptionRegionStartMarkerInstr(rBeginLabel, rEndLabel, rescueLabels));
+        Object v1 = protectedCode.run(protectedCodeArgs); // YIELD: Run the protected code block
+        m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, rEndLabel));
+
+        _ensureBlockStack.pop();
+
+        // Ensure block code
+        m.addInstr(new LABEL_Instr(ebi.start));
+        Object v2 = ensureCode.run(ensureCodeArgs); // YIELD: Run the ensure code block
+        m.addInstr(new JUMP_INDIRECT_Instr(ebi.returnAddr));
+
+        // By moving the exception region end marker here to include the ensure block,
+        // we effectively swallow those exceptions -- but we will end up trying to rerun the ensure code again!
+        // SSS FIXME: Wont this get us stuck in an infinite loop?
+        m.addInstr(new ExceptionRegionEndMarkerInstr());
+
+        // Rescue block code
+        // SSS FIXME: How do we get this to catch all exceptions, not just Ruby exceptions?
+        Label dummyRescueBlockLabel = m.getNewLabel();
+        rescueLabels.add(dummyRescueBlockLabel);
+        m.addInstr(new LABEL_Instr(dummyRescueBlockLabel));
+        m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, ebi.end));
+        m.addInstr(new JumpInstr(ebi.start));
+
+        // End
+        m.addInstr(new LABEL_Instr(rEndLabel));
+
+        return new Object[] { v1, v2 };
     }
 
     public Operand buildGetDefinitionBase(final Node node, IRScope m) {
@@ -1105,27 +1128,28 @@ public class IRBuilder {
         case CLASSVARNODE:
             // these are all "simple" cases that don't require the heavier defined logic
             return buildGetDefinition(node, m);
-        default:
-            throw new NotCompilableException(node + " is not yet IR-compilable in buildGetDefinitionBase");
-/**
- * SSS FIXME: To be completed
- *
-        default:
-            BranchCallback reg = new BranchCallback() {
 
-                        public void branch(IRScope m) {
-                            m.inDefined();
-                            buildGetDefinition(node, m);
-                        }
-                    };
-            BranchCallback out = new BranchCallback() {
+        default:
+            m.addInstr(new JRubyImplCallInstr(null, MethAddr.SET_WITHIN_DEFINED, null, new Operand[]{BooleanLiteral.TRUE}));
 
-                        public void branch(IRScope m) {
-                            m.outDefined();
-                        }
-                    };
-            m.protect(reg, out, String.class);
-**/
+            // Protected code
+            CodeBlock protectedCode = new CodeBlock() {
+                public Object run(Object[] args) {
+                   return buildGetDefinition((Node)args[0], (IRScope)args[1]);
+                }
+            };
+
+            // Ensure code
+            CodeBlock ensureCode = new CodeBlock() {
+                public Object run(Object[] args) {
+                    IRScope m = (IRScope)args[0];
+                    m.addInstr(new JRubyImplCallInstr(null, MethAddr.SET_WITHIN_DEFINED, null, new Operand[]{BooleanLiteral.FALSE}));
+                    return null;
+                }
+            };
+
+            Object[] rvs = protectCode(m, protectedCode, new Object[] {node, m}, ensureCode, new Object[] {m});
+            return (Operand)rvs[0];
         }
     }
 
@@ -1606,7 +1630,7 @@ public class IRBuilder {
     }
 **/
 
-    private void defineNewMethod(MethodDefNode defNode, IRScope s, Operand container, boolean isInstanceMethod) {
+    private IRMethod defineNewMethod(MethodDefNode defNode, IRScope s, Operand container, boolean isInstanceMethod) {
         IRMethod method = new IRMethod(s, container, defNode.getName(), isInstanceMethod, defNode.getScope());
 
         // Build IR for arguments
@@ -1617,32 +1641,31 @@ public class IRBuilder {
             Node bodyNode = defNode.getBodyNode();
 
             // if root of method is rescue, build as a light rescue
-            Operand rv = (bodyNode instanceof RescueNode) ?
-                buildRescueInternal(bodyNode, method) : build(bodyNode, method);
+            Operand rv = (bodyNode instanceof RescueNode) ?  buildRescueInternal(bodyNode, method, null) : build(bodyNode, method);
             if (rv != null) method.addInstr(new ReturnInstr(rv));
         } else {
             method.addInstr(new ReturnInstr(Nil.NIL));
         }
 
-        // SSS FIXME: Is this correct? This method belongs to 'container'
-        // If it is of type IRModule at IR-build time, we can do this.
-        // If not, this has to be be done at interpret/execute time.
-        // Also, this code could be adding a new method for an object in which case we will
-        // have to instantiate a new meta-class
-        // ENEBO: for module+class methods s.getNearestModule seems to be working...
-//        IRModule methodHolder = isInstanceMethod ? s.getNearestModule() :
-//            new IRMetaClass(method.getLexicalParent(), container, defNode.getScope());
-        IRModule methodHolder = s.getNearestModule();
-        methodHolder.addMethod(method);
+        return method;
     }
 
     public Operand buildDefn(MethodDefNode node, IRScope s) { // Instance method
-        defineNewMethod(node, s, MetaObject.create(s), true);
+        Operand container = MetaObject.create(s.getNearestModule());
+        IRMethod method = defineNewMethod(node, s, container, true);
+        s.getNearestModule().addMethod(method);
+        s.addInstr(new DefineInstanceMethodInstr(container, method));
         return null;
     }
 
     public Operand buildDefs(DefsNode node, IRScope s) { // Class method
-        defineNewMethod(node, s, build(node.getReceiverNode(), s), false);
+        Operand container =  build(node.getReceiverNode(), s);
+        IRMethod method = defineNewMethod(node, s, container, false);
+        // ENEBO: Can all metaobjects be used for this?  closure?
+        if (container instanceof MetaObject) {
+            ((IRModule) ((MetaObject) container).getScope()).addMethod(method);
+        }
+        s.addInstr(new DefineClassMethodInstr(container, method));
         return null;
     }
 
@@ -1756,34 +1779,74 @@ public class IRBuilder {
         return new BacktickString(strPieces);
     }
 
+    /* ****************************************************************
+     * Consider the ensure-protected ruby code below:
+
+           begin
+             .. protected body ..
+           ensure
+             .. eb code
+           end
+
+       This ruby code is effectively rewritten into the following ruby code
+
+          begin
+            .. protected body ..
+          rescue <any-exception-or-error> => e
+            jump to eb-code, execute it, and come back here
+            raise e
+          end
+          
+      which in IR looks like this:
+
+          L1:
+            Exception region start marker
+            ... IR for protected body ...
+            Exception region end marker
+            %v = L3       <--- skipped if the protected body had a return!
+          L2:
+            .. IR for ensure block ..
+            jump_indirect %v
+          L10:            <--- dummy rescue block
+            e = recv_exception
+            %v = L11
+            jump L2
+          L11:
+            throw e
+          L3:
+     
+     * ****************************************************************/
     public Operand buildEnsureNode(Node node, IRScope m) {
+        EnsureNode ensureNode = (EnsureNode)node;
+        Node       bodyNode   = ensureNode.getBodyNode();
+
         // Push a new ensure block info node onto the stack of ensure block
         EnsureBlockInfo ebi = new EnsureBlockInfo(m);
         _ensureBlockStack.push(ebi);
 
-        EnsureNode ensureNode = (EnsureNode)node;
-        Node       bodyNode   = ensureNode.getBodyNode();
-        Operand rv = (bodyNode instanceof RescueNode) ? buildRescueInternal(bodyNode, m) : build(bodyNode, m);
+        Label rBeginLabel = m.getNewLabel();
+        Label rEndLabel   = ebi.end;
+        List<Label> rescueLabels = new ArrayList<Label>() { };
 
-        // Generate the ensure block now
-        //   START:
-        //     ... ensure code ...
-        //     JMP(ret_addr)
-        //   END:
-        //
-        // Optimization: The start and end labels and the jmp are ignored if the main body falls through
-        // ex: begin 
-        //        .. something without a return! ..
-        //     ensure
-        //        .. something else ..
-        //     end
-        //
+        // Start of region
+        m.addInstr(new LABEL_Instr(rBeginLabel));
+        m.addInstr(new ExceptionRegionStartMarkerInstr(rBeginLabel, rEndLabel, rescueLabels));
 
-        if (ebi.noFallThru)
-            m.addInstr(new LABEL_Instr(ebi.start));
+        // Generate IR for Code being protected
+        Operand  rv = (bodyNode instanceof RescueNode) ? buildRescueInternal(bodyNode, m, rBeginLabel) : build(bodyNode, m);
+
+        // End of protected region
+        m.addInstr(new ExceptionRegionEndMarkerInstr());
+
+        // Jump to start of ensure block -- dont bother if we had a return in the protected body 
+        if (rv != null)
+            m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, rEndLabel));
 
         // Pop the current ensure block info node *BEFORE* generating the ensure code for this block itself!
         _ensureBlockStack.pop();
+
+        // Generate the ensure block now
+        m.addInstr(new LABEL_Instr(ebi.start));
 
         // Two cases:
         // 1. Ensure block has no explicit return => the result of the entire ensure expression is the result of the protected body.
@@ -1792,11 +1855,26 @@ public class IRBuilder {
         if (ensureRetVal == null)   // null => there was a return from within the ensure block!
             rv = null;
 
-        if (ebi.noFallThru) {
-            m.addInstr(new JUMP_INDIRECT_Instr(ebi.returnAddr));
-            if (ebi.endLabelNeeded)
-               m.addInstr(new LABEL_Instr(ebi.end));
-        }
+        m.addInstr(new JUMP_INDIRECT_Instr(ebi.returnAddr));
+
+        // Now build the dummy rescue block that:
+        // * catches all exceptions thrown by the body
+        // * jumps to the ensure block code
+        // * returns back (via set_retaddr instr)
+        // * rethrows the caught exception
+        Label dummyRescueBlockLabel = m.getNewLabel();
+        Label rethrowExcLabel = m.getNewLabel();
+        rescueLabels.add(dummyRescueBlockLabel);
+        Variable exc = m.getNewTemporaryVariable();
+        m.addInstr(new LABEL_Instr(dummyRescueBlockLabel));
+        m.addInstr(new RECV_EXCEPTION_Instr(exc));
+        m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, rethrowExcLabel));
+        m.addInstr(new JumpInstr(ebi.start));
+        m.addInstr(new LABEL_Instr(rethrowExcLabel));
+        m.addInstr(new THROW_EXCEPTION_Instr(exc));
+
+        // End label for the exception region
+        m.addInstr(new LABEL_Instr(rEndLabel));
 
         return rv;
     }
@@ -2615,20 +2693,27 @@ public class IRBuilder {
     }
 
     public Operand buildRescue(Node node, IRScope m) {
-        return buildRescueInternal(node, m);
+        return buildRescueInternal(node, m, null);
     }
 
-    private Operand buildRescueInternal(Node node, IRScope m) {
+    private Operand buildRescueInternal(Node node, IRScope m, Label availableBeginLabel) {
         final RescueNode rescueNode = (RescueNode) node;
         boolean noEnsure    = _ensureBlockStack.empty();
-        Label   rBeginLabel = m.getNewLabel();  // Label marking start of the begin-rescue(-ensure)-end block
-        Label   rEndLabel   = noEnsure ? m.getNewLabel() : _ensureBlockStack.peek().end; // Label marking end of the begin-rescue(-ensure)-end block
+        EnsureBlockInfo ebi = noEnsure ? null : _ensureBlockStack.peek();
+
+        // Labels marking start, else, end of the begin-rescue(-ensure)-end block
+        Label   rBeginLabel = availableBeginLabel != null ? availableBeginLabel : m.getNewLabel();  
+        Label   rEndLabel   = noEnsure ? m.getNewLabel() : ebi.end;
         Label   elseLabel   = rescueNode.getElseNode() == null ? null : m.getNewLabel();
+
+        // Only generate the label instruction if we weren't passed in a label
+        // Optimization to eliminate extra labels in begin-rescue-ensure-end code
+        if (availableBeginLabel == null)
+            m.addInstr(new LABEL_Instr(rBeginLabel));
 
         // Placeholder rescue instruction that tells rest of the compiler passes the boundaries of the rescue block.
         List<Label> rescueBlockLabels = new ArrayList<Label>();
-        m.addInstr(new LABEL_Instr(rBeginLabel));
-        RESCUED_BODY_START_MARKER_Instr rbStartInstr = new RESCUED_BODY_START_MARKER_Instr(rBeginLabel, elseLabel, rEndLabel, rescueBlockLabels);
+        ExceptionRegionStartMarkerInstr rbStartInstr = new ExceptionRegionStartMarkerInstr(rBeginLabel, rEndLabel, rescueBlockLabels);
         m.addInstr(rbStartInstr);
 
         // Body
@@ -2653,20 +2738,20 @@ public class IRBuilder {
                 m.addInstr(new JumpInstr(rEndLabel));
             }
             else {
-                EnsureBlockInfo ebi = _ensureBlockStack.peek();
-                ebi.endLabelNeeded = true;
-                ebi.noFallThru = true;
-                m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, ebi.end));
+                // NOTE: rEndLabel is identical to ebi.end, but less confusing to use rEndLabel since that makes more semantic sense
+                m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, rEndLabel));
                 m.addInstr(new JumpInstr(ebi.start));
             }
         }
         else {
+            // If the body had an explicit return, the return instruction code takes care of setting
+            // up execution of all necessary ensure blocks.  So, nothing to do here! 
             rv = null;
         }
 
         // Since rescued regions are well nested within Ruby, this bare marker is sufficient to
         // let us discover the edge of the region during linear traversal of instructions during cfg construction.
-        RESCUED_BODY_END_MARKER_Instr rbEndInstr = new RESCUED_BODY_END_MARKER_Instr();
+        ExceptionRegionEndMarkerInstr rbEndInstr = new ExceptionRegionEndMarkerInstr();
         m.addInstr(rbEndInstr);
 
         // Build the actual rescue block(s)
@@ -2685,11 +2770,11 @@ public class IRBuilder {
     private void buildRescueBodyInternal(IRScope m, Node node, Variable rv, Label endLabel, List<Label> rescueBlockLabels) {
         final RescueBodyNode rescueBodyNode = (RescueBodyNode) node;
         final Node exceptionList = rescueBodyNode.getExceptionNodes();
-        boolean haveEnsureBlocks = !_ensureBlockStack.empty();
 
         // Load exception & exception comparison type
         Variable exc = m.getNewTemporaryVariable();
         m.addInstr(new RECV_EXCEPTION_Instr(exc));
+        // SSS: FIXME: Is this correct?
         // Compute all elements of the exception array eagerly
         Operand excType = (exceptionList == null) ? null : build(exceptionList, m);
 
@@ -2708,11 +2793,9 @@ public class IRBuilder {
         if (x != null) { // can be null if the rescue block has an explicit return
             m.addInstr(new CopyInstr(rv, x));
             // Jump to end of rescue block since we've caught and processed the exception
-            if (haveEnsureBlocks) {
+            if (!_ensureBlockStack.empty()) {
                 EnsureBlockInfo ebi = _ensureBlockStack.peek();
-                ebi.endLabelNeeded = true;
-                ebi.noFallThru = true;
-                m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, ebi.end));
+                m.addInstr(new SET_RETADDR_Instr(ebi.returnAddr, endLabel));
                 m.addInstr(new JumpInstr(ebi.start));
             }
             else {
@@ -2727,9 +2810,6 @@ public class IRBuilder {
             if (rescueBodyNode.getOptRescueNode() != null) {
                 buildRescueBodyInternal(m, rescueBodyNode.getOptRescueNode(), rv, endLabel, rescueBlockLabels);
             } else {
-                // If we have ensure blocks, set up a chain of jumps to execute all the ensure blocks
-                if (haveEnsureBlocks)
-                    EnsureBlockInfo.emitJumpChain(m, _ensureBlockStack);
                 m.addInstr(new THROW_EXCEPTION_Instr(exc));
             }
         }

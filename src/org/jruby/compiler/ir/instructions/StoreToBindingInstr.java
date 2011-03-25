@@ -12,37 +12,41 @@ import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
 import org.jruby.runtime.builtin.IRubyObject;
 
-public class StoreToBindingInstr extends PutInstr {
-    private int bindingSlot;
-    public StoreToBindingInstr(IRExecutionScope scope, String slotName, Operand value) {
-        super(Operation.BINDING_STORE, MetaObject.create(scope.getClosestMethodAncestor()), slotName, value);
+public class StoreToBindingInstr extends OneOperandInstr {
+	 private IRMethod targetMethod;
+    private int      bindingSlot;
+    private String   slotName;
 
-        MetaObject mo = (MetaObject)getTarget();
-        IRMethod m = (IRMethod)mo.scope;
-        bindingSlot = m.assignBindingSlot(slotName);
+    public StoreToBindingInstr(IRExecutionScope scope, String slotName, Operand value) {
+        super(Operation.BINDING_STORE, null, value);
+
+        this.slotName = slotName;
+		  this.targetMethod = (IRMethod)scope.getClosestMethodAncestor();
+        bindingSlot = targetMethod.assignBindingSlot(slotName);
+    }
+
+    public String getSlotName() {
+        return slotName;
     }
 
     @Override
     public String toString() {
-        return "\tBINDING(" + operands[TARGET] + ")." + ref + " = " + operands[VALUE];
+        return "\tBINDING(" + targetMethod + ")." + slotName + " = " + getArg();
     }
 
     public Instr cloneForInlining(InlinerInfo ii) {
-        return new StoreToBindingInstr((IRExecutionScope)((MetaObject)operands[TARGET]).scope, ref, operands[VALUE].cloneForInlining(ii));
+        return new StoreToBindingInstr(targetMethod, slotName, getArg().cloneForInlining(ii));
     }
 
-    private IRScope getIRScope(Operand scopeHolder) {
-        assert scopeHolder instanceof MetaObject : "Target should be a MetaObject";
-
-        return ((MetaObject) scopeHolder).getScope();
-    }
+    // Any exception raised by the execution of this instruction is an interpreter/compiler bug
+    @Override
+    public boolean canRaiseException() { return false; }
 
     @Override
     public Label interpret(InterpreterContext interp, IRubyObject self) {
-		  LocalVariable v = (LocalVariable) getValue();
-        IRMethod m = (IRMethod)getIRScope(getTarget());
+		  LocalVariable v = (LocalVariable) getArg();
         if (bindingSlot == -1)
-            bindingSlot = m.getBindingSlot(v.getName());
+            bindingSlot = targetMethod.getBindingSlot(v.getName());
         interp.setSharedBindingVariable(bindingSlot, interp.getLocalVariable(v.getLocation()));
         return null;
     }

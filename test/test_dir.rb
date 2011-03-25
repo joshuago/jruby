@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 require 'test/unit'
 require 'rbconfig'
 
@@ -19,6 +20,24 @@ class TestDir < Test::Unit::TestCase
     setup
   end
 
+  # JRUBY-2519
+  def test_dir_instance_should_not_cache_dir_contents
+    
+    require 'fileutils'
+    require 'tmpdir'
+    
+    testdir = File.join(Dir.tmpdir, Process.pid.to_s)
+    FileUtils.mkdir_p testdir
+    
+    FileUtils.touch File.join(testdir, 'fileA.txt')
+    dir = Dir.new(testdir)
+    FileUtils.touch File.join(testdir, 'fileB.txt')
+    dir.rewind # does nothing
+
+    assert_equal 'fileA.txt', dir.find {|item| item == 'fileA.txt' }
+    assert_equal 'fileB.txt', dir.find {|item| item == 'fileB.txt' }
+  end  
+  
   def test_pwd_and_getwd_equivalent
     assert_equal(Dir.pwd, Dir.getwd)
   end
@@ -142,6 +161,19 @@ class TestDir < Test::Unit::TestCase
       end
       assert !collect.include?("#{jar_file}/abc/foo.rb")
     end
+  end
+
+  def test_foreach_works_in_jar_file
+    jar_file = File.expand_path('../jar_with_relative_require1.jar', __FILE__)
+    jar_path = "file:#{jar_file}!/test"
+    dir = Dir.new(jar_path)
+    assert dir.entries.include?('require_relative1.rb'), "#{jar_path} does not contain require_relative1.rb: #{dir.entries.inspect}"
+    entries = []
+    dir.each {|d| entries << d}
+    assert entries.include?('require_relative1.rb'), "#{jar_path} does not contain require_relative1.rb: #{entries.inspect}"
+    entries = []
+    Dir.foreach(jar_path) {|d| entries << d}
+    assert entries.include?('require_relative1.rb'), "#{jar_path} does not contain require_relative1.rb: #{entries.inspect}"
   end
 
   def jar_file_with_spaces
