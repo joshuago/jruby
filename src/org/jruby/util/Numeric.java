@@ -37,6 +37,9 @@ import org.jruby.RubyInteger;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 
+import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.MethodIndex.OP_CMP;
+
 public class Numeric {
     public static final boolean CANON = true;
 
@@ -62,7 +65,7 @@ public class Numeric {
             }
             return RubyFixnum.zero(context.getRuntime());
         }
-        return x.callMethod(context, "<=>", y);
+        return invokedynamic(context, x, OP_CMP, y);
     }
 
     /** f_div
@@ -462,7 +465,7 @@ public class Numeric {
             while (y % 2 == 0) {
                 if (!fitSqrtLong(x)) {
                     IRubyObject v = RubyBignum.newBignum(runtime, RubyBignum.fix2big(RubyFixnum.newFixnum(runtime, x))).op_pow(context, RubyFixnum.newFixnum(runtime, y));
-                    if (z != 1) v = RubyBignum.newBignum(runtime, RubyBignum.fix2big(RubyFixnum.newFixnum(runtime, neg ? -z : z))).op_mul(context, v);
+                    if (z != 1) v = RubyBignum.newBignum(runtime, RubyBignum.fix2big(RubyFixnum.newFixnum(runtime, neg ? -z : z))).op_mul19(context, v);
                     return v;
                 }
                 x *= x;
@@ -472,7 +475,7 @@ public class Numeric {
             long xz = x * x;
             if (xz  / x != z) {
                 IRubyObject v = RubyBignum.newBignum(runtime, RubyBignum.fix2big(RubyFixnum.newFixnum(runtime, x))).op_pow(context, RubyFixnum.newFixnum(runtime, y));
-                if (z != 1) v = RubyBignum.newBignum(runtime, RubyBignum.fix2big(RubyFixnum.newFixnum(runtime, neg ? -z : z))).op_mul(context, v);
+                if (z != 1) v = RubyBignum.newBignum(runtime, RubyBignum.fix2big(RubyFixnum.newFixnum(runtime, neg ? -z : z))).op_mul19(context, v);
                 return v;
             }
             z = xz;

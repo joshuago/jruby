@@ -333,6 +333,21 @@ RUBY_DLLSPEC void xfree(void*);
 
 #define RREGEXP_SRC(reg) rb_reg_source(reg)
 #define RREGEXP_OPTIONS(reg) rb_reg_options(reg)
+/* regexp options */
+#define RE_OPTION_DEFAULT    0U
+#define RE_OPTION_NONE       RE_OPTION_DEFAULT
+#define RE_OPTION_IGNORECASE 1U
+#define RE_OPTION_EXTENDED   (RE_OPTION_IGNORECASE << 1)
+#define RE_OPTION_MULTILINE  (RE_OPTION_EXTENDED << 1)
+#define RE_OPTION_SINGLELINE (RE_OPTION_MULTILINE << 1)
+/* 1.9 */
+#define ONIG_OPTION_DEFAULT    RE_OPTION_DEFAULT
+#define ONIG_OPTION_NONE       RE_OPTION_NONE
+#define ONIG_OPTION_IGNORECASE RE_OPTION_IGNORECASE
+#define ONIG_OPTION_EXTEND     RE_OPTION_EXTENDED
+#define ONIG_OPTION_MULTILINE  RE_OPTION_MULTILINE
+#define ONIG_OPTION_SINGLELINE RE_OPTION_SINGLELINE
+
 
 /* End of interface macros */
 
@@ -826,6 +841,7 @@ RUBY_DLLSPEC VALUE rb_data_object_alloc(VALUE,void*,RUBY_DATA_FUNC,RUBY_DATA_FUN
     sval = (type*)DATA_PTR(obj);\
 } while (0)
 
+static inline void rb_gc() {}; // We'll let the Java GC decide when to run
 RUBY_DLLSPEC void rb_gc_mark_locations(VALUE*, VALUE*);
 RUBY_DLLSPEC void rb_gc_mark(VALUE);
 RUBY_DLLSPEC void rb_gc_mark_maybe(VALUE v);

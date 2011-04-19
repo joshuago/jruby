@@ -75,6 +75,10 @@ import org.jruby.util.Qsort;
 import org.jruby.util.RecursiveComparator;
 import org.jruby.util.TypeConverter;
 
+import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.MethodIndex.HASH;
+import static org.jruby.runtime.MethodIndex.OP_CMP;
+
 /**
  * The implementation of the built-in class Array in Ruby.
  *
@@ -285,6 +289,14 @@ public class RubyArray extends RubyObject implements List {
 
     private RubyArray(Ruby runtime, IRubyObject[] vals, int begin, int length) {
         super(runtime, runtime.getArray());
+        this.values = vals;
+        this.begin = begin;
+        this.realLength = length;
+        this.isShared = true;
+    }
+
+    private RubyArray(Ruby runtime, RubyClass metaClass, IRubyObject[] vals, int begin, int length) {
+        super(runtime, metaClass);
         this.values = vals;
         this.begin = begin;
         this.realLength = length;
@@ -589,6 +601,22 @@ public class RubyArray extends RubyObject implements List {
     public IRubyObject initialize_copy(IRubyObject orig) {
         return this.replace(orig);
     }
+
+    /**
+     * Overridden dup for fast-path logic.
+     *
+     * @return A new RubyArray sharing the original backing store.
+     */
+    public IRubyObject dup() {
+        if (metaClass.index != ClassIndex.ARRAY) return super.dup();
+
+        RubyArray dup = new RubyArray(metaClass.getClassRuntime(), values, begin, realLength);
+        dup.isShared = isShared = true;
+        dup.flags |= flags & TAINTED_F; // from DUP_SETUP
+        dup.flags |= flags & UNTRUSTED_F;
+
+        return dup;
+    }
     
     /** rb_ary_replace
      *
@@ -655,7 +683,7 @@ public class RubyArray extends RubyObject implements List {
             for (int i = myBegin; i < myBegin + realLength; i++) {
                 h = (h << 1) | (h < 0 ? 1 : 0);
                 final IRubyObject value = safeArrayRef(values, i);
-                h ^= RubyNumeric.num2long(value.callMethod(context, "hash"));
+                h ^= RubyNumeric.num2long(invokedynamic(context, value, HASH));
             }
             return runtime.newFixnum(h);
         } finally {
@@ -673,12 +701,12 @@ public class RubyArray extends RubyObject implements List {
                     int begin = RubyArray.this.begin;
                     long h = realLength;
                     if(recur) {
-                        h ^= RubyNumeric.num2long(getRuntime().getArray().callMethod(context, "hash"));
+                        h ^= RubyNumeric.num2long(invokedynamic(context, context.runtime.getArray(), HASH));
                     } else {
                         for(int i = begin; i < begin + realLength; i++) {
                             h = (h << 1) | (h < 0 ? 1 : 0);
                             final IRubyObject value = safeArrayRef(values, i);
-                            h ^= RubyNumeric.num2long(value.callMethod(context, "hash"));
+                            h ^= RubyNumeric.num2long(invokedynamic(context, value, HASH));
                         }
                     }
                     return getRuntime().newFixnum(h);
@@ -727,7 +755,7 @@ public class RubyArray extends RubyObject implements List {
         return eltOk(offset);
     }
 
-    private final IRubyObject eltOk(long offset) {
+    public final IRubyObject eltOk(long offset) {
         return safeArrayRef(values, begin + (int)offset);
     }
 
@@ -973,9 +1001,10 @@ public class RubyArray extends RubyObject implements List {
      * 
      */
     public final RubyArray aryDup() {
-        RubyArray dup = new RubyArray(getRuntime(), getMetaClass(), this);
-        dup.flags |= flags & TAINTED_F; // from DUP_SETUP
-        dup.flags |= flags & UNTRUSTED_F;
+        RubyArray dup = new RubyArray(metaClass.getClassRuntime(), metaClass, values, begin, realLength);
+        dup.isShared = true;
+        isShared = true;
+        dup.flags |= flags & (TAINTED_F | UNTRUSTED_F); // from DUP_SETUP
         // rb_copy_generic_ivar from DUP_SETUP here ...unlikely..
         return dup;
     }
@@ -1056,6 +1085,7 @@ public class RubyArray extends RubyObject implements List {
      *
      */
     public IRubyObject subseq(long beg, long len) {
+        int realLength = this.realLength;
         if (beg > realLength || beg < 0 || len < 0) return getRuntime().getNil();
 
         if (beg + len > realLength) {
@@ -2262,15 +2292,15 @@ public class RubyArray extends RubyObject implements List {
      */
     @JRubyMethod(name = "reverse")
     public IRubyObject reverse() {
-        final RubyArray dup; 
         if (realLength > 1) {
-            dup = safeReverse();
+            RubyArray dup = safeReverse();
+            dup.flags |= flags & TAINTED_F; // from DUP_SETUP
+            dup.flags |= flags & UNTRUSTED_F; // from DUP_SETUP
+            // rb_copy_generic_ivar from DUP_SETUP here ...unlikely..
+            return dup;
         } else {
-            dup = new RubyArray(getRuntime(), getMetaClass(), this);
+            return dup();
         }
-        dup.flags |= flags & TAINTED_F; // from DUP_SETUP
-        // rb_copy_generic_ivar from DUP_SETUP here ...unlikely..
-        return dup;
     }
 
     private RubyArray safeReverse() {
@@ -2456,8 +2486,22 @@ public class RubyArray extends RubyObject implements List {
 
         modify();
 
+        IRubyObject nil = getRuntime().getNil();
         IRubyObject obj = values[begin + pos];
+
         try {
+            // fast paths for head and tail
+            if (pos == 0) {
+                values[begin] = nil;
+                begin++;
+                realLength--;
+                return obj;
+            } else if (pos == realLength - 1) {
+                values[begin + realLength - 1] = nil;
+                realLength--;
+                return obj;
+            }
+
             System.arraycopy(values, begin + pos + 1, values, begin + pos, len - (pos + 1));
             values[begin + len - 1] = getRuntime().getNil();
         } catch (ArrayIndexOutOfBoundsException e) {
@@ -2498,7 +2542,7 @@ public class RubyArray extends RubyObject implements List {
 
         int i2 = 0;
         modify();
-
+        
         for (int i1 = 0; i1 < realLength; i1++) {
             // Do not coarsen the "safe" check, since it will misinterpret AIOOBE from the yield
             // See JRUBY-5434
@@ -2611,7 +2655,7 @@ public class RubyArray extends RubyObject implements List {
             if (len > ary2.realLength) len = ary2.realLength;
 
             for (int i = 0; i < len; i++) {
-                IRubyObject v = elt(i).callMethod(context, "<=>", ary2.elt(i));
+                IRubyObject v = invokedynamic(context, elt(i), OP_CMP, ary2.elt(i));
                 if (!(v instanceof RubyFixnum) || ((RubyFixnum) v).getLongValue() != 0) return v;
             }
         } finally {
@@ -2782,7 +2826,8 @@ public class RubyArray extends RubyObject implements List {
 
         RubyArray result = new RubyArray(runtime, getMetaClass(), realLength);
         if (flatten(context, -1, result)) {
-            modify();
+            modifyCheck();
+            isShared = false;
             begin = 0;
             realLength = result.realLength;
             values = result.values;
@@ -2806,6 +2851,7 @@ public class RubyArray extends RubyObject implements List {
 
         RubyArray result = new RubyArray(runtime, getMetaClass(), realLength);
         if (flatten(context, level, result)) {
+            isShared = false;
             begin = 0;
             realLength = result.realLength;
             values = result.values;
@@ -3240,7 +3286,7 @@ public class RubyArray extends RubyObject implements List {
     }
 
     private static int compareOthers(ThreadContext context, IRubyObject o1, IRubyObject o2) {
-        IRubyObject ret = o1.callMethod(context, "<=>", o2);
+        IRubyObject ret = invokedynamic(context, o1, OP_CMP, o2);
         int n = RubyComparable.cmpint(context, ret, o1, o2);
         //TODO: ary_sort_check should be done here
         return n;

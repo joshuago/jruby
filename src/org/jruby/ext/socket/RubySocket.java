@@ -82,8 +82,8 @@ import java.net.Inet6Address;
 import java.nio.channels.AlreadyConnectedException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ConnectionPendingException;
+import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.spi.AbstractSelectableChannel;
-import java.util.Arrays;
 
 /**
  * @author <a href="mailto:ola.bini@ki.se">Ola Bini</a>
@@ -148,6 +148,7 @@ public class RubySocket extends RubyBasicSocket {
         super(runtime, type);
     }
 
+    @Override
     protected int getSoTypeDefault() {
         return soType;
     }
@@ -327,6 +328,11 @@ public class RubySocket extends RubyBasicSocket {
         return runtime.newFixnum(port);
     }
 
+    @JRubyMethod(name = "listen", backtrace = true)
+    public IRubyObject listen(ThreadContext context, IRubyObject backlog) {
+        return context.getRuntime().newFixnum(0);
+    }
+
     @Deprecated
     public static IRubyObject pack_sockaddr_un(IRubyObject recv, IRubyObject filename) {
         return pack_sockaddr_un(recv.getRuntime().getCurrentContext(), recv, filename);
@@ -357,7 +363,6 @@ public class RubySocket extends RubyBasicSocket {
         } catch(ClosedChannelException e) {
             throw context.getRuntime().newErrnoECONNREFUSEDError();
         } catch(IOException e) {
-            e.printStackTrace();
             throw sockerr(context.getRuntime(), "connect(2): name or service not known");
         } catch (Error e) {
             // Workaround for a bug in Sun's JDK 1.5.x, see
@@ -404,7 +409,6 @@ public class RubySocket extends RubyBasicSocket {
                     }
                     throw context.getRuntime().newErrnoEINPROGRESSError();
                 } catch (IOException ex) {
-                    e.printStackTrace();
                     throw sockerr(context.getRuntime(), "connect(2): name or service not known");
                 }
             }
@@ -414,7 +418,6 @@ public class RubySocket extends RubyBasicSocket {
         } catch(SocketException e) {
             handleSocketException(context.getRuntime(), "connect", e);
         } catch(IOException e) {
-            e.printStackTrace();
             throw sockerr(context.getRuntime(), "connect(2): name or service not known");
         } catch (IllegalArgumentException iae) {
             throw sockerr(context.getRuntime(), iae.getMessage());
@@ -456,7 +459,6 @@ public class RubySocket extends RubyBasicSocket {
         } catch(SocketException e) {
             handleSocketException(context.getRuntime(), "bind", e);
         } catch(IOException e) {
-            e.printStackTrace();
             throw sockerr(context.getRuntime(), "bind(2): name or service not known");
         } catch (IllegalArgumentException iae) {
             throw sockerr(context.getRuntime(), iae.getMessage());

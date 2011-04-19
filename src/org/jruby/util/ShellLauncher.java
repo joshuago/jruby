@@ -367,6 +367,10 @@ public class ShellLauncher {
         return runAndWait(runtime, rawArgs, runtime.getOutputStream());
     }
 
+    public static long[] runAndWaitPid(Ruby runtime, IRubyObject[] rawArgs) {
+        return runAndWaitPid(runtime, rawArgs, runtime.getOutputStream(), true);
+    }
+
     public static long runWithoutWait(Ruby runtime, IRubyObject[] rawArgs) {
         return runWithoutWait(runtime, rawArgs, runtime.getOutputStream());
     }
@@ -405,12 +409,16 @@ public class ShellLauncher {
     }
 
     public static int runAndWait(Ruby runtime, IRubyObject[] rawArgs, OutputStream output, boolean doExecutableSearch) {
+        return (int)runAndWaitPid(runtime, rawArgs, output, doExecutableSearch)[0];
+    }
+
+    public static long[] runAndWaitPid(Ruby runtime, IRubyObject[] rawArgs, OutputStream output, boolean doExecutableSearch) {
         OutputStream error = runtime.getErrorStream();
         InputStream input = runtime.getInputStream();
         try {
             Process aProcess = run(runtime, rawArgs, doExecutableSearch);
             handleStreams(runtime, aProcess, input, output, error);
-            return aProcess.waitFor();
+            return new long[] {aProcess.waitFor(), getPidFromProcess(aProcess)};
         } catch (IOException e) {
             throw runtime.newIOErrorFromException(e);
         } catch (InterruptedException e) {
@@ -571,11 +579,19 @@ public class ShellLauncher {
         return new POpenProcess(popenShared(runtime, strings));
     }
 
+    public static POpenProcess popen3(Ruby runtime, IRubyObject[] strings, boolean addShell) throws IOException {
+        return new POpenProcess(popenShared(runtime, strings, null, addShell));
+    }
+
     private static Process popenShared(Ruby runtime, IRubyObject[] strings) throws IOException {
         return popenShared(runtime, strings, null);
     }
 
     private static Process popenShared(Ruby runtime, IRubyObject[] strings, Map env) throws IOException {
+        return popenShared(runtime, strings, env, true);
+    }
+
+    private static Process popenShared(Ruby runtime, IRubyObject[] strings, Map env, boolean addShell) throws IOException {
         String shell = getShell(runtime);
         Process childProcess = null;
         File pwd = new File(runtime.getCurrentDirectory());
@@ -583,7 +599,7 @@ public class ShellLauncher {
         try {
             String[] args = parseCommandLine(runtime.getCurrentContext(), runtime, strings);
             boolean useShell = false;
-            for (String arg : args) useShell |= shouldUseShell(arg);
+            if (addShell) for (String arg : args) useShell |= shouldUseShell(arg);
             
             // CON: popen is a case where I think we should just always shell out.
             if (strings.length == 1) {
@@ -882,7 +898,8 @@ public class ShellLauncher {
          * or "irb" in the name.
          */
         private boolean shouldRunInProcess() {
-            if (!runtime.getInstanceConfig().isRunRubyInProcess()) {
+            if (!runtime.getInstanceConfig().isRunRubyInProcess()
+                    || RubyInstanceConfig.hasLoadedNativeExtensions()) {
                 return false;
             }
 

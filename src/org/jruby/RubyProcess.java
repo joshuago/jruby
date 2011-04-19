@@ -29,7 +29,8 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
-import com.kenai.constantine.platform.Errno;
+import com.kenai.constantine.platform.Signal;
+import java.util.EnumSet;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyModule;
@@ -45,7 +46,8 @@ import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ShellLauncher;
 
-import static org.jruby.ext.JRubyPOSIXHelper.checkErrno;
+import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.MethodIndex.OP_EQUAL;
 
 
 /**
@@ -89,20 +91,22 @@ public class RubyProcess {
     
     @JRubyClass(name="Process::Status")
     public static class RubyStatus extends RubyObject {
-        private long status = 0L;
+        private final long status;
+        private final long pid;
         
         private static final long EXIT_SUCCESS = 0L;
-        public RubyStatus(Ruby runtime, RubyClass metaClass, long status) {
+        public RubyStatus(Ruby runtime, RubyClass metaClass, long status, long pid) {
             super(runtime, metaClass);
             this.status = status;
+            this.pid = pid;
         }
         
-        public static RubyStatus newProcessStatus(Ruby runtime, long status) {
-            return new RubyStatus(runtime, runtime.getProcStatus(), status);
+        public static RubyStatus newProcessStatus(Ruby runtime, long status, long pid) {
+            return new RubyStatus(runtime, runtime.getProcStatus(), status, pid);
         }
         
         // Bunch of methods still not implemented
-        @JRubyMethod(name = {"to_int", "pid", "stopped?", "stopsig", "signaled?", "termsig?", "exited?", "coredump?"}, frame = true)
+        @JRubyMethod(name = {"to_int", "stopped?", "stopsig", "signaled?", "termsig?", "exited?", "coredump?"}, frame = true)
         public IRubyObject not_implemented() {
             String error = "Process::Status#" + getRuntime().getCurrentContext().getFrameName() + " not implemented";
             throw getRuntime().newNotImplementedError(error);
@@ -135,7 +139,7 @@ public class RubyProcess {
         @Override
         @JRubyMethod(name = "==")
         public IRubyObject op_equal(ThreadContext context, IRubyObject other) {
-            return other.callMethod(context, "==", this.to_i(context.getRuntime()));
+            return invokedynamic(context, other, OP_EQUAL, this.to_i(context.getRuntime()));
         }
         
         @Deprecated
@@ -171,12 +175,17 @@ public class RubyProcess {
             return inspect(context.getRuntime());
         }
         public IRubyObject inspect(Ruby runtime) {
-            return runtime.newString("#<Process::Status: pid=????,exited(" + String.valueOf(status) + ")>");
+            return runtime.newString("#<Process::Status: pid=" + pid + ",exited(" + String.valueOf(status) + ")>");
         }
         
         @JRubyMethod(name = "success?")
         public IRubyObject success_p(ThreadContext context) {
             return context.getRuntime().newBoolean(status == EXIT_SUCCESS);
+        }
+        
+        @JRubyMethod
+        public IRubyObject pid(ThreadContext context) {
+            return context.getRuntime().newFixnum(pid);
         }
         
         private long shiftedValue() {
@@ -492,7 +501,7 @@ public class RubyProcess {
         pid = runtime.getPosix().waitpid(pid, status, flags);
         raiseErrnoIfSet(runtime, ECHILD);
         
-        runtime.getCurrentContext().setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, status[0]));
+        runtime.getCurrentContext().setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, (status[0] >> 8) & 0xff, pid));
         return runtime.newFixnum(pid);
     }
 
@@ -525,7 +534,7 @@ public class RubyProcess {
         int pid = runtime.getPosix().wait(status);
         raiseErrnoIfSet(runtime, ECHILD);
         
-        runtime.getCurrentContext().setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, status[0]));
+        runtime.getCurrentContext().setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, (status[0] >> 8) & 0xff, pid));
         return runtime.newFixnum(pid);
     }
 
@@ -545,7 +554,7 @@ public class RubyProcess {
         int[] status = new int[1];
         int result = posix.wait(status);
         while (result != -1) {
-            results.append(runtime.newArray(runtime.newFixnum(result), RubyProcess.RubyStatus.newProcessStatus(runtime, status[0])));
+            results.append(runtime.newArray(runtime.newFixnum(result), RubyProcess.RubyStatus.newProcessStatus(runtime, (status[0] >> 8) & 0xff, result)));
             result = posix.wait(status);
         }
         
@@ -684,7 +693,7 @@ public class RubyProcess {
         int[] status = new int[1];
         pid = checkErrno(runtime, runtime.getPosix().waitpid(pid, status, flags), ECHILD);
         
-        return runtime.newArray(runtime.newFixnum(pid), RubyProcess.RubyStatus.newProcessStatus(runtime, status[0]));
+        return runtime.newArray(runtime.newFixnum(pid), RubyProcess.RubyStatus.newProcessStatus(runtime, (status[0] >> 8) & 0xff, pid));
     }
 
     @JRubyMethod(name = "initgroups", required = 2, module = true, visibility = PRIVATE)
@@ -819,29 +828,23 @@ public class RubyProcess {
         return runtime.newFixnum(checkErrno(runtime, runtime.getPosix().getegid()));
     }
     
-    private static String[] signals = new String[] {"EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", 
-        "ABRT", "POLL", "FPE", "KILL", "BUS", "SEGV", "SYS", "PIPE", "ALRM", "TERM", "URG", "STOP",
-        "TSTP", "CONT", "CHLD", "TTIN", "TTOU", "XCPU", "XFSZ", "VTALRM", "PROF", "USR1", "USR2"};
-    
     private static int parseSignalString(Ruby runtime, String value) {
         int startIndex = 0;
         boolean negative = value.startsWith("-");
         
-        if (negative) startIndex++;
+        if (value.startsWith("-")) startIndex++;
+        String signalName = value.startsWith("SIG", startIndex)
+                ? value 
+                : "SIG" + value.substring(startIndex);
         
-        boolean signalString = value.startsWith("SIG", startIndex);
-        
-        if (signalString) startIndex += 3;
-       
-        String signalName = value.substring(startIndex);
-        
-        // FIXME: This table will get moved into POSIX library so we can get all actual supported
-        // signals.  This is a quick fix to support basic signals until that happens.
-        for (int i = 0; i < signals.length; i++) {
-            if (signals[i].equals(signalName)) return negative ? -i : i;
+        try {
+            int signalValue = Signal.valueOf(signalName).value();
+            return negative ? -signalValue : signalValue;
+
+        } catch (IllegalArgumentException ex) {
+            throw runtime.newArgumentError("unsupported name `SIG" + signalName + "'");
         }
         
-        throw runtime.newArgumentError("unsupported name `SIG" + signalName + "'");
     }
 
     @Deprecated

@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import org.jruby.compiler.ir.compiler_pass.CompilerPass;
-import org.jruby.compiler.ir.instructions.DefineClassMethodInstr;
-import org.jruby.compiler.ir.instructions.DefineInstanceMethodInstr;
+import org.jruby.compiler.ir.instructions.DefineClassInstr;
+import org.jruby.compiler.ir.instructions.DefineModuleInstr;
 import org.jruby.compiler.ir.instructions.Instr;
 import org.jruby.compiler.ir.instructions.PutConstInstr;
 import org.jruby.compiler.ir.instructions.ReceiveSelfInstruction;
@@ -22,7 +22,7 @@ import org.jruby.parser.StaticScope;
 
 public class IRModule extends IRScopeImpl {
     // The "root" method of a class -- the scope in which all definitions, and class code executes, equivalent to java clinit
-    private final static String ROOT_METHOD_PREFIX = ":_ROOT_:";
+    private final static String ROOT_METHOD_PREFIX = "<ROOT>";
     private static Map<String, IRClass> coreClasses;
 
     private IRMethod rootMethod; // Dummy top-level method for the class
@@ -156,25 +156,23 @@ used, we are now forced to be conservative.
             // Boxed scope has to be an IR module or class
             cv = ((IRModule) (((MetaObject) p).scope)).getConstantValue(constRef);
 
-				// If cv is null, it can either mean the constant is missing 
-				// or it can mean that we couldn't resolve this at compilation time.
+            // If cv is null, it can either mean the constant is missing 
+            // or it can mean that we couldn't resolve this at compilation time.
         }
         return cv;
 **/
     }
 
     public void setConstantValue(String constRef, Operand val) {
+        // FIXME: isConstant can be confusing since we have Ruby constants and constants in the compiler sense
         if (val.isConstant()) constants.put(constRef, val);
-        ((IRModule) this).getRootMethod().addInstr(new PutConstInstr(this, constRef, val));
     }
 
     public void addModule(IRModule m) {
-        setConstantValue(m.getName(), new ModuleMetaObject(m));
         modules.add(m);
     }
 
     public void addClass(IRClass c) {
-        setConstantValue(c.getName(), new ClassMetaObject(c));
         classes.add(c);
     }
 

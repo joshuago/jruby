@@ -231,6 +231,8 @@ public class RubyInstanceConfig {
     private int safeLevel = 0;
 
     private String jrubyHome;
+    
+    private static volatile boolean loadedNativeExtensions = false;
 
     public static final boolean PEEPHOLE_OPTZ
             = SafePropertyAccessor.getBoolean("jruby.compile.peephole", true);
@@ -1007,12 +1009,16 @@ public class RubyInstanceConfig {
         }
 
         public void processArguments() {
+            processArguments(true);
+        }
+
+        public void processArguments(boolean inline) {
             while (argumentIndex < arguments.size() && isInterpreterArgument(arguments.get(argumentIndex).originalValue)) {
                 processArgument();
                 argumentIndex++;
             }
 
-            if (!hasInlineScript && scriptFileName == null) {
+            if (inline && !hasInlineScript && scriptFileName == null) {
                 if (argumentIndex < arguments.size()) {
                     setScriptFileName(arguments.get(argumentIndex).originalValue); //consume the file name
                     argumentIndex++;
@@ -1789,5 +1795,13 @@ public class RubyInstanceConfig {
 
     public void setTraceType(TraceType traceType) {
         this.traceType = traceType;
+    }
+    
+    public static boolean hasLoadedNativeExtensions() {
+        return loadedNativeExtensions;
+    }
+    
+    public static void setLoadedNativeExtensions(boolean loadedNativeExtensions) {
+        RubyInstanceConfig.loadedNativeExtensions = loadedNativeExtensions;
     }
 }

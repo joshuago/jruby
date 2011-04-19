@@ -924,13 +924,14 @@ public class RubyKernel {
 
         return localVariables;
     }
-    @JRubyMethod(module = true, visibility = PRIVATE, compat = RUBY1_8)
+    
+    @JRubyMethod(module = true, visibility = PRIVATE)
     public static RubyBinding binding(ThreadContext context, IRubyObject recv, Block block) {
         return RubyBinding.newBinding(context.getRuntime(), context.currentBinding(recv));
     }
-
+    
     @JRubyMethod(name = "binding", module = true, visibility = PRIVATE, compat = RUBY1_9)
-    public static RubyBinding binding_1_9(ThreadContext context, IRubyObject recv, Block block) {
+    public static RubyBinding binding19(ThreadContext context, IRubyObject recv, Block block) {
         return RubyBinding.newBinding(context.getRuntime(), context.currentBinding());
     }
 
@@ -1536,16 +1537,16 @@ public class RubyKernel {
         RubyString string = aString.convertToString();
         IRubyObject[] args = new IRubyObject[] {string};
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        int resultCode;
+        long[] tuple;
 
         try {
             // NOTE: not searching executable path before invoking args
-            resultCode = ShellLauncher.runAndWait(runtime, args, output, false);
+            tuple = ShellLauncher.runAndWaitPid(runtime, args, output, false);
         } catch (Exception e) {
-            resultCode = 127;
+            tuple = new long[] {127, -1};
         }
 
-        context.setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, resultCode));
+        context.setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, tuple[0], tuple[1]));
 
         byte[] out = output.toByteArray();
         int length = out.length;
@@ -1695,7 +1696,7 @@ public class RubyKernel {
 
     private static int systemCommon(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         Ruby runtime = context.getRuntime();
-        int resultCode;
+        long[] tuple;
 
         try {
             if (! Platform.IS_WINDOWS && args[args.length -1].asJavaString().matches(".*[^&]&\\s*")) {
@@ -1703,13 +1704,13 @@ public class RubyKernel {
                 ShellLauncher.runWithoutWait(runtime, args);
                 return 0;
             }
-            resultCode = ShellLauncher.runAndWait(runtime, args);
+            tuple = ShellLauncher.runAndWaitPid(runtime, args);
         } catch (Exception e) {
-            resultCode = 127;
+            tuple = new long[] {127, -1};
         }
 
-        context.setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, resultCode));
-        return resultCode;
+        context.setLastExitStatus(RubyProcess.RubyStatus.newProcessStatus(runtime, tuple[0], tuple[1]));
+        return (int)tuple[0];
     }
     
     @JRubyMethod(name = {"exec"}, required = 1, rest = true, module = true, visibility = PRIVATE)
@@ -1722,15 +1723,28 @@ public class RubyKernel {
         }
         
         int resultCode;
+        boolean nativeFailed = false;
         try {
-            // TODO: exec should replace the current process.
-            // This could be possible with JNA. 
-            resultCode = ShellLauncher.execAndWait(runtime, args);
+            try {
+                String[] argv = new String[args.length];
+                for (int i = 0; i < args.length; i++) {
+                    argv[i] = args[i].asJavaString();
+                }
+                resultCode = runtime.getPosix().exec(null, argv);
+                // Only here because native exec could not exec (always -1)
+                nativeFailed = true;
+            } catch (RaiseException e) {  // Not implemented error
+                // Fall back onto our existing code if native not available
+                // FIXME: Make jnr-posix Pure-Java backend do this as well
+                resultCode = ShellLauncher.execAndWait(runtime, args);
+            }
         } catch (RaiseException e) {
             throw e; // no need to wrap this exception
         } catch (Exception e) {
             throw runtime.newErrnoENOENTError("cannot execute");
         }
+        
+        if (nativeFailed) throw runtime.newErrnoENOENTError("cannot execute");
         
         exit(runtime, new IRubyObject[] {runtime.newFixnum(resultCode)}, true);
 

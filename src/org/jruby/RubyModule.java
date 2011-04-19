@@ -472,6 +472,7 @@ public class RubyModule extends RubyObject {
 
         doIncludeModule(module);
         invalidateConstantCache();
+        invalidateCoreClasses();
         invalidateCacheDescendants();
     }
 
@@ -795,6 +796,7 @@ public class RubyModule extends RubyObject {
     public void addMethodInternal(String name, DynamicMethod method) {
         synchronized(getMethodsForWrite()) {
             addMethodAtBootTimeOnly(name, method);
+            invalidateCoreClasses();
             invalidateCacheDescendants();
         }
     }
@@ -831,6 +833,7 @@ public class RubyModule extends RubyObject {
                 throw runtime.newNameError("method '" + name + "' not defined in " + getName(), name);
             }
 
+            invalidateCoreClasses();
             invalidateCacheDescendants();
         }
         
@@ -1011,13 +1014,27 @@ public class RubyModule extends RubyObject {
 
     public void invalidateCacheDescendants() {
         if (DEBUG) System.out.println("invalidating descendants: " + classId);
-        generation = getRuntime().getNextModuleGeneration();
+        invalidateCacheDescendantsInner();
         // update all hierarchies into which this module has been included
         synchronized (getRuntime().getHierarchyLock()) {
             for (RubyClass includingHierarchy : includingHierarchies) {
                 includingHierarchy.invalidateCacheDescendants();
             }
         }
+    }
+    
+    protected void invalidateCoreClasses() {
+        if (!getRuntime().isBooting()) {
+            if (this == getRuntime().getFixnum()) {
+                getRuntime().setFixnumReopened(true);
+            } else if (this == getRuntime().getFloat()) {
+                getRuntime().setFloatReopened(true);
+            }
+        }
+    }
+
+    protected void invalidateCacheDescendantsInner() {
+        generation = getRuntime().getNextModuleGeneration();
     }
     
     protected void invalidateConstantCache() {
@@ -1118,6 +1135,7 @@ public class RubyModule extends RubyObject {
             }
         }
 
+        invalidateCoreClasses();
         invalidateCacheDescendants();
         putMethod(name, new AliasMethod(this, method, oldName));
     }
@@ -1145,6 +1163,7 @@ public class RubyModule extends RubyObject {
 
             putMethod(name, new AliasMethod(this, method, oldName));
         }
+        invalidateCoreClasses();
         invalidateCacheDescendants();
     }
 
@@ -1235,8 +1254,7 @@ public class RubyModule extends RubyObject {
         final String variableName = ("@" + internedName).intern();
         if (readable) {
             addMethod(internedName, new JavaMethodZero(this, visibility, CallConfiguration.FrameNoneScopeNone) {
-                // volatile to ensure visibility across threads
-                private volatile RubyClass.VariableAccessor accessor = RubyClass.VariableAccessor.DUMMY_ACCESSOR;
+                private RubyClass.VariableAccessor accessor = RubyClass.VariableAccessor.DUMMY_ACCESSOR;
                 public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name) {
                     IRubyObject variable = (IRubyObject)verifyAccessor(self.getMetaClass().getRealClass()).get(self);
 
@@ -1245,7 +1263,7 @@ public class RubyModule extends RubyObject {
 
                 private RubyClass.VariableAccessor verifyAccessor(RubyClass cls) {
                     RubyClass.VariableAccessor localAccessor = accessor;
-                    if (localAccessor.getClassId() != cls.hashCode()) {
+                    if (localAccessor.getClassId() != cls.id) {
                         localAccessor = cls.getVariableAccessorForRead(variableName);
                         accessor = localAccessor;
                     }
@@ -1257,8 +1275,7 @@ public class RubyModule extends RubyObject {
         if (writeable) {
             internedName = (internedName + "=").intern();
             addMethod(internedName, new JavaMethodOne(this, visibility, CallConfiguration.FrameNoneScopeNone) {
-                // volatile to ensure visibility across threads
-                private volatile RubyClass.VariableAccessor accessor = RubyClass.VariableAccessor.DUMMY_ACCESSOR;
+                private RubyClass.VariableAccessor accessor = RubyClass.VariableAccessor.DUMMY_ACCESSOR;
                 public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject arg1) {
                     verifyAccessor(self.getMetaClass().getRealClass()).set(self, arg1);
                     return arg1;
@@ -1266,7 +1283,7 @@ public class RubyModule extends RubyObject {
 
                 private RubyClass.VariableAccessor verifyAccessor(RubyClass cls) {
                     RubyClass.VariableAccessor localAccessor = accessor;
-                    if (localAccessor.getClassId() != cls.hashCode()) {
+                    if (localAccessor.getClassId() != cls.id) {
                         localAccessor = cls.getVariableAccessorForWrite(variableName);
                         accessor = localAccessor;
                     }
@@ -1309,6 +1326,7 @@ public class RubyModule extends RubyObject {
                 addMethod(name, new WrapperMethod(this, method, visibility));
             }
 
+            invalidateCoreClasses();
             invalidateCacheDescendants();
         }
     }
@@ -1781,6 +1799,20 @@ public class RubyModule extends RubyObject {
             // class and module bodies default to public, so make the block's visibility public. JRUBY-1185.
             block.getBinding().setVisibility(PUBLIC);
             block.yieldNonArray(getRuntime().getCurrentContext(), this, this, this);
+        }
+
+        return getRuntime().getNil();
+    }
+
+    /** rb_mod_initialize
+     *
+     */
+    @JRubyMethod(name = "initialize", frame = true, compat = RUBY1_9, visibility = PRIVATE)
+    public IRubyObject initialize19(ThreadContext context, Block block) {
+        if (block.isGiven()) {
+            // class and module bodies default to public, so make the block's visibility public. JRUBY-1185.
+            block.getBinding().setVisibility(PUBLIC);
+            module_exec(context, block);
         }
 
         return getRuntime().getNil();
