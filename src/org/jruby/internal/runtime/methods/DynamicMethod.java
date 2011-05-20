@@ -76,6 +76,10 @@ public abstract class DynamicMethod {
     protected NativeCall nativeCall;
     /** The simple, base name this method was defined under. May be null.*/
     protected String name;
+    /** Whether this method is "not implemented". */
+    protected boolean notImplemented = false;
+    /** An arbitrarily-typed "method handle" for use by compilers and call sites */
+    protected Object handle;
 
     /**
      * Base constructor for dynamic method handles.
@@ -519,6 +523,40 @@ public abstract class DynamicMethod {
      */
     public void setName(String name) {
         this.name = name;
+    }
+
+    /**
+     * Get the "handle" associated with this DynamicMethod.
+     * 
+     * @return the handle
+     */
+    public Object getHandle() {
+        return handle;
+    }
+
+    /**
+     * Set the "handle" associated with this DynamicMethod.
+     * 
+     * @param handle the handle
+     */
+    public void setHandle(Object handle) {
+        this.handle = handle;
+    }
+    
+    /**
+     * Whether this method is "not implemented". This is
+     * primarily to support Ruby 1.9's behavior of respond_to? yielding false if
+     * the feature in question is unsupported (but still having the method defined).
+     */
+    public boolean isNotImplemented() {
+        return notImplemented;
+    }
+    
+    /**
+     * Set whether this method is "not implemented".
+     */
+    public void setNotImplemented(boolean setNotImplemented) {
+        this.notImplemented = setNotImplemented;
     }
 
     protected IRubyObject handleRedo(Ruby runtime) throws RaiseException {

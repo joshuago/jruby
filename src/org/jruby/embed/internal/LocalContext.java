@@ -45,9 +45,9 @@ public class LocalContext {
     private RubyInstanceConfig config;
     private LocalVariableBehavior behavior;
     private boolean lazy;
-    private Ruby runtime = null;
-    private BiVariableMap varMap = null;
-    private HashMap attribute;
+    Ruby runtime = null;
+    private BiVariableMap varMap = null;  // singleton doesn't use this varMap.
+    private HashMap attribute = null;
     boolean initialized = false;
 
     public LocalContext(RubyInstanceConfig config, LocalVariableBehavior behavior, boolean lazy) {
@@ -58,14 +58,11 @@ public class LocalContext {
         this.config = config;
         this.behavior = behavior;
         this.lazy = lazy;
-
-        attribute = new HashMap();
-        attribute.put(AttributeName.READER, new InputStreamReader(System.in));
-        attribute.put(AttributeName.WRITER, new PrintWriter(System.out, true));
-        attribute.put(AttributeName.ERROR_WRITER, new PrintWriter(System.err, true));
     }
 
-    public Ruby getRuntime() {
+    // This method is used only from ThreadLocalContextProvider.
+    // Other providers should instantialte runtime in their own way.
+    public Ruby getThreadSafeRuntime() {
         if (runtime == null) {
             // stopped loading java library (runtime.getLoadService().require("java");)
             // during the intialization process.
@@ -75,28 +72,32 @@ public class LocalContext {
         return runtime;
     }
 
-    public BiVariableMap getVarMap() {
-        if (varMap == null) {
-            varMap = new BiVariableMap(getRuntime(), behavior, lazy);
-        }
-        return varMap;
-    }
-
     // this method is used in ConcurrentContextProvider. concurrent model uses
     // global runtime and thread local variable map. don't want to create
     // local runtime
-    public BiVariableMap getVarMap(Ruby runtime) {
+    public BiVariableMap getVarMap(LocalContextProvider provider) {
         if (varMap == null) {
-            varMap = new BiVariableMap(runtime, behavior, lazy);
+            varMap = new BiVariableMap(provider, lazy);
         }
         return varMap;
     }
+    
+    public LocalVariableBehavior getLocalVariableBehavior() {
+        return behavior;
+    }
 
     public HashMap getAttributeMap() {
+        if (attribute == null) {
+            attribute = new HashMap();
+            attribute.put(AttributeName.READER, new InputStreamReader(System.in));
+            attribute.put(AttributeName.WRITER, new PrintWriter(System.out, true));
+            attribute.put(AttributeName.ERROR_WRITER, new PrintWriter(System.err, true));
+        }
         return attribute;
     }
     
     public void remove() {
+        if (attribute == null) return;
         attribute.clear();
         varMap.clear();
     }

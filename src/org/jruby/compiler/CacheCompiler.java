@@ -21,12 +21,16 @@ public interface CacheCompiler {
     public void cacheCallSite(BaseBodyCompiler method, String name, CallType callType);
     
     public void cacheString(BaseBodyCompiler method, ByteList contents, int codeRange);
+    
+    public void cacheByteList(BaseBodyCompiler method, ByteList contents);
 
     public void cacheEncoding(BaseBodyCompiler method, Encoding encoding);
     
     public void cacheSymbol(BaseBodyCompiler method, String symbol);
     
     public void cacheFixnum(BaseBodyCompiler method, long value);
+    
+    public void cacheFloat(BaseBodyCompiler method, double value);
     
     public void cacheBigInteger(BaseBodyCompiler method, BigInteger bigint);
 

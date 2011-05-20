@@ -1,6 +1,5 @@
 package org.jruby.compiler.ir.instructions;
 
-import org.jruby.compiler.ir.Interp;
 import org.jruby.compiler.ir.Operation;
 import org.jruby.compiler.ir.operands.Label;
 import org.jruby.compiler.ir.operands.Operand;
@@ -16,7 +15,9 @@ public class ReceiveSelfInstruction extends NoOperandInstr {
         super(Operation.RECV_SELF, destination);
     }
 
+    @Override
     public Instr cloneForInlining(InlinerInfo ii) {
+		  // SSS FIXME: CopyInstr??
         return new CopyInstr(ii.getRenamedVariable(result), ii.getCallReceiver());
     }
 

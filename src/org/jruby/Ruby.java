@@ -52,7 +52,6 @@ import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.Set;
 import java.util.Stack;
 import java.util.Vector;
@@ -128,10 +127,11 @@ import java.io.File;
 import java.nio.channels.ClosedChannelException;
 import java.util.EnumSet;
 import java.util.concurrent.atomic.AtomicLong;
-import org.jcodings.specific.USASCIIEncoding;
 import org.jruby.RubyInstanceConfig.CompileMode;
 import org.jruby.ast.RootNode;
 import org.jruby.ast.executable.RuntimeCache;
+import org.jruby.runtime.opto.ObjectIdentityInvalidator;
+import org.jruby.runtime.opto.Invalidator;
 import org.jruby.evaluator.ASTInterpreter;
 import org.jruby.exceptions.Unrescuable;
 import org.jruby.internal.runtime.methods.DynamicMethod;
@@ -145,6 +145,7 @@ import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.load.BasicLibraryService;
 import org.jruby.threading.DaemonThreadFactory;
 import org.jruby.util.io.SelectorPool;
+import org.objectweb.asm.Opcodes;
 
 /**
  * The Ruby object represents the top-level of a JRuby "instance" in a given VM.
@@ -281,6 +282,20 @@ public final class Ruby {
 
         this.runtimeCache = new RuntimeCache();
         runtimeCache.initMethodCache(ClassIndex.MAX_CLASSES * MethodIndex.MAX_METHODS);
+        
+        Invalidator myConstantInvalidator;
+        if (RubyInstanceConfig.JAVA_VERSION == Opcodes.V1_7) {
+            try {
+                myConstantInvalidator = (Invalidator)Class.forName("org.jruby.runtime.opto.SwitchPointInvalidator").newInstance();
+            } catch (Throwable t) {
+                t.printStackTrace();
+                // ignore
+                myConstantInvalidator = new ObjectIdentityInvalidator();
+            }
+            constantInvalidator = myConstantInvalidator;
+        } else {
+            constantInvalidator = new ObjectIdentityInvalidator();
+        }
     }
     
     /**
@@ -1083,7 +1098,7 @@ public final class Ruby {
 
         // Require in all libraries specified on command line
         for (String scriptName : config.requiredLibraries()) {
-            loadService.smartLoad(scriptName);
+            loadService.require(scriptName);
         }
     }
 
@@ -1157,10 +1172,6 @@ public final class Ruby {
 
         encodingService = new EncodingService(this);
 
-        if (is1_9()) {
-            RubyRandom.createRandomClass(this);
-        }
-
         RubySymbol.createSymbolClass(this);
 
         if (profile.allowClass("ThreadGroup")) {
@@ -1209,6 +1220,12 @@ public final class Ruby {
         }
         if (profile.allowClass("Bignum")) {
             RubyBignum.createBignumClass(this);
+            // RubyRandom depends on Bignum existence.
+            if (is1_9()) {
+                RubyRandom.createRandomClass(this);
+            } else {
+                setDefaultRand(new RubyRandom.RandomType(this));
+            }
         }
         ioClass = RubyIO.createIOClass(this);
 
@@ -1921,7 +1938,14 @@ public final class Ruby {
     }
     void setStructClass(RubyClass structClass) {
         this.structClass = structClass;
-    }    
+    }
+    
+    public RubyClass getRandomClass() {
+        return randomClass;
+    }
+    void setRandomClass(RubyClass randomClass) {
+        this.randomClass = randomClass;
+    }
 
     public IRubyObject getTmsStruct() {
         return tmsStruct;
@@ -2159,12 +2183,13 @@ public final class Ruby {
         return invalidByteSequenceError;
     }
 
-    public RubyClass getRandomClass() {
-        return randomClass;
+    private RubyRandom.RandomType defaultRand;
+    public RubyRandom.RandomType getDefaultRand() {
+        return defaultRand;
     }
-
-    public void setRandomClass(RubyClass randomClass) {
-        this.randomClass = randomClass;
+    
+    public void setDefaultRand(RubyRandom.RandomType defaultRand) {
+        this.defaultRand = defaultRand;
     }
 
     private RubyHash charsetMap;
@@ -2769,6 +2794,8 @@ public final class Ruby {
         getBeanManager().unregisterClassCache();
         getBeanManager().unregisterMethodCache();
 
+        getSelectorPool().cleanup();
+
         if (getJRubyClassLoader() != null) {
             getJRubyClassLoader().tearDown(isDebug());
         }
@@ -3320,18 +3347,6 @@ public final class Ruby {
         return symbolTable;
     }
 
-    public void setRandomSeed(long randomSeed) {
-        this.randomSeed = randomSeed;
-    }
-
-    public long getRandomSeed() {
-        return randomSeed;
-    }
-
-    public Random getRandom() {
-        return random;
-    }
-
     public ObjectSpace getObjectSpace() {
         return objectSpace;
     }
@@ -3383,10 +3398,6 @@ public final class Ruby {
     @Deprecated
     public ChannelDescriptor getDescriptorByFileno(int aFileno) {
         return ChannelDescriptor.getDescriptorByFileno(aFileno);
-    }
-
-    public long incrementRandomSeedSequence() {
-        return randomSeedSequence++;
     }
 
     public InputStream getIn() {
@@ -3674,12 +3685,22 @@ public final class Ruby {
         return timeZoneCache;
     }
 
+    @Deprecated
     public int getConstantGeneration() {
-        return constantGeneration;
+        return -1;
     }
 
+    @Deprecated
     public synchronized void incrementConstantGeneration() {
-        constantGeneration++;
+        constantInvalidator.invalidate();
+    }
+    
+    public Invalidator getConstantInvalidator() {
+        return constantInvalidator;
+    }
+    
+    public void invalidateConstants() {
+        
     }
 
     public <E extends Enum<E>> void loadConstantSet(RubyModule module, Class<E> enumClass) {
@@ -3867,6 +3888,7 @@ public final class Ruby {
     }
 
     private volatile int constantGeneration = 1;
+    private final Invalidator constantInvalidator;
     private final ThreadService threadService;
     
     private POSIX posix;
@@ -3874,10 +3896,6 @@ public final class Ruby {
     private final ObjectSpace objectSpace = new ObjectSpace();
 
     private final RubySymbol.SymbolTable symbolTable = new RubySymbol.SymbolTable(this);
-
-    private long randomSeed = 0;
-    private long randomSeedSequence = 0;
-    private Random random = new Random();
 
     private final List<EventHook> eventHooks = new Vector<EventHook>();
     private boolean hasEventHooks;  

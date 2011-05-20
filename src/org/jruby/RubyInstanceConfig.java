@@ -317,6 +317,8 @@ public class RubyInstanceConfig {
     public static final boolean JIT_LOADING_DEBUG = SafePropertyAccessor.getBoolean("jruby.jit.debug", false);
 
     public static final boolean CAN_SET_ACCESSIBLE = SafePropertyAccessor.getBoolean("jruby.ji.setAccessible", true);
+    
+    public static final boolean USE_INVOKEDYNAMIC = SafePropertyAccessor.getBoolean("jruby.compile.invokedynamic", true);
 
     private TraceType traceType =
             TraceType.traceTypeFor(SafePropertyAccessor.getProperty("jruby.backtrace.style", "ruby_framed"));
@@ -355,10 +357,16 @@ public class RubyInstanceConfig {
             specVersion = "1.5";
         }
         
-        if (specVersion.equals("1.5")) {
+        // stack map calculation is failing for some compilation scenarios, so
+        // forcing both 1.5 and 1.6 to use 1.5 bytecode for the moment.
+        if (specVersion.equals("1.5")) {// || specVersion.equals("1.6")) {
             JAVA_VERSION = Opcodes.V1_5;
-        } else {
+        } else if (specVersion.equals("1.6")) {
             JAVA_VERSION = Opcodes.V1_6;
+        } else if (specVersion.equals("1.7")) {
+            JAVA_VERSION = Opcodes.V1_7;
+        } else {
+            throw new RuntimeException("unsupported Java version: " + specVersion);
         }
     }
 

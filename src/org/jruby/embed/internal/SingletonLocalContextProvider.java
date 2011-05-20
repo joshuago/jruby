@@ -12,7 +12,7 @@
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
- * Copyright (C) 2009-2010 Yoko Harada <yokolet@gmail.com>
+ * Copyright (C) 2009-2011 Yoko Harada <yokolet@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -29,9 +29,13 @@
  */
 package org.jruby.embed.internal;
 
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.util.HashMap;
 import java.util.Map;
 import org.jruby.Ruby;
 import org.jruby.RubyInstanceConfig;
+import org.jruby.embed.AttributeName;
 import org.jruby.embed.LocalVariableBehavior;
 
 /**
@@ -43,6 +47,43 @@ import org.jruby.embed.LocalVariableBehavior;
  */
 public class SingletonLocalContextProvider extends AbstractLocalContextProvider {
     private static LocalContext localContext = null;
+    private static BiVariableMap varMap = null;
+    private static HashMap attribute = null;
+    
+    public static LocalContext getLocalContextInstance(RubyInstanceConfig config, LocalVariableBehavior behavior, boolean lazy) {
+        if (localContext == null) {
+            synchronized (LocalContext.class) {
+                localContext = new LocalContext(config, behavior, lazy);
+            }
+        }
+        return localContext;
+    }
+    
+    private static BiVariableMap getBiVariableInstance(LocalContextProvider provider, boolean lazy) {
+        if (varMap == null) {
+            synchronized (BiVariableMap.class) {
+                varMap = new BiVariableMap(provider, lazy);
+            }
+        }
+        return varMap;
+    }
+    
+    private static HashMap getAttributeInstance() {
+        if (attribute == null) {
+            synchronized (HashMap.class) {
+                attribute = new HashMap();
+                attribute.put(AttributeName.READER, new InputStreamReader(System.in));
+                attribute.put(AttributeName.WRITER, new PrintWriter(System.out, true));
+                attribute.put(AttributeName.ERROR_WRITER, new PrintWriter(System.err, true));
+            }
+        }
+        return attribute;
+    }
+    
+    public static LocalVariableBehavior getLocalVariableBehaviorOrNull() {
+        if (localContext == null) return null;
+        else return localContext.getLocalVariableBehavior();
+    }
 
     public SingletonLocalContextProvider(LocalVariableBehavior behavior, boolean lazy) {
         this.behavior = behavior;
@@ -50,11 +91,8 @@ public class SingletonLocalContextProvider extends AbstractLocalContextProvider 
     }
     
     public Ruby getRuntime() {
-        if (localContext == null) {
-            localContext = getInstance();
-        }
-        if (!localContext.initialized) {
-            localContext.getRuntime();
+        if (!Ruby.isGlobalRuntimeReady()) {
+            return Ruby.newInstance(config);
         }
         return Ruby.getGlobalRuntime();
     }
@@ -66,28 +104,21 @@ public class SingletonLocalContextProvider extends AbstractLocalContextProvider 
     }
 
     public BiVariableMap getVarMap() {
-        if (localContext == null) {
-            localContext = getInstance();
-        }
-        return localContext.getVarMap();
+        return SingletonLocalContextProvider.getBiVariableInstance(this, lazy);
     }
 
     public Map getAttributeMap() {
-        if (localContext == null) {
-            localContext = getInstance();
-        }
-        return localContext.getAttributeMap();
+        return SingletonLocalContextProvider.getAttributeInstance();
     }
 
     public boolean isRuntimeInitialized() {
-        if (localContext == null) {
-            localContext = getInstance();
-        }
-        return localContext.initialized;
+        LocalContext context = SingletonLocalContextProvider.getLocalContextInstance(config, behavior, lazy);
+        return context.initialized;
     }
     
     public void terminate() {
-        localContext.remove();
-        localContext = null;
+        LocalContext context = SingletonLocalContextProvider.getLocalContextInstance(config, behavior, lazy);
+        context.remove();
+        context = null;
     }
 }

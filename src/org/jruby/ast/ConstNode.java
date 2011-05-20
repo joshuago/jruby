@@ -40,6 +40,7 @@ import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ByteList;
 
 /**
  * The access to a Constant.
@@ -47,7 +48,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 public class ConstNode extends Node implements INameNode {
     private String name;
     private volatile transient IRubyObject cachedValue = null;
-    private int generation = -1;
+    private Object generation = -1;
     
     public ConstNode(ISourcePosition position, String name) {
         super(position);
@@ -92,8 +93,8 @@ public class ConstNode extends Node implements INameNode {
     }
 
     @Override
-    public String definition(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
-        return context.getConstantDefined(name) ? "constant" : null;
+    public ByteList definition(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
+        return context.getConstantDefined(name) ? CONSTANT_BYTELIST : null;
     }
     
     public IRubyObject getValue(ThreadContext context) {
@@ -103,11 +104,11 @@ public class ConstNode extends Node implements INameNode {
     }
     
     private boolean isCached(ThreadContext context, IRubyObject value) {
-        return value != null && generation == context.getRuntime().getConstantGeneration();
+        return value != null && generation == context.getRuntime().getConstantInvalidator().getData();
     }
     
     public IRubyObject reCache(ThreadContext context, String name) {
-        int newGeneration = context.getRuntime().getConstantGeneration();
+        Object newGeneration = context.getRuntime().getConstantInvalidator().getData();
         IRubyObject value = context.getConstant(name);
             
         cachedValue = value;

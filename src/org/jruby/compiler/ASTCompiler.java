@@ -151,6 +151,7 @@ import org.jruby.runtime.CallType;
 import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.callsite.CacheEntry;
 import org.jruby.runtime.callsite.CachingCallSite;
+import org.jruby.util.ByteList;
 import org.jruby.util.StringSupport;
 
 /**
@@ -801,31 +802,27 @@ public class ASTCompiler {
         DYNOPT: if (RubyInstanceConfig.DYNOPT_COMPILE_ENABLED) {
             // dynopt does not handle non-local block flow control yet, so we bail out
             // if there's a closure.
-            System.out.println(callNode);
             if (callNode.getIterNode() != null) break DYNOPT;
             if (callNode.callAdapter instanceof CachingCallSite) {
-                    System.out.println("is caching");
                 CachingCallSite cacheSite = (CachingCallSite)callNode.callAdapter;
                 if (cacheSite.isOptimizable()) {
-                    System.out.println("is optimizable");
                     CacheEntry entry = cacheSite.getCache();
                     if (entry.method.getNativeCall() != null) {
-                    System.out.println("has nativecall");
                         NativeCall nativeCall = entry.method.getNativeCall();
 
                         // only do direct calls for specific arity
                         if (argsCallback == null || argsCallback.getArity() >= 0 && argsCallback.getArity() <= 3) {
-//                            if (compileIntrinsic(context, callNode, cacheSite.methodName, entry.token, entry.method, receiverCallback, argsCallback, closureArg)) {
-//                                // intrinsic compilation worked, hooray!
-//                                return;
-//                            } else {
+                            if (compileIntrinsic(context, callNode, cacheSite.methodName, entry.token, entry.method, receiverCallback, argsCallback, closureArg)) {
+                                // intrinsic compilation worked, hooray!
+                                return;
+                            } else {
                                 // otherwise, normal straight-through native call
                                 context.getInvocationCompiler().invokeNative(
                                         name, nativeCall, entry.token, receiverCallback,
                                         argsCallback, closureArg, CallType.NORMAL,
                                         callNode.getIterNode() instanceof IterNode);
                                 return;
-//                            }
+                            }
                         }
                     }
 
@@ -843,6 +840,10 @@ public class ASTCompiler {
             if (MethodIndex.hasFastOps(name)) {
                 if (argument instanceof FixnumNode) {
                     context.getInvocationCompiler().invokeBinaryFixnumRHS(name, receiverCallback, ((FixnumNode)argument).getValue());
+                    if (!expr) context.consumeCurrentValue();
+                    return;
+                } else if (argument instanceof FloatNode) {
+                    context.getInvocationCompiler().invokeBinaryFloatRHS(name, receiverCallback, ((FloatNode)argument).getValue());
                     if (!expr) context.consumeCurrentValue();
                     return;
                 }
@@ -1488,7 +1489,7 @@ public class ASTCompiler {
                             context.outDefined();
                         }
                     };
-            context.protect(reg, out, String.class);
+            context.protect(reg, out, ByteList.class);
         }
     }
 
@@ -1501,7 +1502,7 @@ public class ASTCompiler {
 
     public void compileGetArgumentDefinition(final Node node, BodyCompiler context, String type) {
         if (node == null) {
-            context.pushString(type);
+            context.pushByteList(ByteList.create(type));
         } else if (node instanceof ArrayNode) {
             Object endToken = context.getNewEnding();
             for (int i = 0; i < ((ArrayNode) node).size(); i++) {
@@ -1509,7 +1510,7 @@ public class ASTCompiler {
                 compileGetDefinition(iterNode, context);
                 context.ifNull(endToken);
             }
-            context.pushString(type);
+            context.pushByteList(ByteList.create(type));
             Object realToken = context.getNewEnding();
             context.go(realToken);
             context.setEnding(endToken);
@@ -1519,7 +1520,7 @@ public class ASTCompiler {
             compileGetDefinition(node, context);
             Object endToken = context.getNewEnding();
             context.ifNull(endToken);
-            context.pushString(type);
+            context.pushByteList(ByteList.create(type));
             Object realToken = context.getNewEnding();
             context.go(realToken);
             context.setEnding(endToken);
@@ -1543,7 +1544,7 @@ public class ASTCompiler {
             case OPASGNORNODE:
             case OPELEMENTASGNNODE:
             case INSTASGNNODE: // simple assignment cases
-                context.pushString("assignment");
+                context.pushByteList(Node.ASSIGNMENT_BYTELIST);
                 break;
             case ANDNODE: // all these just evaluate and then do expression if there's no error
             case ORNODE:
@@ -1557,7 +1558,7 @@ public class ASTCompiler {
 
                                 public void branch(BodyCompiler context) {
                                     compile(node, context, false);
-                                    context.pushString("expression");
+                                    context.pushByteList(Node.EXPRESSION_BYTELIST);
                                 }
                             }, JumpException.class,
                             new BranchCallback() {
@@ -1565,7 +1566,7 @@ public class ASTCompiler {
                                 public void branch(BodyCompiler context) {
                                     context.pushNull();
                                 }
-                            }, String.class);
+                            }, ByteList.class);
                     context.definedNot();
                     break;
                 }
@@ -1576,26 +1577,26 @@ public class ASTCompiler {
                 compileDefinedDVar(node, context);
                 break;
             case FALSENODE:
-                context.pushString("false");
+                context.pushByteList(Node.FALSE_BYTELIST);
                 break;
             case TRUENODE:
-                context.pushString("true");
+                context.pushByteList(Node.TRUE_BYTELIST);
                 break;
             case LOCALVARNODE:
-                context.pushString("local-variable");
+                context.pushByteList(Node.LOCAL_VARIABLE_BYTELIST);
                 break;
             case MATCH2NODE:
             case MATCH3NODE:
-                context.pushString("method");
+                context.pushByteList(Node.METHOD_BYTELIST);
                 break;
             case NILNODE:
-                context.pushString("nil");
+                context.pushByteList(Node.NIL_BYTELIST);
                 break;
             case NTHREFNODE:
                 compileDefinedNthref(node, context);
                 break;
             case SELFNODE:
-                context.pushString("self");
+                context.pushByteList(Node.SELF_BYTELIST);
                 break;
             case VCALLNODE:
                 context.loadSelf();
@@ -1603,7 +1604,7 @@ public class ASTCompiler {
                         new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushString("method");
+                                context.pushByteList(Node.METHOD_BYTELIST);
                             }
                         },
                         new BranchCallback() {
@@ -1617,7 +1618,7 @@ public class ASTCompiler {
                 context.hasBlock(new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushString("yield");
+                                context.pushByteList(Node.YIELD_BYTELIST);
                             }
                         },
                         new BranchCallback() {
@@ -1632,7 +1633,7 @@ public class ASTCompiler {
                         new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushString("global-variable");
+                                context.pushByteList(Node.GLOBAL_VARIABLE_BYTELIST);
                             }
                         },
                         new BranchCallback() {
@@ -1647,7 +1648,7 @@ public class ASTCompiler {
                         new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushString("instance-variable");
+                                context.pushByteList(Node.INSTANCE_VARIABLE_BYTELIST);
                             }
                         },
                         new BranchCallback() {
@@ -1662,7 +1663,7 @@ public class ASTCompiler {
                         new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushString("constant");
+                                context.pushByteList(Node.CONSTANT_BYTELIST);
                             }
                         },
                         new BranchCallback() {
@@ -1733,7 +1734,7 @@ public class ASTCompiler {
 
                                 public void branch(BodyCompiler context) {
                                     context.consumeCurrentValue();
-                                    context.pushString("class variable");
+                                    context.pushByteList(Node.CLASS_VARIABLE_BYTELIST);
                                     context.go(ending);
                                 }
                             },
@@ -1749,7 +1750,7 @@ public class ASTCompiler {
 
                                 public void branch(BodyCompiler context) {
                                     context.consumeCurrentValue();
-                                    context.pushString("class variable");
+                                    context.pushByteList(Node.CLASS_VARIABLE_BYTELIST);
                                     context.go(ending);
                                 }
                             },
@@ -1766,7 +1767,7 @@ public class ASTCompiler {
                     context.setEnding(singleton);
                     context.attached();//[RubyClass]
                     context.notIsModuleAndClassVarDefined(iVisited.getName(), failure); //[]
-                    context.pushString("class variable");
+                    context.pushByteList(Node.CLASS_VARIABLE_BYTELIST);
                     context.go(ending);
                     context.setEnding(failure);
                     context.pushNull();
@@ -1789,7 +1790,7 @@ public class ASTCompiler {
                     context.superClass();
                     context.ifNotSuperMethodBound(fail_easy);
 
-                    context.pushString("super");
+                    context.pushByteList(Node.SUPER_BYTELIST);
                     context.go(ending);
 
                     context.setEnding(fail2);
@@ -1879,7 +1880,7 @@ public class ASTCompiler {
                                 public void branch(BodyCompiler context) {
                                     context.pushNull();
                                 }
-                            }, String.class);
+                            }, ByteList.class);
 
                     context.go(ending);
                     context.setEnding(isnull);
@@ -1901,9 +1902,9 @@ public class ASTCompiler {
                             public void branch(BodyCompiler context) {
                                 context.pushNull();
                             }
-                        }, String.class);
+                        }, ByteList.class);
                 context.consumeCurrentValue();
-                context.pushString("expression");
+                context.pushByteList(Node.EXPRESSION_BYTELIST);
         }
     }
 
@@ -1912,7 +1913,7 @@ public class ASTCompiler {
 
                     public void branch(BodyCompiler context) {
                         compile(node, context, false);
-                        context.pushString("expression");
+                        context.pushByteList(Node.EXPRESSION_BYTELIST);
                     }
                 }, JumpException.class,
                 new BranchCallback() {
@@ -1920,7 +1921,7 @@ public class ASTCompiler {
                     public void branch(BodyCompiler context) {
                         context.pushNull();
                     }
-                }, String.class);
+                }, ByteList.class);
     }
 
     protected void compileDefinedCall(final Node node, BodyCompiler context) {
@@ -1942,7 +1943,7 @@ public class ASTCompiler {
                         public void branch(BodyCompiler context) {
                             context.pushNull();
                         }
-                    }, String.class);
+                    }, ByteList.class);
 
             //          context.swapValues();
     //context.consumeCurrentValue();
@@ -1953,7 +1954,7 @@ public class ASTCompiler {
     }
 
     protected void compileDefinedDVar(final Node node, BodyCompiler context) {
-        context.pushString("local-variable(in-block)");
+        context.pushByteList(Node.LOCAL_VARIABLE_IN_BLOCK_BYTELIST);
     }
 
     protected void compileDefinedBackref(final Node node, BodyCompiler context) {
@@ -1962,7 +1963,7 @@ public class ASTCompiler {
                 new BranchCallback() {
 
                     public void branch(BodyCompiler context) {
-                        context.pushString("$" + ((BackRefNode) node).getType());
+                        context.pushByteList(ByteList.create("$" + ((BackRefNode) node).getType()));
                     }
                 },
                 new BranchCallback() {
@@ -1978,7 +1979,7 @@ public class ASTCompiler {
                 new BranchCallback() {
 
                     public void branch(BodyCompiler context) {
-                        context.pushString("$" + ((NthRefNode) node).getMatchNumber());
+                        context.pushByteList(ByteList.create("$" + ((NthRefNode) node).getMatchNumber()));
                     }
                 },
                 new BranchCallback() {

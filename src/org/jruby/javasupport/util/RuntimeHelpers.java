@@ -161,7 +161,7 @@ public class RuntimeHelpers {
         return receiver0.isTrue() || receiver1.isTrue() || receiver2.isTrue();
     }
     
-    public static CompiledBlockCallback createBlockCallback(Ruby runtime, Object scriptObject, String closureMethod, String file, int line) {
+    public static CompiledBlockCallback createBlockCallback(Object scriptObject, String closureMethod, String file, int line) {
         Class scriptClass = scriptObject.getClass();
         ClassLoader scriptClassLoader = scriptClass.getClassLoader();
         MethodFactory factory = MethodFactory.createFactory(scriptClassLoader);
@@ -169,7 +169,7 @@ public class RuntimeHelpers {
         return factory.getBlockCallback(closureMethod, file, line, scriptObject);
     }
 
-    public static CompiledBlockCallback19 createBlockCallback19(Ruby runtime, Object scriptObject, String closureMethod, String file, int line) {
+    public static CompiledBlockCallback19 createBlockCallback19(Object scriptObject, String closureMethod, String file, int line) {
         Class scriptClass = scriptObject.getClass();
         ClassLoader scriptClassLoader = scriptClass.getClassLoader();
         MethodFactory factory = MethodFactory.createFactory(scriptClassLoader);
@@ -265,12 +265,12 @@ public class RuntimeHelpers {
         if (light) {
             return CompiledBlockLight.newCompiledBlockLight(
                     Arity.createArity(arity), staticScope,
-                    createBlockCallback(context.getRuntime(), scriptObject, closureMethod, file, line),
+                    createBlockCallback(scriptObject, closureMethod, file, line),
                     hasMultipleArgsHead, argsNodeType);
         } else {
             return CompiledBlock.newCompiledBlock(
                     Arity.createArity(arity), staticScope,
-                    createBlockCallback(context.getRuntime(), scriptObject, closureMethod, file, line),
+                    createBlockCallback(scriptObject, closureMethod, file, line),
                     hasMultipleArgsHead, argsNodeType);
         }
     }
@@ -291,12 +291,12 @@ public class RuntimeHelpers {
         if (light) {
             return CompiledBlockLight19.newCompiledBlockLight(
                     Arity.createArity(arity), staticScope,
-                    createBlockCallback19(context.getRuntime(), scriptObject, closureMethod, file, line),
+                    createBlockCallback19(scriptObject, closureMethod, file, line),
                     hasMultipleArgsHead, argsNodeType, parameterList.split(";"));
         } else {
             return CompiledBlock19.newCompiledBlock(
                     Arity.createArity(arity), staticScope,
-                    createBlockCallback19(context.getRuntime(), scriptObject, closureMethod, file, line),
+                    createBlockCallback19(scriptObject, closureMethod, file, line),
                     hasMultipleArgsHead, argsNodeType, parameterList.split(";"));
         }
     }
@@ -961,6 +961,10 @@ public class RuntimeHelpers {
         return context.returnJump(result);
     }
     
+    public static IRubyObject throwReturnJump(IRubyObject result, ThreadContext context) {
+        throw context.returnJump(result);
+    }
+    
     public static IRubyObject breakJumpInWhile(JumpException.BreakJump bj, ThreadContext context) {
         // JRUBY-530, while case
         if (bj.getTarget() == context.getFrameJumpTarget()) {
@@ -1423,9 +1427,9 @@ public class RuntimeHelpers {
         return runtime.getTrue();
     }
     
-    public static IRubyObject stringOrNil(String value, Ruby runtime, IRubyObject nil) {
-        if (value == null) return nil;
-        return RubyString.newString(runtime, value);
+    public static IRubyObject stringOrNil(ByteList value, ThreadContext context) {
+        if (value == null) return context.nil;
+        return RubyString.newStringShared(context.runtime, value);
     }
     
     public static void preLoad(ThreadContext context, String[] varNames) {
@@ -2134,9 +2138,9 @@ public class RuntimeHelpers {
         return left instanceof RubyModule && ((RubyModule) left).fastGetConstantFromNoConstMissing(name) != null;
     }
 
-    public static String getDefinedConstantOrBoundMethod(IRubyObject left, String name) {
-        if (isModuleAndHasConstant(left, name)) return "constant";
-        if (left.getMetaClass().isMethodBound(name, true)) return "method";
+    public static ByteList getDefinedConstantOrBoundMethod(IRubyObject left, String name) {
+        if (isModuleAndHasConstant(left, name)) return Node.CONSTANT_BYTELIST;
+        if (left.getMetaClass().isMethodBound(name, true)) return Node.METHOD_BYTELIST;
         return null;
     }
 
@@ -2373,26 +2377,26 @@ public class RuntimeHelpers {
         return parms;
     }
 
-    public static String getDefinedCall(ThreadContext context, IRubyObject self, IRubyObject receiver, String name) {
+    public static ByteList getDefinedCall(ThreadContext context, IRubyObject self, IRubyObject receiver, String name) {
         RubyClass metaClass = receiver.getMetaClass();
         DynamicMethod method = metaClass.searchMethod(name);
         Visibility visibility = method.getVisibility();
 
         if (visibility != Visibility.PRIVATE &&
                 (visibility != Visibility.PROTECTED || metaClass.getRealClass().isInstance(self)) && !method.isUndefined()) {
-            return "method";
+            return Node.METHOD_BYTELIST;
         }
 
         if (context.getRuntime().is1_9() && receiver.callMethod(context, "respond_to_missing?",
             new IRubyObject[]{context.getRuntime().newSymbol(name), context.getRuntime().getFalse()}).isTrue()) {
-            return "method";
+            return Node.METHOD_BYTELIST;
         }
         return null;
     }
 
-    public static String getDefinedNot(Ruby runtime, String definition) {
+    public static ByteList getDefinedNot(Ruby runtime, ByteList definition) {
         if (definition != null && runtime.is1_9()) {
-            definition = "method";
+            definition = Node.METHOD_BYTELIST;
         }
 
         return definition;

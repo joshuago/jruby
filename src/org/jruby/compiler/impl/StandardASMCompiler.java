@@ -177,31 +177,33 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     private CacheCompiler cacheCompiler;
     
     public static final Constructor invDynInvCompilerConstructor;
-    public static final Method invDynSupportInstaller;
+    public static final Constructor invDynCacheCompilerConstructor;
 
     private List<InvokerDescriptor> invokerDescriptors = new ArrayList<InvokerDescriptor>();
     private List<BlockCallbackDescriptor> blockCallbackDescriptors = new ArrayList<BlockCallbackDescriptor>();
     private List<BlockCallbackDescriptor> blockCallback19Descriptors = new ArrayList<BlockCallbackDescriptor>();
 
     static {
-        Constructor compilerConstructor = null;
-        Method installerMethod = null;
+        Constructor invCompilerConstructor = null;
+        Constructor cacheCompilerConstructor = null;
         try {
-            if (SafePropertyAccessor.getBoolean("jruby.compile.invokedynamic")) {
-                // if that succeeds, the others should as well
+            if (RubyInstanceConfig.USE_INVOKEDYNAMIC) {
+                // attempt to access an invokedynamic-related class
+                Class.forName("java.lang.invoke.MethodHandle");
+                
+                // if that succeeds, use invokedynamic compiler stuff
                 Class compiler =
                         Class.forName("org.jruby.compiler.impl.InvokeDynamicInvocationCompiler");
-                Class support =
-                        Class.forName("org.jruby.runtime.invokedynamic.InvokeDynamicSupport");
-                compilerConstructor = compiler.getConstructor(BaseBodyCompiler.class, SkinnyMethodAdapter.class);
-                installerMethod = support.getDeclaredMethod("installBytecode", MethodVisitor.class, String.class);
+                invCompilerConstructor = compiler.getConstructor(BaseBodyCompiler.class, SkinnyMethodAdapter.class);
+                compiler =
+                        Class.forName("org.jruby.compiler.impl.InvokeDynamicCacheCompiler");
+                cacheCompilerConstructor = compiler.getConstructor(ScriptCompiler.class);
             }
         } catch (Exception e) {
-            e.printStackTrace();
             // leave it null and fall back on our normal invocation logic
         }
-        invDynInvCompilerConstructor = compilerConstructor;
-        invDynSupportInstaller = installerMethod;
+        invDynInvCompilerConstructor = invCompilerConstructor;
+        invDynCacheCompilerConstructor = cacheCompilerConstructor;
     }
     
     /** Creates a new instance of StandardCompilerContext */
@@ -454,7 +456,20 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
 
         beginInit();
         
-        cacheCompiler = new InheritedCacheCompiler(this);
+        if (invDynCacheCompilerConstructor != null) {
+            try {
+                cacheCompiler = (CacheCompiler)StandardASMCompiler.invDynCacheCompilerConstructor.newInstance(this);
+            } catch (InstantiationException ie) {
+                // do nothing, fall back on default compiler below
+                } catch (IllegalAccessException ie) {
+                // do nothing, fall back on default compiler below
+                } catch (InvocationTargetException ie) {
+                // do nothing, fall back on default compiler below
+                }
+        }
+        if (invDynCacheCompilerConstructor == null) {
+            cacheCompiler = new InheritedCacheCompiler(this);
+        }
 
         // This code was originally used to provide debugging info using JSR-45
         // "SMAP" format. However, it breaks using normal Java traces to
@@ -606,23 +621,6 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
 
         clinitMethod = new SkinnyMethodAdapter(cv, ACC_PUBLIC | ACC_STATIC, "<clinit>", sig(Void.TYPE), null, null);
         clinitMethod.start();
-
-        if (invDynSupportInstaller != null) {
-            // install invokedynamic bootstrapper
-            // TODO need to abstract this setup behind another compiler interface
-            try {
-                invDynSupportInstaller.invoke(null, clinitMethod, getClassname());
-            } catch (IllegalAccessException ex) {
-                ex.printStackTrace();
-                // ignore; we won't use invokedynamic
-            } catch (IllegalArgumentException ex) {
-                ex.printStackTrace();
-                // ignore; we won't use invokedynamic
-            } catch (InvocationTargetException ex) {
-                ex.printStackTrace();
-                // ignore; we won't use invokedynamic
-            }
-        }
     }
 
     private void endClassInit() {

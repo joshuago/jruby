@@ -13,6 +13,7 @@ import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ByteList;
 
 /**
  *
@@ -20,7 +21,7 @@ import org.jruby.runtime.builtin.IRubyObject;
  */
 public class Colon2ConstNode extends Colon2Node {
     private volatile transient IRubyObject cachedValue = null;
-    private volatile int generation = -1;
+    private volatile Object generation = -1;
     private volatile int hash = -1;
     
     public Colon2ConstNode(ISourcePosition position, Node leftNode, String name) {
@@ -38,10 +39,10 @@ public class Colon2ConstNode extends Colon2Node {
     }
 
     @Override
-    public String definition(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
+    public ByteList definition(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
         IRubyObject lastError = context.getErrorInfo();
         try {
-            if (RuntimeHelpers.isModuleAndHasConstant(leftNode.interpret(runtime, context, self, aBlock), name)) return "constant";
+            if (RuntimeHelpers.isModuleAndHasConstant(leftNode.interpret(runtime, context, self, aBlock), name)) return CONSTANT_BYTELIST;
         } catch (JumpException e) {
             // replace lastError
             context.setErrorInfo(lastError);
@@ -60,12 +61,12 @@ public class Colon2ConstNode extends Colon2Node {
         // We could probably also detect if LHS value came out of cache and avoid some of this
         return
                 value != null &&
-                generation == context.getRuntime().getConstantGeneration() &&
+                generation == context.getRuntime().getConstantInvalidator().getData() &&
                 hash == target.hashCode();
     }
 
     public IRubyObject reCache(ThreadContext context, RubyModule target) {
-        int newGeneration = context.getRuntime().getConstantGeneration();
+        Object newGeneration = context.getRuntime().getConstantInvalidator().getData();
         IRubyObject value = target.fastGetConstantFromNoConstMissing(name);
 
         cachedValue = value;

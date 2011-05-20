@@ -29,11 +29,13 @@
 package org.jruby.compiler.impl;
 
 import org.jruby.compiler.ArgumentsCallback;
+import org.jruby.compiler.BodyCompiler;
 import org.jruby.compiler.CompilerCallback;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.CallType;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.invokedynamic.InvokeDynamicSupport;
 import static org.jruby.util.CodegenUtils.*;
 
 /**
@@ -43,9 +45,11 @@ import static org.jruby.util.CodegenUtils.*;
 public class InvokeDynamicInvocationCompiler extends StandardInvocationCompiler {
     public InvokeDynamicInvocationCompiler(BaseBodyCompiler methodCompiler, SkinnyMethodAdapter method) {
         super(methodCompiler, method);
+    }
 
-        // HACK: force clinit to be created
-        methodCompiler.getScriptCompiler().getClassInitMethod();
+    public void invokeAttrAssign(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback) {
+        // TODO: NORMAL versus VARIABLE call type test
+        invokeDynamic(name, receiverCallback, argsCallback, CallType.VARIABLE, null, false);
     }
 
     @Override
@@ -122,6 +126,28 @@ public class InvokeDynamicInvocationCompiler extends StandardInvocationCompiler 
         }
         
         // adapter, tc, recv, args{0,1}, block{0,1}]
-        method.invokedynamic(p(Object.class), invokeName, signature);
+        method.invokedynamic(invokeName, signature, InvokeDynamicSupport.bootstrapHandle());
+    }
+
+    @Override
+    public void invokeEqq(ArgumentsCallback receivers, final CompilerCallback argument) {
+        if (argument == null) {
+            super.invokeEqq(receivers, argument);
+        } else {
+            if (receivers.getArity() == 1) {
+                invokeDynamic("===", receivers, new ArgumentsCallback() {
+                    public int getArity() {
+                        return 1;
+                    }
+
+                    public void call(BodyCompiler context) {
+                        argument.call(context);
+                    }
+                }, CallType.FUNCTIONAL, null, false);
+                methodCompiler.isTrue();
+            } else {
+                super.invokeEqq(receivers, argument);
+            }
+        }
     }
 }
