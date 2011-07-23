@@ -59,6 +59,7 @@ import org.jruby.lexer.yacc.SyntaxException.PID;
 import org.jruby.parser.ParserSupport;
 import org.jruby.parser.Tokens;
 import org.jruby.util.ByteList;
+import org.jruby.util.SafeDoubleParser;
 import org.jruby.util.StringSupport;
 
 
@@ -129,9 +130,9 @@ public class RubyYaccLexer {
     private int getFloatToken(String number) {
         double d;
         try {
-            d = Double.parseDouble(number);
+            d = SafeDoubleParser.parseDouble(number);
         } catch (NumberFormatException e) {
-            warnings.warn(ID.FLOAT_OUT_OF_RANGE, getPosition(), "Float " + number + " out of range.", number);
+            warnings.warn(ID.FLOAT_OUT_OF_RANGE, getPosition(), "Float " + number + " out of range.");
 
             d = number.startsWith("-") ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
         }
@@ -803,9 +804,11 @@ public class RubyYaccLexer {
             }
 
             commentLine = src.readUntil('\n');
-            handledMagicComment = parseMagicComment(commentLine);
-            if (!handledMagicComment) {
-                handleFileEncodingComment(commentLine);
+            if (commentLine != null) {
+                handledMagicComment = parseMagicComment(commentLine);
+                if (!handledMagicComment) {
+                    handleFileEncodingComment(commentLine);
+                }
             }
             return 0;
         }
@@ -1249,7 +1252,7 @@ public class RubyYaccLexer {
         //a wrong position if the "inclusive" flag is not set.
         ISourcePosition tmpPosition = getPosition();
         if (isARG() && spaceSeen && !Character.isWhitespace(c)) {
-            if (warnings.isVerbose()) warnings.warning(ID.ARGUMENT_AS_PREFIX, tmpPosition, "`&' interpreted as argument prefix", "&");
+            if (warnings.isVerbose()) warnings.warning(ID.ARGUMENT_AS_PREFIX, tmpPosition, "`&' interpreted as argument prefix");
             c = Tokens.tAMPER;
         } else if (isBEG()) {
             c = Tokens.tAMPER;
@@ -2107,7 +2110,7 @@ public class RubyYaccLexer {
         default:
             src.unread(c);
             if (isARG() && spaceSeen && !Character.isWhitespace(c)) {
-                if (warnings.isVerbose()) warnings.warning(ID.ARGUMENT_AS_PREFIX, getPosition(), "`*' interpreted as argument prefix", "*");
+                if (warnings.isVerbose()) warnings.warning(ID.ARGUMENT_AS_PREFIX, getPosition(), "`*' interpreted as argument prefix");
                 c = Tokens.tSTAR;
             } else if (isBEG()) {
                 c = Tokens.tSTAR;

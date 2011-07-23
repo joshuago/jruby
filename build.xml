@@ -1,26 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <project basedir="." default="jar" name="JRuby">
-  <description>JRuby is a pure Java implementation of a Ruby interpreter.</description>
-
-  <property name="base.dir" location="${basedir}"/>
-
-  <property name="jruby.gem.home.1.8" location="${basedir}/lib/ruby/gems/1.8"/>
+  <description>JRuby is a Java implementation of a Ruby runtime.</description>
 
   <!-- First try to load machine-specific properties. -->
   <property file="build.properties"/>
 
-  <!-- And then load the defaults. It seems backwards to set defaults AFTER
-       setting local overrides, but that's how Ant works. -->
+  <!-- Then set defaults for any values not set by build.properties -->
   <property file="default.build.properties"/>
-
-  <property name="shared.lib.dir" value="lib/ruby/site_ruby/shared"/>
-  
-  <property name="asm.jar" value="${build.lib.dir}/asm-${asm.version}.jar"/>
-  <property name="asm-commons.jar" value="${build.lib.dir}/asm-commons-${asm.version}.jar"/>
-  <property name="asm-util.jar" value="${build.lib.dir}/asm-util-${asm.version}.jar"/>
-  <property name="asm-analysis.jar" value="${build.lib.dir}/asm-analysis-${asm.version}.jar"/>
-  <property name="asm-tree.jar" value="${build.lib.dir}/asm-tree-${asm.version}.jar"/>
 
   <path id="build.classpath">
     <fileset dir="${build.lib.dir}" includes="*.jar"/>
@@ -31,25 +18,14 @@
     <pathelement path="${jruby.classes.dir}"/>
   </path>
 
-  <!-- directory that contains emma.jar and emma_ant.jar: -->
-  <property name="emma.dir" value="${build.lib.dir}" />
-
   <path id="emma.classpath">
-    <pathelement location="${emma.dir}/emma.jar" />
-    <pathelement location="${emma.dir}/emma_ant.jar" />
+    <pathelement location="${build.lib.dir}/emma.jar" />
+    <pathelement location="${build.lib.dir}/emma_ant.jar" />
   </path>
 
   <patternset id="java.src.pattern">
     <include name="**/*.java"/>
     <exclude unless="sun-misc-signal" name="**/SunSignalFacade.java"/>
-  </patternset>
-
-  <patternset id="ruby.src.pattern">
-    <include name="**/*.rb"/>
-  </patternset>
-
-  <patternset id="other.src.pattern">
-    <include name="**/*.properties"/>
   </patternset>
 
   <import file="netbeans-ant.xml" optional="true"/>
@@ -113,10 +89,10 @@
   <!-- Initializes the build -->
   <target name="init" unless="init.hasrun">
     <!-- do not unpack rdocs if they're already there -->
-    <uptodate property="extract-rdocs.hasrun" srcfile="${rdoc.archive}" targetfile="${basedir}/share/ri.jar"/>
+    <uptodate property="extract-rdocs.hasrun" srcfile="${rdoc.archive}" targetfile="share/ri.jar"/>
 
     <!-- do not generate ri cache if it's already generated -->
-    <uptodate property="generate-ri-cache.hasrun" srcfile="${rdoc.archive}" targetfile="${basedir}/share/ri_cache.bin.gz"/>
+    <uptodate property="generate-ri-cache.hasrun" srcfile="${rdoc.archive}" targetfile="share/ri_cache.bin.gz"/>
 
     <!-- do not unpack native libs if they're already there -->
     <uptodate property="native-libs-uptodate" targetfile="${lib.dir}/native/libs.OK">
@@ -130,7 +106,7 @@
 
     <!-- if bin/jruby does not exist, copy from bin/jruby.bash -->
     <condition property="prepare-bin-jruby.hasrun" value="true">
-      <available file="${basedir}/bin/jruby"/>
+      <available file="bin/jruby"/>
     </condition>
     <antcall target="prepare-bin-jruby"/>
 
@@ -147,7 +123,7 @@
     <exec executable="/bin/sh" osfamily="unix">
       <arg line="-c 'test -f &quot;${basedir}/bin/jruby&quot; || cp &quot;${basedir}/bin/jruby.bash&quot; &quot;${basedir}/bin/jruby&quot;'"/>
     </exec>
-    <chmod perm="755" file="${basedir}/bin/jruby"/>
+    <chmod perm="755" file="bin/jruby"/>
   </target>
 
   <!-- Creates the directories needed for building -->
@@ -184,8 +160,8 @@
   <!-- extract rdoc archive into share/ -->
   <target name="extract-rdocs" depends="init" unless="extract-rdocs.hasrun">
     <untar src="${rdoc.archive}" dest="${basedir}" compression="gzip"/>
-    <jar file="${basedir}/share/ri.jar">
-      <fileset dir="${basedir}/share" includes="ri/**/*"/>
+    <jar file="share/ri.jar">
+      <fileset dir="share" includes="ri/**/*"/>
     </jar>
     <property name="RDOCS_EXTRACTED" value="true"/>
   </target>
@@ -193,21 +169,31 @@
   <macrodef name="update-constants">
     <attribute name="tzdata-version" default="${tzdata.distributed.version}"/>
     <sequential>
-      <echo message="Updating constants with tzdata version @{tzdata-version}"/>
-        <exec osfamily="unix" executable="git" outputproperty="jruby.revision" failonerror="false" failifexecutionfails="false">
-          <arg line="log -1 --format=format:%h"/>
+      <echo message="Updating Constants.java"/>
+
+		<!-- gross bit of property-juggling here to handle error case when git can't be executed -->
+        <exec osfamily="unix" executable="/bin/sh" outputproperty="jruby.revision.output" failonerror="false" failifexecutionfails="false" errorproperty="jruby.revision.error">
+          <arg line="-c 'git log -1 --format=format:%h'"/>
         </exec>
-        <exec osfamily="windows" executable="cmd" outputproperty="jruby.revision" failonerror="false" failifexecutionfails="false">
+        <exec osfamily="windows" executable="cmd" outputproperty="jruby.revision.output" failonerror="false" failifexecutionfails="false" errorproperty="jruby.revision.error">
           <arg line="/c git log -1 --format=format:%h"/>
         </exec>
+        <condition property="jruby.revision" value="fffffff">
+	      <equals arg1="${jruby.revision.output}" arg2=""/>
+	    </condition>
+        <condition property="jruby.revision" value="${jruby.revision.output}">
+	      <not><equals arg1="${jruby.revision.output}" arg2=""/></not>
+	    </condition>
+	
+		<echo message="...using git revision = ${jruby.revision}, tzdata = @{tzdata-version}"/>
     
-    <!-- avoid overwriting if it hasn't changed, to avoid recompiles -->
-        <copy file="${basedir}/src_gen/org/jruby/runtime/Constants.java"
-        tofile="${basedir}/src_gen/org/jruby/runtime/Constants.java.old"
+        <!-- avoid overwriting if it hasn't changed, to avoid recompiles -->
+        <copy file="src_gen/org/jruby/runtime/Constants.java"
+        tofile="src_gen/org/jruby/runtime/Constants.java.old"
         preservelastmodified="true" failonerror="false"/>
-        <copy file="${basedir}/src/org/jruby/runtime/Constants.java"
+        <copy file="src/org/jruby/runtime/Constants.java"
         overwrite="true"
-        tofile="${basedir}/src_gen/org/jruby/runtime/Constants.java.gen" >
+        tofile="src_gen/org/jruby/runtime/Constants.java.gen" >
           <filterset>
             <filter token="version.ruby.major" value="${version.ruby.major}"/>
             <filter token="version.ruby" value="${version.ruby}"/>
@@ -228,7 +214,7 @@
         </copy>
 
         <condition property="constants.java.is.same">
-          <filesmatch file1="${basedir}/src_gen/org/jruby/runtime/Constants.java.gen" file2="${basedir}/src_gen/org/jruby/runtime/Constants.java.old" textfile="true"/>
+          <filesmatch file1="src_gen/org/jruby/runtime/Constants.java.gen" file2="src_gen/org/jruby/runtime/Constants.java.old" textfile="true"/>
         </condition>
         <antcall target="_uc_internal_"/>
     
@@ -242,15 +228,15 @@
   </target>
   
   <target name="_uc_internal_" unless="constants.java.is.same">
-    <copy file="${basedir}/src_gen/org/jruby/runtime/Constants.java.gen" tofile="${basedir}/src_gen/org/jruby/runtime/Constants.java"/>
-    <javac destdir="${jruby.classes.dir}" debug="true" srcdir="${basedir}/src_gen"
+    <copy file="src_gen/org/jruby/runtime/Constants.java.gen" tofile="src_gen/org/jruby/runtime/Constants.java"/>
+    <javac destdir="${jruby.classes.dir}" debug="true" srcdir="src_gen"
         includes="org/jruby/runtime/Constants.java" source="${javac.version}"
         target="${javac.version}" deprecation="true" encoding="UTF-8"
         includeantruntime="false"/>
   </target>
 
   <target name="compile-annotation-binder">
-    <mkdir dir="${basedir}/src_gen"/>
+    <mkdir dir="src_gen"/>
 
     <javac destdir="${jruby.classes.dir}" debug="true" srcdir="${src.dir}"
         sourcepath="" classpathref="build.classpath" source="${javac.version}"
@@ -263,6 +249,8 @@
       <include name="org/jruby/CompatVersion.java"/>
       <include name="org/jruby/runtime/Visibility.java"/>
       <include name="org/jruby/util/CodegenUtils.java"/>
+      <include name="org/jruby/util/log/*.java"/>
+      <include name="org/jruby/util/SafePropertyAccessor.java"/>
     </javac>
   </target>
 
@@ -270,8 +258,7 @@
           description="Compile the source files for the project.">
   </target>
 
-  <target name="compile-jruby" depends="prepare, compile-annotation-binder" unless="compiled">
-    <!-- Generate binding logic ahead of time -->
+  <target name="compile-jruby" depends="prepare, compile-annotation-binder" unless="compiled">    
     <apt factory="org.jruby.anno.AnnotationBinder" destdir="${jruby.classes.dir}"
         debug="true" source="${javac.version}" target="${javac.version}"
         deprecation="true" encoding="UTF-8" includeantruntime="true">
@@ -346,12 +333,12 @@
       <jar destfile="${lib.dir}/jruby.jar" compress="true" index="true" update="true">
         <fileset dir="${jruby.classes.dir}"/>
         <zipfileset src="${asm.jar}"/>
-        <zipfileset src="${asm-commons.jar}"/>
-        <zipfileset src="${asm-util.jar}"/>
-        <zipfileset src="${asm-analysis.jar}"/>
-        <zipfileset src="${asm-tree.jar}"/>
+        <zipfileset src="${asm.commons.jar}"/>
+        <zipfileset src="${asm.util.jar}"/>
+        <zipfileset src="${asm.analysis.jar}"/>
+        <zipfileset src="${asm.tree.jar}"/>
         <zipfileset src="${build.lib.dir}/bytelist.jar"/>
-        <zipfileset src="${build.lib.dir}/constantine.jar"/>
+        <zipfileset src="${build.lib.dir}/jnr-constants.jar"/>
         <zipfileset src="${build.lib.dir}/jline-${jline.version}.jar"/>
         <zipfileset src="${build.lib.dir}/jcodings.jar"/>
         <zipfileset src="${build.lib.dir}/joni.jar"/>
@@ -381,7 +368,7 @@
         <zipfileset src="${build.lib.dir}/yecht.jar"/>
         <zipfileset src="${build.lib.dir}/yydebug.jar"/>
         <zipfileset src="${build.lib.dir}/nailgun-0.7.1.jar"/>
-        <metainf dir="${base.dir}/spi">
+        <metainf dir="spi">
           <include name="services/**"/>
         </metainf>
         <manifest>
@@ -403,7 +390,7 @@
   </target>
 
   <target name="generate-ri-cache" unless="generate-ri-cache.hasrun">
-      <echo message="Using JRuby to generate RI cache to ${basedir}/share"/>
+      <echo message="Using JRuby to generate RI cache to share"/>
       <property name="jruby.home" value="${basedir}"/>
       <java classname="org.jruby.Main" resultproperty="ri.output" output="false" failonerror="true">
         <classpath refid="jruby.execute.classpath"/>
@@ -420,9 +407,9 @@
       <jarjar destfile="${lib.dir}/jruby-core.jar" compress="true" index="true">
         <fileset dir="${jruby.classes.dir}"/>
         <zipfileset src="${asm.jar}"/>
-        <zipfileset src="${asm-util.jar}"/>
+        <zipfileset src="${asm.util.jar}"/>
         <zipfileset src="${build.lib.dir}/yecht.jar"/>
-        <metainf dir="${base.dir}/spi">
+        <metainf dir="spi">
           <include name="services/**"/>
         </metainf>
         <manifest>
@@ -446,11 +433,11 @@
       <jarjar destfile="${lib.dir}/jruby.jar" compress="true">
         <fileset dir="${jruby.classes.dir}"/>
         <zipfileset src="${asm.jar}"/>
-        <zipfileset src="${asm-commons.jar}"/>
-        <zipfileset src="${asm-util.jar}"/>
-        <zipfileset src="${asm-analysis.jar}"/>
-        <zipfileset src="${asm-tree.jar}"/>
-        <zipfileset src="${build.lib.dir}/constantine.jar"/>
+        <zipfileset src="${asm.commons.jar}"/>
+        <zipfileset src="${asm.util.jar}"/>
+        <zipfileset src="${asm.analysis.jar}"/>
+        <zipfileset src="${asm.tree.jar}"/>
+        <zipfileset src="${build.lib.dir}/jnr-constants.jar"/>
         <zipfileset src="${build.lib.dir}/bytelist.jar"/>
         <zipfileset src="${build.lib.dir}/jline-${jline.version}.jar"/>
         <zipfileset src="${build.lib.dir}/jcodings.jar"/>
@@ -481,7 +468,7 @@
         <zipfileset src="${build.lib.dir}/yecht.jar"/>
         <zipfileset src="${build.lib.dir}/yydebug.jar"/>
         <zipfileset src="${build.lib.dir}/nailgun-0.7.1.jar"/>
-        <metainf dir="${base.dir}/spi">
+        <metainf dir="spi">
           <include name="services/**"/>
         </metainf>
         <manifest>
@@ -503,7 +490,7 @@
   <!-- Use Bnd to wrap the JAR generated by jarjar in above task -->
   <target name="_osgify-jar_">
     <filter token="JRUBY_VERSION" value="${version.jruby}"/>
-    <copy file="${basedir}/jruby.bnd.template" tofile="${build.dir}/${bndfile}" filtering="true"/>
+    <copy file="jruby.bnd.template" tofile="${build.dir}/${bndfile}" filtering="true"/>
     <taskdef resource="aQute/bnd/ant/taskdef.properties"
       classpath="${build.lib.dir}/bnd.jar"/>
     <bndwrap definitions="${build.dir}" output="${dest.lib.dir}">
@@ -546,7 +533,7 @@
       <fileset dir="${build.dir}/jar-stdlib">
         <exclude name="META-INF/jruby.home/lib/ruby/site_ruby/shared/builtin/**"/>
       </fileset>
-      <metainf dir="${base.dir}/spi">
+      <metainf dir="spi">
         <include name="services/**"/>
       </metainf>
       <manifest>
@@ -604,12 +591,12 @@
         <exclude name="META-INF/jruby.home/lib/ruby/site_ruby/shared/builtin/**"/>
       </fileset>
       <zipfileset src="${asm.jar}"/>
-      <zipfileset src="${asm-commons.jar}"/>
-      <zipfileset src="${asm-util.jar}"/>
-      <zipfileset src="${asm-analysis.jar}"/>
-      <zipfileset src="${asm-tree.jar}"/>
+      <zipfileset src="${asm.commons.jar}"/>
+      <zipfileset src="${asm.util.jar}"/>
+      <zipfileset src="${asm.analysis.jar}"/>
+      <zipfileset src="${asm.tree.jar}"/>
       <zipfileset src="${build.lib.dir}/bytelist.jar"/>
-      <zipfileset src="${build.lib.dir}/constantine.jar"/>
+      <zipfileset src="${build.lib.dir}/jnr-constants.jar"/>
       <zipfileset src="${build.lib.dir}/jline-${jline.version}.jar"/>
       <zipfileset src="${build.lib.dir}/jcodings.jar"/>
       <zipfileset src="${build.lib.dir}/joni.jar"/>
@@ -639,7 +626,7 @@
       <zipfileset src="${build.lib.dir}/yecht.jar"/>
       <zipfileset src="${build.lib.dir}/yydebug.jar"/>
       <zipfileset src="${build.lib.dir}/nailgun-0.7.1.jar"/>
-      <metainf dir="${base.dir}/spi">
+      <metainf dir="spi">
         <include name="services/**"/>
       </metainf>
       <manifest>
@@ -717,7 +704,7 @@
 
   <target name="compile-stdlib" unless="test">
     <copy todir="${build.dir}/stdlib">
-        <fileset dir="${basedir}/lib/ruby/1.8">
+        <fileset dir="lib/ruby/1.8">
           <include name="**/*.rb"/>
         </fileset>
     </copy>
@@ -861,6 +848,9 @@
   <target name="test-interpreted-1.9" depends="copy-test-files,run-junit-interpreted-1.9"/>
   <target name="test-reflected" depends="copy-test-files,run-junit-reflected-compiled,run-junit-reflected-precompiled,run-junit-reflected-interpreted"/>
   <target name="test-threadpool" depends="copy-test-files,run-junit-compiled-threadpool,run-junit-precompiled-threadpool,run-junit-interpreted-threadpool"/>
+  
+  <!-- Run tests jitted and with all indy stuff enabled -->
+  <target name="test-compiled-indy" depends="copy-test-files,run-junit-compiled-indy"/>
 
   <target name="test-1.9" depends="test-interpreted-1.9, test-compiled-1.9"
     description="Runs unit tests compatible with ruby 1.9"/>
@@ -883,6 +873,7 @@
   <target name="run-junit-reflected-interpreted"><run-junit-1.8 reflection="true"/></target>
   <target name="run-junit-reflected-interpreted-1.9"><run-junit-1.9 reflection="true"/></target>
   <target name="run-junit-compiled"><run-junit-1.8 compile.mode="JIT" jit.threshold="0"/></target>
+  <target name="run-junit-compiled-indy"><run-junit-1.8 compile.mode="JIT" jit.threshold="0" jvm.flags="-Djruby.invokedynamic.all=true"/></target>
   <target name="run-junit-compiled-short"><run-junit-1.8-short compile.mode="JIT" jit.threshold="0"/></target>
   <target name="run-junit-interpreted-short"><run-junit-1.8-short/></target>
   <target name="run-junit-compiled-1.9"><run-junit-1.9 compile.mode="JIT" jit.threshold="0"/></target>
@@ -919,6 +910,8 @@
     <attribute name="objectspace.enabled" default="false"/>
     <attribute name="thread.pooling" default="false"/>
     <attribute name="reflection" default="false"/>
+    <attribute name="jvm.flags" default=""/>
+    
     <element name="junit-tests"/>
     <sequential>
       <echo message="compile=@{compile.mode}, jit.threshold=@{jit.threshold}, jit.maxsize=@{jit.maxsize}, jit.max=@{jit.max}, objectspace=@{objectspace.enabled} threadpool=@{thread.pooling} reflection=@{reflection} version=@{jruby.version}"/>
@@ -951,6 +944,9 @@
         <!-- force client VM to improve test run times AND -->
         <!-- set a larger max permgen, since the tests load a lot of bytecode -->
         <jvmarg line="-ea ${java.opts} -client -XX:MaxPermSize=256M"/>
+        
+        <!-- additional flags -->
+        <jvmarg line="@{jvm.flags}"/>
 
 	<formatter type="xml"/>
 	<formatter type="brief" usefile="false" />
@@ -972,11 +968,12 @@
     <attribute name="jit.maxsize" default="1000000000"/>
     <attribute name="reflection" default="false"/>
     <attribute name="thread.pooling" default="false"/>
+    <attribute name="jvm.flags" default=""/>
 
     <sequential>
       <run-junit compile.mode="@{compile.mode}" jit.threshold="@{jit.threshold}" 
                 reflection="@{reflection}" thread.pooling="@{thread.pooling}"
-                jit.maxsize="@{jit.maxsize}">
+                jit.maxsize="@{jit.maxsize}" jvm.flags="@{jvm.flags}">
 	<junit-tests>
 	  <test name="${test}" if="test"/>
 	  <test name="org.jruby.test.ScriptTestSuite" todir="${test.results.dir}" unless="test"/>
@@ -996,11 +993,13 @@
     <attribute name="reflection" default="false"/>
     <attribute name="thread.pooling" default="false"/>
     <attribute name="objectspace.enabled" default="true"/>
+    <attribute name="jvm.flags" default=""/>
 
     <sequential>
       <run-junit compile.mode="@{compile.mode}" jit.threshold="@{jit.threshold}"
                 reflection="@{reflection}" thread.pooling="@{thread.pooling}"
-                jit.maxsize="@{jit.maxsize}" objectspace.enabled="@{objectspace.enabled}">
+                jit.maxsize="@{jit.maxsize}" objectspace.enabled="@{objectspace.enabled}"
+                jvm.flags="@{jvm.flags}">
 	<junit-tests>
 	  <test name="${test}" if="test"/>
 	  <test name="org.jruby.test.ScriptTestSuite" todir="${test.results.dir}" unless="test"/>
@@ -1022,12 +1021,13 @@
     <attribute name="reflection" default="false"/>
     <attribute name="thread.pooling" default="false"/>
     <attribute name="objectspace.enabled" default="true"/>
+    <attribute name="jvm.flags" default=""/>
 
     <sequential>
       <run-junit objectspace.enabled="false" jruby.version="ruby1_9"
                 compile.mode="@{compile.mode}" jit.threshold="@{jit.threshold}"
                 reflection="@{reflection}" thread.pooling="@{thread.pooling}"
-                jit.maxsize="@{jit.maxsize}">
+                jit.maxsize="@{jit.maxsize}" jvm.flags="@{jvm.flags}">
 	<junit-tests>
 	  <test name="${test}" if="test"/>
 	  <test name="org.jruby.test.Ruby1_9TestSuite" todir="${test.results.dir}"  unless="test"/>
@@ -1042,7 +1042,7 @@
       <junit jvm="${jruby.test.jvm}" fork="yes" forkMode="once" haltonfailure="true" dir="${basedir}" maxmemory="${jruby.test.memory}" showoutput="true" timeout="1800000">
         <classpath refid="test.class.path"/>
         <syspropertyset refid="test.sysproperties"/>
-        <sysproperty key="jruby.home" value="${base.dir}"/>
+        <sysproperty key="jruby.home" value="${basedir}"/>
         <formatter type="xml"/>
         <formatter type="brief" usefile="false" />
         <batchtest fork="yes" todir="${test.results.dir}">
@@ -1080,7 +1080,7 @@
     <attribute name="inproc" default="true"/>
     <attribute name="jruby.args" default=""/>
     <attribute name="task"/>
-    <attribute name="dir" default="${base.dir}"/>
+    <attribute name="dir" default="${basedir}"/>
     <attribute name="jvm.args" default="-ea"/>
 
     <sequential>
@@ -1217,10 +1217,10 @@
             <include name="jffi-*.jar"/>
         </fileset>
         <patternset>
-            <include name="**/libjffi-*.so"/>
-            <include name="**/libjffi-*.a"/>
-            <include name="**/libjffi-*.jnilib"/>
-            <include name="**/jffi-*.dll"/>
+          <include name="**/libjffi-*.so"/>
+          <include name="**/libjffi-*.a"/>
+          <include name="**/libjffi-*.jnilib"/>
+          <include name="**/jffi-*.dll"/>
         </patternset>
         <mapper>
             <filtermapper>
@@ -1275,6 +1275,7 @@
     <include name="LICENSE.RUBY"/>
     <include name="README"/>
     <exclude name="lib/ruby/**"/>
+    <exclude name="dist/**"/>
   </patternset>
 
   <patternset id="dist.bin.files">
@@ -1316,6 +1317,9 @@
     <include name="pom.xml"/>
     <include name="maven/**"/>
     <include name="gem/**"/>
+    <exclude name="gem/pkg/**"/>
+    <exclude name="gem/lib/jruby*.jar"/>
+    <exclude name="gem/lib/jruby-jars/**"/>
     <exclude name="lib/jruby*.jar"/>
   </patternset>
 
@@ -1349,6 +1353,10 @@
     <mkdir dir="${dist.stage.bin.dir}/lib/native"/>
     <copy todir="${dist.stage.bin.dir}">
       <fileset dir="${basedir}">
+        <!-- So repeated ant dists won't include extra cext copies -->
+        <exclude name="dist/**"/> 
+        <exclude name="build/**"/> 
+        <exclude name="gem/**"/> 
         <patternset refid="dist.jruby-cext-native.files"/>
       </fileset>
     </copy>
@@ -1421,20 +1429,14 @@
       </tarfileset>
       <tarfileset dir="${basedir}" prefix="jruby-${version.jruby}">
         <patternset refid="dist.src.files"/>
-      </tarfileset>
-      <tarfileset dir="${basedir}" prefix="jruby-${version.jruby}">
         <patternset refid="dist.nailgun.files"/>
+        <include name="spi/**"/>
       </tarfileset>
       <tarfileset dir="${basedir}" mode="755" prefix="jruby-${version.jruby}">
-          <include name="tool/nailgun/configure"/>
-      </tarfileset>
-      <tarfileset dir="${base.dir}" prefix="jruby-${version.jruby}">
-          <include name="spi/**"/>
-      </tarfileset>
-      <tarfileset dir="${basedir}" mode="755" prefix="jruby-${version.jruby}">
-          <include name="test/testapp/testapp"/>
-          <include name="test/testapp/testapp.exe"/>
-          <include name="test/org/jruby/util/shell_launcher_test*"/>
+        <include name="tool/nailgun/configure"/>
+        <include name="test/testapp/testapp"/>
+        <include name="test/testapp/testapp.exe"/>
+        <include name="test/org/jruby/util/shell_launcher_test*"/>
       </tarfileset>
     </tar>
     <zip destfile="${dist.dir}/jruby-src-${version.jruby}.zip">
@@ -1446,17 +1448,11 @@
       </zipfileset>
       <zipfileset dir="${basedir}" prefix="jruby-${version.jruby}">
         <patternset refid="dist.src.files"/>
-      </zipfileset>
-      <zipfileset dir="${basedir}" prefix="jruby-${version.jruby}">
         <patternset refid="dist.nailgun.files"/>
-      </zipfileset>
-      <zipfileset dir="${basedir}" filemode="755" prefix="jruby-${version.jruby}">
-        <include name="tool/nailgun/configure"/>
-      </zipfileset>
-      <zipfileset dir="${base.dir}" prefix="jruby-${version.jruby}">
 	<include name="spi/**"/>
       </zipfileset>
       <zipfileset dir="${basedir}" filemode="755" prefix="jruby-${version.jruby}">
+        <include name="tool/nailgun/configure"/>
         <include name="test/testapp/testapp"/>
         <include name="test/testapp/testapp.exe"/>
         <include name="test/org/jruby/util/shell_launcher_test*"/>
@@ -1505,7 +1501,7 @@
 
   <target name="dist-clean">
     <delete dir="${dist.dir}"/>
-    <delete dir="${basedir}/gem/pkg"/>
+    <delete dir="gem/pkg"/>
   </target>
 
   <target name="gem" depends="dist-jar-complete"><rake task="gem"/></target>
@@ -1533,11 +1529,11 @@
   </target>
 
   <target name="clean-all" depends="clean, dist-clean, clear-specs" description="Cleans everything, including dist files and specs">
-      <delete dir="${base.dir}/build.eclipse"/>
-      <delete dir="${base.dir}/lib/native"/>
+      <delete dir="build.eclipse"/>
+      <delete dir="lib/native"/>
   </target>
 
-  <property name="nailgun.home" value="${basedir}/tool/nailgun"/>
+  <property name="nailgun.home" value="tool/nailgun"/>
 
   <target name="need-ng">
     <condition property="should.build.ng">
@@ -1576,7 +1572,7 @@
     <mkdir dir="${build.dir}/nailmain"/>
   </target>
 
-  <property name="jruby-cext-native.home" value="${basedir}/cext/src/"/>
+  <property name="jruby-cext-native.home" value="cext/src/"/>
 
   <target name="build-jruby-cext-native" depends="jar"
     description="Build JRuby cext support">

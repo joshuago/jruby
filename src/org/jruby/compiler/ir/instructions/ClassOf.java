@@ -6,6 +6,7 @@ import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
+import org.jruby.RubyClass;
 import org.jruby.runtime.builtin.IRubyObject;
 
 /*
@@ -18,12 +19,13 @@ public class ClassOf extends OneOperandInstr {
 
     @Override
     public Instr cloneForInlining(InlinerInfo ii) {
-        return new CopyInstr(ii.getRenamedVariable(result), getArg().cloneForInlining(ii));
+        return new ClassOf(ii.getRenamedVariable(result), getArg().cloneForInlining(ii));
     }
 
     @Override
-    public Label interpret(InterpreterContext interp, IRubyObject self) {
-        getResult().store(interp, ((IRubyObject) getArg().retrieve(interp)).getType());
+    public Label interpret(InterpreterContext interp) {
+		  IRubyObject arg = (IRubyObject) getArg().retrieve(interp);
+        getResult().store(interp, (arg instanceof RubyClass) ? ((RubyClass)arg).getRealClass() : arg.getType());
 
         return null;
     }

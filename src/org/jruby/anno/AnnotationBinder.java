@@ -21,6 +21,9 @@ import java.util.Map;
 
 import org.jruby.CompatVersion;
 import org.jruby.util.CodegenUtils;
+import org.jruby.util.log.Logger;
+import org.jruby.util.log.LoggerFactory;
+
 import static java.util.Collections.*;
 import static com.sun.mirror.util.DeclarationVisitors.*;
 
@@ -30,6 +33,9 @@ import static com.sun.mirror.util.DeclarationVisitors.*;
  * ListClass doclet in the Doclet Overview.
  */
 public class AnnotationBinder implements AnnotationProcessorFactory {
+
+    private static final Logger LOG = LoggerFactory.getLogger("AnnotationBinder");
+
     // Process any set of annotations
     private static final Collection<String> supportedAnnotations = unmodifiableCollection(Arrays.asList("org.jruby.anno.JRubyMethod", "org.jruby.anno.JRubyClass"));    // No supported options
     private static final Collection<String> supportedOptions = emptySet();
@@ -323,8 +329,7 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     fos.write(bytes.toByteArray());
                     fos.close();
                 } catch (IOException ioe) {
-                    System.err.println("FAILED TO GENERATE:");
-                    ioe.printStackTrace();
+                    LOG.error("FAILED TO GENERATE:", ioe);
                     System.exit(1);
                 }
             }
@@ -377,17 +382,15 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
 
                     out.println("        javaMethod = new " + annotatedBindingName + "(" + implClass + ", Visibility." + anno.visibility() + ");");
                     out.println("        populateMethod(javaMethod, " +
-                            getArityValue(anno, actualRequired) + ", \"" +
-                            md.getSimpleName() + "\", " +
-                            isStatic + ", " +
-                            "CallConfiguration." + getCallConfigNameByAnno(anno) + ", " +
-                            anno.notImplemented() + ");");
-                    out.println("        javaMethod.setNativeCall("
+                            + getArityValue(anno, actualRequired) + ", \""
+                            + md.getSimpleName() + "\", "
+                            + isStatic + ", "
+                            + "CallConfiguration." + getCallConfigNameByAnno(anno) + ", "
+                            + anno.notImplemented() + ", "
                             + md.getDeclaringType().getQualifiedName() + ".class, "
                             + "\"" + md.getSimpleName() + "\", "
                             + md.getReturnType().toString() + ".class, "
-                            + "new Class[] {" + buffer.toString() + "}, "
-                            + md.getModifiers().contains(Modifier.STATIC) + ");");
+                            + "new Class[] {" + buffer.toString() + "});");
                     generateMethodAddCalls(md, anno);
                 }
             }

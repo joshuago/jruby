@@ -303,7 +303,7 @@ public class RubyModule extends RubyObject {
         return superClass;
     }
 
-    protected void setSuperClass(RubyClass superClass) {
+    public void setSuperClass(RubyClass superClass) {
         // update superclass reference
         this.superClass = superClass;
         if (superClass != null && superClass.isSynchronized()) becomeSynchronized();
@@ -1772,24 +1772,8 @@ public class RubyModule extends RubyObject {
      *
      */
     @JRubyMethod(name = "initialize", frame = true, visibility = PRIVATE)
-    public IRubyObject initialize(Block block) {
+    public IRubyObject initialize(ThreadContext context, Block block) {
         if (block.isGiven()) {
-            // class and module bodies default to public, so make the block's visibility public. JRUBY-1185.
-            block.getBinding().setVisibility(PUBLIC);
-            block.yieldNonArray(getRuntime().getCurrentContext(), this, this, this);
-        }
-
-        return getRuntime().getNil();
-    }
-
-    /** rb_mod_initialize
-     *
-     */
-    @JRubyMethod(name = "initialize", frame = true, compat = RUBY1_9, visibility = PRIVATE)
-    public IRubyObject initialize19(ThreadContext context, Block block) {
-        if (block.isGiven()) {
-            // class and module bodies default to public, so make the block's visibility public. JRUBY-1185.
-            block.getBinding().setVisibility(PUBLIC);
             module_exec(context, block);
         }
 
@@ -2847,7 +2831,7 @@ public class RubyModule extends RubyObject {
                 if (p == objectClass && this != objectClass) {
                     String badCName = getName() + "::" + internedName;
                     runtime.getWarnings().warn(ID.CONSTANT_BAD_REFERENCE, "toplevel constant " +
-                            internedName + " referenced by " + badCName, badCName);
+                            internedName + " referenced by " + badCName);
                 }
 
                 return value;
@@ -2912,7 +2896,7 @@ public class RubyModule extends RubyObject {
                 runtime.getLoadService().removeAutoLoadFor(getName() + "::" + name);
             } else {
                 if (warn) {
-                    runtime.getWarnings().warn(ID.CONSTANT_ALREADY_INITIALIZED, "already initialized constant " + name, name);
+                    runtime.getWarnings().warn(ID.CONSTANT_ALREADY_INITIALIZED, "already initialized constant " + name);
                 }
             }
         }
@@ -3356,6 +3340,11 @@ public class RubyModule extends RubyObject {
                 }
             }
         }
+    }
+    
+    @Deprecated
+    public IRubyObject initialize(Block block) {
+        return initialize(getRuntime().getCurrentContext());
     }
 
     public KindOf kindOf = KindOf.DEFAULT_KIND_OF;

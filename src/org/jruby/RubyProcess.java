@@ -29,7 +29,7 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
-import com.kenai.constantine.platform.Signal;
+import jnr.constants.platform.Signal;
 import java.util.EnumSet;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
@@ -44,7 +44,9 @@ import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ByteList;
 import org.jruby.util.ShellLauncher;
+import org.jruby.util.TypeConverter;
 import static org.jruby.CompatVersion.*;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
@@ -80,9 +82,9 @@ public class RubyProcess {
         process_gid.defineAnnotatedMethods(GroupID.class);
         process_sys.defineAnnotatedMethods(Sys.class);
 
-        runtime.loadConstantSet(process, com.kenai.constantine.platform.PRIO.class);
-        runtime.loadConstantSet(process, com.kenai.constantine.platform.RLIM.class);
-        runtime.loadConstantSet(process, com.kenai.constantine.platform.RLIMIT.class);
+        runtime.loadConstantSet(process, jnr.constants.platform.PRIO.class);
+        runtime.loadConstantSet(process, jnr.constants.platform.RLIM.class);
+        runtime.loadConstantSet(process, jnr.constants.platform.RLIMIT.class);
         
         process.defineConstant("WNOHANG", runtime.newFixnum(1));
         process.defineConstant("WUNTRACED", runtime.newFixnum(2));
@@ -839,7 +841,7 @@ public class RubyProcess {
                 : "SIG" + value.substring(startIndex);
         
         try {
-            int signalValue = Signal.valueOf(signalName).value();
+            int signalValue = Signal.valueOf(signalName).intValue();
             return negative ? -signalValue : signalValue;
 
         } catch (IllegalArgumentException ex) {
@@ -956,10 +958,11 @@ public class RubyProcess {
         return RubyKernel.fork(context, recv, block);
     }
 
-    @JRubyMethod(name = "spawn", required = 1, rest = true, module = true, compat = CompatVersion.RUBY1_9)
-    public static RubyFixnum spawn(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
+    // See Process#spawn in src/builtin/prelude.rb
+    @JRubyMethod(required = 4, module = true, compat = CompatVersion.RUBY1_9, visibility = PRIVATE)
+    public static RubyFixnum _spawn_internal(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         Ruby runtime = context.getRuntime();
-        long pid = ShellLauncher.runExternalWithoutWait(runtime, args);
+        long pid = ShellLauncher.runExternalWithoutWait(runtime, args[0], args[1], args[2], args[3]);
         return RubyFixnum.newFixnum(runtime, pid);
     }
     

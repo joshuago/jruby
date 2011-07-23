@@ -1234,7 +1234,7 @@ public class RuntimeHelpers {
         return context.getRuntime().getFalse();
     }
     
-    public static IRubyObject setConstantInModule(IRubyObject module, IRubyObject value, String name, ThreadContext context) {
+    public static IRubyObject setConstantInModule(IRubyObject value, IRubyObject module, String name, ThreadContext context) {
         return context.setConstantInModule(name, module, value);
     }
 
@@ -1262,7 +1262,106 @@ public class RuntimeHelpers {
         throw runtime.newLocalJumpError(RubyLocalJumpError.Reason.NEXT, value, "unexpected next");
     }
     
-    public static final int MAX_SPECIFIC_ARITY_OBJECT_ARRAY = 5;
+    public static final int MAX_SPECIFIC_ARITY_OBJECT_ARRAY = 10;
+    
+    public static IRubyObject[] anewarrayIRubyObjects(int size) {
+        return new IRubyObject[size];
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, int start) {
+        ary[start] = one;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        ary[start+4] = five;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        ary[start+4] = five;
+        ary[start+5] = six;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        ary[start+4] = five;
+        ary[start+5] = six;
+        ary[start+6] = seven;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        ary[start+4] = five;
+        ary[start+5] = six;
+        ary[start+6] = seven;
+        ary[start+7] = eight;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, IRubyObject nine, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        ary[start+4] = five;
+        ary[start+5] = six;
+        ary[start+6] = seven;
+        ary[start+7] = eight;
+        ary[start+8] = nine;
+        return ary;
+    }
+    
+    public static IRubyObject[] aastoreIRubyObjects(IRubyObject[] ary, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, IRubyObject nine, IRubyObject ten, int start) {
+        ary[start] = one;
+        ary[start+1] = two;
+        ary[start+2] = three;
+        ary[start+3] = four;
+        ary[start+4] = five;
+        ary[start+5] = six;
+        ary[start+6] = seven;
+        ary[start+7] = eight;
+        ary[start+8] = nine;
+        ary[start+9] = ten;
+        return ary;
+    }
     
     public static IRubyObject[] constructObjectArray(IRubyObject one) {
         return new IRubyObject[] {one};
@@ -1283,6 +1382,26 @@ public class RuntimeHelpers {
     public static IRubyObject[] constructObjectArray(IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five) {
         return new IRubyObject[] {one, two, three, four, five};
     }
+    
+    public static IRubyObject[] constructObjectArray(IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six) {
+        return new IRubyObject[] {one, two, three, four, five, six};
+    }
+    
+    public static IRubyObject[] constructObjectArray(IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven) {
+        return new IRubyObject[] {one, two, three, four, five, six, seven};
+    }
+    
+    public static IRubyObject[] constructObjectArray(IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight) {
+        return new IRubyObject[] {one, two, three, four, five, six, seven, eight};
+    }
+    
+    public static IRubyObject[] constructObjectArray(IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, IRubyObject nine) {
+        return new IRubyObject[] {one, two, three, four, five, six, seven, eight, nine};
+    }
+    
+    public static IRubyObject[] constructObjectArray(IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, IRubyObject nine, IRubyObject ten) {
+        return new IRubyObject[] {one, two, three, four, five, six, seven, eight, nine, ten};
+    }
 
     public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one) {
         return RubyArray.newArrayLight(runtime, one);
@@ -1302,6 +1421,26 @@ public class RuntimeHelpers {
 
     public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five) {
         return RubyArray.newArrayLight(runtime, one, two, three, four, five);
+    }
+
+    public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six) {
+        return RubyArray.newArrayLight(runtime, one, two, three, four, five, six);
+    }
+
+    public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven) {
+        return RubyArray.newArrayLight(runtime, one, two, three, four, five, six, seven);
+    }
+
+    public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight) {
+        return RubyArray.newArrayLight(runtime, one, two, three, four, five, six, seven, eight);
+    }
+
+    public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, IRubyObject nine) {
+        return RubyArray.newArrayLight(runtime, one, two, three, four, five, six, seven, eight, nine);
+    }
+
+    public static RubyArray constructRubyArray(Ruby runtime, IRubyObject one, IRubyObject two, IRubyObject three, IRubyObject four, IRubyObject five, IRubyObject six, IRubyObject seven, IRubyObject eight, IRubyObject nine, IRubyObject ten) {
+        return RubyArray.newArrayLight(runtime, one, two, three, four, five, six, seven, eight, nine, ten);
     }
     
     public static String[] constructStringArray(String one) {
@@ -1434,18 +1573,22 @@ public class RuntimeHelpers {
     
     public static void preLoad(ThreadContext context, String[] varNames) {
         StaticScope staticScope = new LocalStaticScope(null, varNames);
-        preLoadCommon(context, staticScope);
+        preLoadCommon(context, staticScope, false);
     }
 
-    public static void preLoad(ThreadContext context, String scopeString) {
+    public static void preLoad(ThreadContext context, String scopeString, boolean wrap) {
         StaticScope staticScope = decodeRootScope(context, scopeString);
-        preLoadCommon(context, staticScope);
+        preLoadCommon(context, staticScope, wrap);
     }
 
-    private static void preLoadCommon(ThreadContext context, StaticScope staticScope) {
+    private static void preLoadCommon(ThreadContext context, StaticScope staticScope, boolean wrap) {
         RubyClass objectClass = context.getRuntime().getObject();
         IRubyObject topLevel = context.getRuntime().getTopSelf();
-        staticScope.setModule(objectClass);
+        if (wrap) {
+            staticScope.setModule(RubyModule.newModule(context.runtime));
+        } else {
+            staticScope.setModule(objectClass);
+        }
         DynamicScope scope = DynamicScope.newDynamicScope(staticScope);
 
         // Each root node has a top-level scope that we need to push
@@ -1650,6 +1793,82 @@ public class RuntimeHelpers {
 
         return arrayValue(value);
     }
+    
+    public static IRubyObject[] splatToArguments(IRubyObject value) {
+        Ruby runtime = value.getRuntime();
+        
+        if (value.isNil()) {
+            return runtime.getSingleNilArray();
+        }
+        
+        return splatToArgumentsCommon(runtime, value);
+    }
+    
+    public static IRubyObject[] splatToArguments19(IRubyObject value) {
+        Ruby runtime = value.getRuntime();
+        
+        if (value.isNil()) {
+            return IRubyObject.NULL_ARRAY;
+        }
+        
+        return splatToArgumentsCommon(runtime, value);
+    }
+    
+    private static IRubyObject[] splatToArgumentsCommon(Ruby runtime, IRubyObject value) {
+        
+        if (value.isNil()) {
+            return runtime.getSingleNilArray();
+        }
+        
+        IRubyObject tmp = value.checkArrayType();
+
+        if (tmp.isNil()) {
+            return convertSplatToJavaArray(runtime, value);
+        }
+        return ((RubyArray)tmp).toJavaArrayMaybeUnsafe();
+    }
+    
+    private static IRubyObject[] convertSplatToJavaArray(Ruby runtime, IRubyObject value) {
+        // Object#to_a is obsolete.  We match Ruby's hack until to_a goes away.  Then we can
+        // remove this hack too.
+
+        RubyClass metaClass = value.getMetaClass();
+        DynamicMethod method = metaClass.searchMethod("to_a");
+        if (method.isUndefined() || method.getImplementationClass() == runtime.getKernel()) {
+            return new IRubyObject[] {value};
+        }
+
+        IRubyObject avalue = method.call(runtime.getCurrentContext(), value, metaClass, "to_a");
+        if (!(avalue instanceof RubyArray)) {
+            if (runtime.is1_9() && avalue.isNil()) {
+                return new IRubyObject[] {value};
+            } else {
+                throw runtime.newTypeError("`to_a' did not return Array");
+            }
+        }
+        return ((RubyArray)avalue).toJavaArray();
+    }
+    
+    public static IRubyObject[] argsCatToArguments(IRubyObject[] args, IRubyObject cat) {
+        IRubyObject[] ary = splatToArguments(cat);
+        return argsCatToArgumentsCommon(args, ary, cat);
+    }
+    
+    public static IRubyObject[] argsCatToArguments19(IRubyObject[] args, IRubyObject cat) {
+        IRubyObject[] ary = splatToArguments19(cat);
+        return argsCatToArgumentsCommon(args, ary, cat);
+    }
+    
+    private static IRubyObject[] argsCatToArgumentsCommon(IRubyObject[] args, IRubyObject[] ary, IRubyObject cat) {
+        if (ary.length > 0) {
+            IRubyObject[] newArgs = new IRubyObject[args.length + ary.length];
+            System.arraycopy(args, 0, newArgs, 0, args.length);
+            System.arraycopy(ary, 0, newArgs, args.length, ary.length);
+            args = newArgs;
+        }
+        
+        return args;
+    }
 
     public static void addInstanceMethod(RubyModule containingClass, String name, DynamicMethod method, Visibility visibility, ThreadContext context, Ruby runtime) {
         containingClass.addMethod(name, method);
@@ -1827,11 +2046,11 @@ public class RuntimeHelpers {
         }
 
         if (containingClass == runtime.getObject() && name.equals("initialize")) {
-            runtime.getWarnings().warn(ID.REDEFINING_DANGEROUS, "redefining Object#initialize may cause infinite loop", "Object#initialize");
+            runtime.getWarnings().warn(ID.REDEFINING_DANGEROUS, "redefining Object#initialize may cause infinite loop");
         }
 
         if (name.equals("__id__") || name.equals("__send__")) {
-            runtime.getWarnings().warn(ID.REDEFINING_DANGEROUS, "redefining `" + name + "' may cause serious problem", name);
+            runtime.getWarnings().warn(ID.REDEFINING_DANGEROUS, "redefining `" + name + "' may cause serious problem");
         }
     }
 
@@ -2417,5 +2636,9 @@ public class RuntimeHelpers {
     private static DynamicMethod getMethodCached(ThreadContext context, RubyClass metaclass, int index, String name) {
         if (metaclass.index >= ClassIndex.MAX_CLASSES) return metaclass.searchMethod(name);
         return context.runtimeCache.getMethod(context, metaclass, metaclass.index * (index + 1), name);
+    }
+    
+    public static IRubyObject lastElement(IRubyObject[] ary) {
+        return ary[ary.length - 1];
     }
 }

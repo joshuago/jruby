@@ -36,7 +36,6 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,14 +55,13 @@ import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.opto.OptoFactory;
 import static org.jruby.util.CodegenUtils.*;
 import org.jruby.util.JRubyClassLoader;
-import org.jruby.util.SafePropertyAccessor;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
-import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.util.CheckClassAdapter;
@@ -175,36 +173,10 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     StaticScope topLevelScope;
     
     private CacheCompiler cacheCompiler;
-    
-    public static final Constructor invDynInvCompilerConstructor;
-    public static final Constructor invDynCacheCompilerConstructor;
 
     private List<InvokerDescriptor> invokerDescriptors = new ArrayList<InvokerDescriptor>();
     private List<BlockCallbackDescriptor> blockCallbackDescriptors = new ArrayList<BlockCallbackDescriptor>();
     private List<BlockCallbackDescriptor> blockCallback19Descriptors = new ArrayList<BlockCallbackDescriptor>();
-
-    static {
-        Constructor invCompilerConstructor = null;
-        Constructor cacheCompilerConstructor = null;
-        try {
-            if (RubyInstanceConfig.USE_INVOKEDYNAMIC) {
-                // attempt to access an invokedynamic-related class
-                Class.forName("java.lang.invoke.MethodHandle");
-                
-                // if that succeeds, use invokedynamic compiler stuff
-                Class compiler =
-                        Class.forName("org.jruby.compiler.impl.InvokeDynamicInvocationCompiler");
-                invCompilerConstructor = compiler.getConstructor(BaseBodyCompiler.class, SkinnyMethodAdapter.class);
-                compiler =
-                        Class.forName("org.jruby.compiler.impl.InvokeDynamicCacheCompiler");
-                cacheCompilerConstructor = compiler.getConstructor(ScriptCompiler.class);
-            }
-        } catch (Exception e) {
-            // leave it null and fall back on our normal invocation logic
-        }
-        invDynInvCompilerConstructor = invCompilerConstructor;
-        invDynCacheCompilerConstructor = cacheCompilerConstructor;
-    }
     
     /** Creates a new instance of StandardCompilerContext */
     public StandardASMCompiler(String classname, String sourcename) {
@@ -456,20 +428,7 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
 
         beginInit();
         
-        if (invDynCacheCompilerConstructor != null) {
-            try {
-                cacheCompiler = (CacheCompiler)StandardASMCompiler.invDynCacheCompilerConstructor.newInstance(this);
-            } catch (InstantiationException ie) {
-                // do nothing, fall back on default compiler below
-                } catch (IllegalAccessException ie) {
-                // do nothing, fall back on default compiler below
-                } catch (InvocationTargetException ie) {
-                // do nothing, fall back on default compiler below
-                }
-        }
-        if (invDynCacheCompilerConstructor == null) {
-            cacheCompiler = new InheritedCacheCompiler(this);
-        }
+        cacheCompiler = OptoFactory.newCacheCompiler(this);
 
         // This code was originally used to provide debugging info using JSR-45
         // "SMAP" format. However, it breaks using normal Java traces to
@@ -497,9 +456,17 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
         // root method of a script is always in __file__ method
         String methodName = "__file__";
         
+        String loadSig = sig(IRubyObject.class, ThreadContext.class, IRubyObject.class, boolean.class);
+        
         if (generateLoad || generateMain) {
             // the load method is used for loading as a top-level script, and prepares appropriate scoping around the code
-            SkinnyMethodAdapter method = new SkinnyMethodAdapter(getClassVisitor(), ACC_PUBLIC, "load", getMethodSignature(4), null, null);
+            SkinnyMethodAdapter method = new SkinnyMethodAdapter(
+                    getClassVisitor(),
+                    ACC_PUBLIC,
+                    "load",
+                    loadSig,
+                    null,
+                    null);
             method.start();
 
             // invoke __file__ with threadcontext, self, args (null), and block (null)
@@ -510,14 +477,14 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
             method.aload(THREADCONTEXT_INDEX);
             String scopeNames = RuntimeHelpers.encodeScope(topLevelScope);
             method.ldc(scopeNames);
-            method.invokestatic(p(RuntimeHelpers.class), "preLoad", sig(void.class, ThreadContext.class, String.class));
+            method.iload(SELF_INDEX + 1);
+            method.invokestatic(p(RuntimeHelpers.class), "preLoad", sig(void.class, ThreadContext.class, String.class, boolean.class));
 
             method.aload(THIS);
             method.aload(THREADCONTEXT_INDEX);
             method.aload(SELF_INDEX);
-            method.aload(ARGS_INDEX);
-            // load always uses IRubyObject[], so simple closure offset calculation here
-            method.aload(ARGS_INDEX + 1 + CLOSURE_OFFSET);
+            method.getstatic(p(IRubyObject.class), "NULL_ARRAY", ci(IRubyObject[].class));
+            method.getstatic(p(Block.class), "NULL_BLOCK", ci(Block.class));
 
             method.invokestatic(getClassname(),methodName, getStaticMethodSignature(getClassname(), 4));
             method.aload(THREADCONTEXT_INDEX);
@@ -578,10 +545,9 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
             method.invokevirtual(RUBY, "getCurrentContext", sig(ThreadContext.class));
             method.swap();
             method.invokevirtual(RUBY, "getTopSelf", sig(IRubyObject.class));
-            method.getstatic(p(IRubyObject.class), "NULL_ARRAY", ci(IRubyObject[].class));
-            method.getstatic(p(Block.class), "NULL_BLOCK", ci(Block.class));
+            method.ldc(false);
 
-            method.invokevirtual(getClassname(), "load", getMethodSignature(4));
+            method.invokevirtual(getClassname(), "load", loadSig);
             method.voidreturn();
             method.end();
         }

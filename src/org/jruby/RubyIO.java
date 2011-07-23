@@ -35,9 +35,10 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
+import org.jruby.util.StringSupport;
 import org.jruby.util.io.SelectBlob;
 import org.jcodings.exception.EncodingException;
-import com.kenai.constantine.platform.Fcntl;
+import jnr.constants.platform.Fcntl;
 import java.io.EOFException;
 import java.io.FileDescriptor;
 import java.io.IOException;
@@ -60,7 +61,6 @@ import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyClass;
 import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.RaiseException;
-import org.jruby.ext.ffi.Util;
 import org.jruby.libraries.FcntlLibrary;
 import org.jruby.platform.Platform;
 import org.jruby.runtime.Block;
@@ -85,7 +85,6 @@ import org.jruby.util.io.STDIO;
 import org.jruby.util.io.OpenFile;
 import org.jruby.util.io.ChannelDescriptor;
 
-import java.util.Arrays;
 import org.jcodings.specific.ASCIIEncoding;
 import org.jcodings.specific.USASCIIEncoding;
 import org.jruby.javasupport.util.RuntimeHelpers;
@@ -859,8 +858,7 @@ public class RubyIO extends RubyObject {
             String className = klass.getName();
             context.getRuntime().getWarnings().warn(
                     ID.BLOCK_NOT_ACCEPTED,
-                    className + "::new() does not take block; use " + className + "::open() instead",
-                    className + "::open()");
+                    className + "::new() does not take block; use " + className + "::open() instead");
         }
         
         return klass.newInstance(context, args, block);
@@ -1131,14 +1129,14 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(required = 1, optional = 2, meta = true, compat = CompatVersion.RUBY1_8)
     public static IRubyObject sysopen(IRubyObject recv, IRubyObject[] args, Block block) {
-        Util.checkStringSafety(recv.getRuntime(), args[0]);
+        StringSupport.checkStringSafety(recv.getRuntime(), args[0]);
         IRubyObject pathString = args[0].convertToString();
         return sysopenCommon(recv, args, block, pathString);
     }
     
     @JRubyMethod(name = "sysopen", required = 1, optional = 2, meta = true, compat = CompatVersion.RUBY1_9)
     public static IRubyObject sysopen19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Util.checkStringSafety(context.getRuntime(), args[0]);
+        StringSupport.checkStringSafety(context.getRuntime(), args[0]);
         IRubyObject pathString;
         if (!(args[0] instanceof RubyString) && args[0].respondsTo("to_path")) {
             pathString = args[0].callMethod(context, "to_path");
@@ -2216,7 +2214,7 @@ public class RubyIO extends RubyObject {
             if (realCmd == FcntlLibrary.FD_CLOEXEC) {
                 // Do nothing.  FD_CLOEXEC has no meaning in JVM since we cannot really exec.
                 // And why the hell does webrick pass this in as a first argument!!!!!
-            } else if (realCmd == Fcntl.F_SETFL.value() || realCmd == Fcntl.F_SETFD.value()) {
+            } else if (realCmd == Fcntl.F_SETFL.intValue() || realCmd == Fcntl.F_SETFD.intValue()) {
                 if ((nArg & FcntlLibrary.FD_CLOEXEC) == FcntlLibrary.FD_CLOEXEC) {
                     // Do nothing.  FD_CLOEXEC has no meaning in JVM since we cannot really exec.
                 } else {
@@ -2224,7 +2222,7 @@ public class RubyIO extends RubyObject {
 
                     myOpenFile.getMainStreamSafe().setBlocking(block);
                 }
-            } else if (realCmd == Fcntl.F_GETFL.value()) {
+            } else if (realCmd == Fcntl.F_GETFL.intValue()) {
                 return myOpenFile.getMainStreamSafe().isBlocking() ? RubyFixnum.zero(runtime) : RubyFixnum.newFixnum(runtime, ModeFlags.NONBLOCK);
             } else {
                 throw runtime.newNotImplementedError("JRuby only supports F_SETFL and F_GETFL with NONBLOCK for fcntl/ioctl");
@@ -2374,6 +2372,16 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "getbyte", compat = RUBY1_9)
     public IRubyObject getbyte19(ThreadContext context) {
         return getc(); // Yes 1.8 getc is 1.9 getbyte
+    }
+    
+    @JRubyMethod(compat = RUBY1_9)
+    public IRubyObject readbyte(ThreadContext context) {
+        int c = getcCommon();
+        if (c == -1) {
+            throw getRuntime().newEOFError();
+        }
+        
+        return context.runtime.newFixnum(c);
     }
 
     @JRubyMethod(name = "getc", compat = RUBY1_9)
@@ -3324,7 +3332,7 @@ public class RubyIO extends RubyObject {
    
     @JRubyMethod(name = "read", meta = true, compat = RUBY1_8)
     public static IRubyObject readStatic(ThreadContext context, IRubyObject recv, IRubyObject path) {
-        Util.checkStringSafety(context.getRuntime(), path);
+        StringSupport.checkStringSafety(context.getRuntime(), path);
         RubyString pathStr = path.convertToString();
         Ruby runtime = context.getRuntime();
         failIfDirectory(runtime, pathStr);
@@ -3339,7 +3347,7 @@ public class RubyIO extends RubyObject {
    
     @JRubyMethod(name = "read", meta = true, compat = RUBY1_8)
     public static IRubyObject readStatic(ThreadContext context, IRubyObject recv, IRubyObject path, IRubyObject length) {
-        Util.checkStringSafety(context.getRuntime(), path);
+        StringSupport.checkStringSafety(context.getRuntime(), path);
         RubyString pathStr = path.convertToString();
         Ruby runtime = context.getRuntime();
         failIfDirectory(runtime, pathStr);
@@ -3354,7 +3362,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "read", meta = true, compat = RUBY1_8)
     public static IRubyObject readStatic(ThreadContext context, IRubyObject recv, IRubyObject path, IRubyObject length, IRubyObject offset) {
-        Util.checkStringSafety(context.getRuntime(), path);
+        StringSupport.checkStringSafety(context.getRuntime(), path);
         RubyString pathStr = path.convertToString();
         Ruby runtime = context.getRuntime();
         failIfDirectory(runtime, pathStr);
@@ -3534,53 +3542,82 @@ public class RubyIO extends RubyObject {
             throw runtime.newThreadError("unexpected interrupt");
         }
     }
+    
+    private static class Ruby19POpen {
+        public final RubyString cmd;
+        public final IRubyObject[] cmdPlusArgs;
+        public final RubyHash env;
+        
+        public Ruby19POpen(Ruby runtime, IRubyObject[] args) {
+            IRubyObject[] _cmdPlusArgs = null;
+            RubyHash _env = null;
+            IRubyObject _cmd = null;
+            IRubyObject arg0 = args[0].checkArrayType();
+
+            if (args[0] instanceof RubyHash) {
+                // use leading hash as env
+                if (args.length > 1) {
+                    _env = (RubyHash)args[0];
+                } else {
+                    Arity.raiseArgumentError(runtime, 0, 1, 2);
+                }
+
+                if (Platform.IS_WINDOWS) {
+                    String[] tokens = args[1].convertToString().toString().split(" ", 2);
+                    String commandString = tokens[0].replace('/', '\\') +
+                            (tokens.length > 1 ? ' ' + tokens[1] : "");
+                    _cmd = runtime.newString(commandString);
+                } else {
+                    _cmd = args[1].convertToString();
+                }
+            } else if (args[0] instanceof RubyArray) {
+                RubyArray arg0Ary = (RubyArray)arg0;
+                if (arg0Ary.isEmpty()) throw runtime.newArgumentError("wrong number of arguments");
+                if (arg0Ary.eltOk(0) instanceof RubyHash) {
+                    // leading hash, use for env
+                    _env = (RubyHash)arg0Ary.delete_at(0);
+                }
+                if (arg0Ary.isEmpty()) throw runtime.newArgumentError("wrong number of arguments");
+                if (arg0Ary.size() > 1 && arg0Ary.eltOk(arg0Ary.size() - 1) instanceof RubyHash) {
+                    // trailing hash, use for opts
+                    _env = (RubyHash)arg0Ary.eltOk(arg0Ary.size() - 1);
+                }
+                _cmdPlusArgs = (IRubyObject[])arg0Ary.toJavaArray();
+
+                if (Platform.IS_WINDOWS) {
+                    String commandString = _cmdPlusArgs[0].convertToString().toString().replace('/', '\\');
+                    _cmdPlusArgs[0] = runtime.newString(commandString);
+                } else {
+                    _cmdPlusArgs[0] = _cmdPlusArgs[0].convertToString();
+                }
+                _cmd = _cmdPlusArgs[0];
+            } else {
+                if (Platform.IS_WINDOWS) {
+                    String[] tokens = args[0].convertToString().toString().split(" ", 2);
+                    String commandString = tokens[0].replace('/', '\\') +
+                            (tokens.length > 1 ? ' ' + tokens[1] : "");
+                    _cmd = runtime.newString(commandString);
+                } else {
+                    _cmd = args[0].convertToString();
+                }
+            }
+
+            runtime.checkSafeString(_cmd);
+
+            this.cmd = (RubyString)_cmd;
+            this.cmdPlusArgs = _cmdPlusArgs;
+            this.env = _env;
+        }
+    }
 
     @JRubyMethod(name = "popen", required = 1, optional = 1, meta = true, compat = RUBY1_9)
     public static IRubyObject popen19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
         Ruby runtime = context.getRuntime();
         int mode;
 
-        IRubyObject[] cmdPlusArgs = null;
-        RubyHash env = null;
-        RubyHash opts = null;
-        IRubyObject cmdObj = null;
-        IRubyObject arg0 = args[0].checkArrayType();
-        
-        if (!arg0.isNil()) {
-            List argList = new ArrayList(Arrays.asList(((RubyArray)arg0).toJavaArray()));
-            if (argList.isEmpty()) throw runtime.newArgumentError("wrong number of arguments");
-            if (argList.get(0) instanceof RubyHash) {
-                // leading hash, use for env
-                env = (RubyHash)argList.remove(0);
-            }
-            if (argList.isEmpty()) throw runtime.newArgumentError("wrong number of arguments");
-            if (argList.size() > 1 && argList.get(argList.size() - 1) instanceof RubyHash) {
-                // trailing hash, use for opts
-                env = (RubyHash)argList.get(argList.size() - 1);
-            }
-            cmdPlusArgs = (IRubyObject[])argList.toArray(new IRubyObject[argList.size()]);
+        Ruby19POpen r19Popen = new Ruby19POpen(runtime, args);
 
-            if (Platform.IS_WINDOWS) {
-                String commandString = cmdPlusArgs[0].convertToString().toString().replace('/', '\\');
-                cmdPlusArgs[0] = runtime.newString(commandString);
-            } else {
-                cmdPlusArgs[0] = cmdPlusArgs[0].convertToString();
-            }
-            cmdObj = cmdPlusArgs[0];
-        } else {
-            if (Platform.IS_WINDOWS) {
-                String[] tokens = args[0].convertToString().toString().split(" ", 2);
-                String commandString = tokens[0].replace('/', '\\') +
-                        (tokens.length > 1 ? ' ' + tokens[1] : "");
-                cmdObj = runtime.newString(commandString);
-            } else {
-                cmdObj = args[0].convertToString();
-            }
-        }
-        
-        runtime.checkSafeString(cmdObj);
-
-        if ("-".equals(cmdObj.toString())) {
+        if ("-".equals(r19Popen.cmd.toString())) {
             throw runtime.newNotImplementedError("popen(\"-\") is unimplemented");
         }
 
@@ -3596,10 +3633,10 @@ public class RubyIO extends RubyObject {
             ModeFlags modes = new ModeFlags(mode);
 
             ShellLauncher.POpenProcess process;
-            if (cmdPlusArgs == null) {
-                process = ShellLauncher.popen(runtime, cmdObj, modes);
+            if (r19Popen.cmdPlusArgs == null) {
+                process = ShellLauncher.popen(runtime, r19Popen.cmd, modes);
             } else {
-                process = ShellLauncher.popen(runtime, cmdPlusArgs, env, modes);
+                process = ShellLauncher.popen(runtime, r19Popen.cmdPlusArgs, r19Popen.env, modes);
             }
 
             // Yes, this is gross. java.lang.Process does not appear to be guaranteed

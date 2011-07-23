@@ -5,6 +5,10 @@ import org.jruby.compiler.ir.representations.InlinerInfo;
 import java.util.List;
 import java.util.Map;
 
+import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.interpreter.InterpreterContext;
+import org.jruby.runtime.builtin.IRubyObject;
+
 // Represents a splat value in Ruby code: *array
 //
 // NOTE: This operand is only used in the initial stages of optimization
@@ -15,7 +19,7 @@ public class Splat extends Operand
 
     public Splat(Operand a) { _array = a; }
 
-    public boolean isConstant() { return _array.isConstant(); }
+    public boolean isConstant() { return false; /*_array.isConstant();*/ }
 
     public String toString() { return "*" + _array; }
 
@@ -23,10 +27,14 @@ public class Splat extends Operand
 
     public Operand getSimplifiedOperand(Map<Operand, Operand> valueMap)
     {
+/*
+ * SSS FIXME:  Cannot convert this to an Array operand!
+ *
         _array = _array.getSimplifiedOperand(valueMap);
         if (_array instanceof Variable) {
             _array = ((Variable)_array).getValue(valueMap);
         }
+*/
         return this;
     }
 
@@ -49,5 +57,10 @@ public class Splat extends Operand
 
     public Operand cloneForInlining(InlinerInfo ii) { 
         return isConstant() ? this : new Splat(_array.cloneForInlining(ii));
+    }
+
+    @Override
+    public Object retrieve(InterpreterContext interp) {
+        return RuntimeHelpers.splatValue19((IRubyObject)_array.retrieve(interp));
     }
 }

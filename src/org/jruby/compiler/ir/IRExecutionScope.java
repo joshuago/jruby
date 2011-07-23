@@ -146,6 +146,14 @@ public abstract class IRExecutionScope extends IRScopeImpl {
         return (IRMethod) s;
     }
 
+    public boolean nestedInClosure(IRClosure closure) {
+        IRExecutionScope s = this;
+        do {
+            s = (IRExecutionScope)s.getLexicalParent();
+        } while (!(s instanceof IRMethod) && (s != closure));
+        return (s == closure);
+    }
+
     public void setCodeModificationFlag(boolean f) { 
         canModifyCode = f;
     }
@@ -198,7 +206,7 @@ public abstract class IRExecutionScope extends IRScopeImpl {
 
             if (i instanceof CallInstr) {
                 CallInstr call = (CallInstr) i;
-                if (call.requiresBinding())
+                if (call.targetRequiresCallersBinding())
                     requiresBinding = true;
 
                 // If this method receives a closure arg, and this call is an eval that has more than 1 argument,
@@ -270,6 +278,9 @@ public abstract class IRExecutionScope extends IRScopeImpl {
         return sb.toString();
     }
 
+	 /******
+	  * SSS: Not used -- this was something headius wrote way-back
+	  *
     @Interp
     public Iterator<LocalVariable> getLiveLocalVariables() {
         Map<LocalVariable, Integer> ends = new HashMap<LocalVariable, Integer>();
@@ -304,7 +315,9 @@ public abstract class IRExecutionScope extends IRScopeImpl {
 
         return variables.iterator();
     }
+	 **/
 
+	 // SSS FIXME: This is unused code.
     /**
      * Create and (re)assign a static scope.  In general local variables should
      * never change even if we optimize more, but I was not positive so I am
@@ -320,7 +333,6 @@ public abstract class IRExecutionScope extends IRScopeImpl {
      * changing.
      *
      * @param parent scope should be non-null for all closures and null for methods
-     */
     @Interp
     public StaticScope allocateStaticScope(StaticScope parent) {
         Iterator<LocalVariable> variables = getLiveLocalVariables();
@@ -338,13 +350,17 @@ public abstract class IRExecutionScope extends IRScopeImpl {
 
         return scope;
     }
+     */
 
+    /** ---------------------------------------
+     * SSS FIXME: What is this method for?
     @Interp
     public void calculateParameterCounts() {
         for (int i = instructions.size() - 1; i >= 0; i--) {
             Instr instr = instructions.get(i);
         }
     }
+     ------------------------------------------ **/
 
     /**
      * Closures and Methods have different static scopes.  This returns the
@@ -361,8 +377,12 @@ public abstract class IRExecutionScope extends IRScopeImpl {
         return getLocalVariable("%self");
     }
 
+    public Variable getImplicitBlockArg() {
+        return getLocalVariable("%block");
+    }
+
     public LocalVariable getLocalVariable(String name) {
-        return getClosestMethodAncestor().getLocalVariable(name);
+        return getClosestMethodAncestor().getLocalVariable(name, this);
     }
 
     public int getLocalVariablesCount() {

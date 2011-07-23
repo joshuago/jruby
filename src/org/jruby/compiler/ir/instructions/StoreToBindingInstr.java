@@ -3,14 +3,11 @@ package org.jruby.compiler.ir.instructions;
 import org.jruby.compiler.ir.Operation;
 import org.jruby.compiler.ir.operands.Label;
 import org.jruby.compiler.ir.operands.Operand;
-import org.jruby.compiler.ir.operands.MetaObject;
 import org.jruby.compiler.ir.IRExecutionScope;
 import org.jruby.compiler.ir.IRMethod;
-import org.jruby.compiler.ir.IRScope;
 import org.jruby.compiler.ir.operands.LocalVariable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
-import org.jruby.runtime.builtin.IRubyObject;
 
 public class StoreToBindingInstr extends OneOperandInstr {
 	 private IRMethod targetMethod;
@@ -31,7 +28,7 @@ public class StoreToBindingInstr extends OneOperandInstr {
 
     @Override
     public String toString() {
-        return "\tBINDING(" + targetMethod + ")." + slotName + " = " + getArg();
+        return "BINDING(" + targetMethod + ")." + slotName + " = " + getArg();
     }
 
     public Instr cloneForInlining(InlinerInfo ii) {
@@ -43,7 +40,7 @@ public class StoreToBindingInstr extends OneOperandInstr {
     public boolean canRaiseException() { return false; }
 
     @Override
-    public Label interpret(InterpreterContext interp, IRubyObject self) {
+    public Label interpret(InterpreterContext interp) {
 		  LocalVariable v = (LocalVariable) getArg();
         if (bindingSlot == -1)
             bindingSlot = targetMethod.getBindingSlot(v.getName());

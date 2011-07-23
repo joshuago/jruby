@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.jruby</groupId>
     <artifactId>shared</artifactId>
-    <version>1.6.1</version>
+    <version>1.7.0.dev</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
@@ -80,8 +80,8 @@
     </dependency>
     <dependency>
       <groupId>org.jruby.extras</groupId>
-      <artifactId>constantine</artifactId>
-      <version>0.6</version>
+      <artifactId>jnr-constants</artifactId>
+      <version>0.8.1</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
@@ -93,13 +93,13 @@
     <dependency>
       <groupId>org.jruby.extras</groupId>
       <artifactId>jffi</artifactId>
-      <version>1.0.8</version>
+      <version>1.0.10</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
       <groupId>org.jruby.extras</groupId>
       <artifactId>jffi</artifactId>
-      <version>1.0.7</version>
+      <version>1.0.10</version>
       <scope>runtime</scope>
       <classifier>native</classifier>
     </dependency>
@@ -125,6 +125,18 @@
       <groupId>joda-time</groupId>
       <artifactId>joda-time</artifactId>
       <version>1.6</version>
+      <scope>${jar.scope}</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.6.1</version>
+      <scope>${jar.scope}</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>1.6.1</version>
       <scope>${jar.scope}</scope>
     </dependency>
   </dependencies>

@@ -19,16 +19,22 @@ public class InterpretedIRMethod extends DynamicMethod {
     // We can probably use IRMethod callArgs for something (at least arity)
     public InterpretedIRMethod(IRMethod method, RubyModule implementationClass) {
         super(implementationClass, Visibility.PRIVATE, CallConfiguration.FrameNoneScopeNone);
+        this.temporaryVariableSize = method.getTemporaryVariableSize();
+        this.method = method;
+    }
 
+    // We can probably use IRMethod callArgs for something (at least arity)
+    public InterpretedIRMethod(IRMethod method, Visibility visibility, RubyModule implementationClass) {
+        super(implementationClass, visibility, CallConfiguration.FrameNoneScopeNone);
         this.temporaryVariableSize = method.getTemporaryVariableSize();
         this.method = method;
     }
 
     @Override
-    public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name,
-            IRubyObject[] args, Block block) {
-        InterpreterContext interp = new NaiveInterpreterContext(context, clazz, self, method.getLocalVariablesCount(),
-                temporaryVariableSize, method.getRenamedVariableSize(), args, block);
+    public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
+        InterpreterContext interp = new NaiveInterpreterContext(context, getImplementationClass(), self, name, method.getLocalVariablesCount(),
+                temporaryVariableSize, method.getRenamedVariableSize(), args, block, null);
+		  context.getCurrentScope().getStaticScope().setModule(clazz);
 //        Arity.checkArgumentCount(context.getRuntime(), args.length, requiredArgsCount, method.get???);
         if (Interpreter.isDebug()) {
             // FIXME: name should probably not be "" ever.
@@ -42,6 +48,8 @@ public class InterpretedIRMethod extends DynamicMethod {
             method.prepareForInterpretation();
             c = method.getCFG();
         }
+		  // Do this *after* the method has been prepared!
+		  interp.allocateSharedBindingScope(method);
         if (Interpreter.isDebug() && displayedCFG == false) {
             System.out.println("CFG:\n" + c.getGraph());
             System.out.println("\nInstructions:\n" + c.toStringInstrs());
@@ -53,6 +61,6 @@ public class InterpretedIRMethod extends DynamicMethod {
 
     @Override
     public DynamicMethod dup() {
-        throw new UnsupportedOperationException("Not supported yet.");
+        return new InterpretedIRMethod(method, visibility, implementationClass);
     }
 }

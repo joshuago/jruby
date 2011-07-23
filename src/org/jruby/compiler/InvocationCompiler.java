@@ -39,6 +39,7 @@ import org.jruby.internal.runtime.methods.DynamicMethod.NativeCall;
 public interface InvocationCompiler {
     public SkinnyMethodAdapter getMethodAdapter();
     public void setMethodAdapter(SkinnyMethodAdapter sma);
+    
     /**
      * Invoke the named method as a "function", i.e. as a method on the current "self"
      * object, using the specified argument count. It is expected that previous calls
@@ -46,6 +47,12 @@ public interface InvocationCompiler {
      * call. Those values will be consumed, and the result of the call will be generated.
      */
     public void invokeDynamic(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback, CallType callType, CompilerCallback closureArg, boolean iterator);
+    
+    /**
+     * Same as invokeDynamic, but uses incoming IRubyObject[] arg count to dispatch
+     * to the proper-arity path.
+     */
+    public void invokeDynamicVarargs(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback, CallType callType, CompilerCallback closureArg, boolean iterator);
     
     public void invokeOpAsgnWithOr(String attrName, String attrAsgnName, CompilerCallback receiverCallback, ArgumentsCallback argsCallback);
     public void invokeOpAsgnWithAnd(String attrName, String attrAsgnName, CompilerCallback receiverCallback, ArgumentsCallback argsCallback);
@@ -62,8 +69,8 @@ public interface InvocationCompiler {
      * @param receiverCallback
      * @param argsCallback
      */
-    public void invokeAttrAssignMasgn(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback);
-    public void invokeAttrAssign(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback);
+    public void invokeAttrAssignMasgn(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback, boolean selfCall);
+    public void invokeAttrAssign(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback, boolean selfCall, boolean expr);
     
     public void opElementAsgnWithOr(CompilerCallback receiverCallback, ArgumentsCallback argsCallback, CompilerCallback valueCallback);
     

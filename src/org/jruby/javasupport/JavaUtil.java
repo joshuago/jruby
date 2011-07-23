@@ -686,6 +686,16 @@ public class JavaUtil {
         }
     };
     
+    private static final JavaConverter JAVA_CHARSEQUENCE_CONVERTER = new JavaConverter(String.class) {
+        public IRubyObject convert(Ruby runtime, Object object) {
+            if (object == null) return runtime.getNil();
+            return RubyString.newUnicodeString(runtime, (CharSequence)object);
+        }
+        public IRubyObject get(Ruby runtime, Object array, int i) {
+            return convert(runtime, ((CharSequence[])array)[i]);
+        }
+    };
+    
     private static final JavaConverter BYTELIST_CONVERTER = new JavaConverter(ByteList.class) {
         public IRubyObject convert(Ruby runtime, Object object) {
             if (object == null) return runtime.getNil();
@@ -728,6 +738,7 @@ public class JavaUtil {
         JAVA_CONVERTERS.put(Boolean.TYPE, JAVA_BOOLEANPRIM_CONVERTER);
         
         JAVA_CONVERTERS.put(String.class, JAVA_STRING_CONVERTER);
+        JAVA_CONVERTERS.put(CharSequence.class, JAVA_CHARSEQUENCE_CONVERTER);
         
         JAVA_CONVERTERS.put(ByteList.class, BYTELIST_CONVERTER);
         
@@ -865,6 +876,10 @@ public class JavaUtil {
         NUMERIC_CONVERTERS.put(BigInteger.class, NUMERIC_TO_BIGINTEGER);
         NUMERIC_CONVERTERS.put(Object.class, NUMERIC_TO_OBJECT);
         NUMERIC_CONVERTERS.put(void.class, NUMERIC_TO_VOID);
+    }
+    
+    public static Object objectFromJavaProxy(IRubyObject self) {
+        return ((JavaProxy)self).getObject();
     }
 
     @Deprecated

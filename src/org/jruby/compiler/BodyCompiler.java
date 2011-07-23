@@ -145,15 +145,6 @@ public interface BodyCompiler {
     public void createObjectArray(Object[] elementArray, ArrayCallback callback);
 
     /**
-     * Combine the top <pre>elementCount</pre> elements into a single element, generally
-     * an array or similar construct. The specified number of elements are consumed and
-     * an aggregate element remains.
-     * 
-     * @param elementCount The number of elements to consume
-     */
-    public void createObjectArray(int elementCount);
-
-    /**
      * Given an aggregated set of objects (likely created through a call to createObjectArray)
      * create a Ruby array object.
      */
@@ -573,6 +564,10 @@ public interface BodyCompiler {
     public void isCaptured(int number, BranchCallback trueBranch, BranchCallback falseBranch);
     public void concatArrays();
     public void appendToArray();
+    public void argsCatToArguments();
+    public void argsCatToArguments19();
+    public void splatToArguments();
+    public void splatToArguments19();
     public void convertToJavaArray();
     public void aryToAry();
     public void toJavaString();

@@ -66,6 +66,7 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.builtin.InstanceVariables;
+import org.jruby.runtime.opto.OptoFactory;
 import org.jruby.util.ByteList;
 import org.jruby.util.JavaNameMangler;
 import org.jruby.util.SafePropertyAccessor;
@@ -107,20 +108,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         method = new SkinnyMethodAdapter(script.getClassVisitor(), ACC_PUBLIC | ACC_STATIC, methodName, getSignature(), null, null);
 
         createVariableCompiler();
-        if (StandardASMCompiler.invDynInvCompilerConstructor != null) {
-            try {
-                invocationCompiler = (InvocationCompiler) StandardASMCompiler.invDynInvCompilerConstructor.newInstance(this, method);
-            } catch (InstantiationException ie) {
-                // do nothing, fall back on default compiler below
-                } catch (IllegalAccessException ie) {
-                // do nothing, fall back on default compiler below
-                } catch (InvocationTargetException ie) {
-                // do nothing, fall back on default compiler below
-                }
-        }
-        if (invocationCompiler == null) {
-            invocationCompiler = new StandardInvocationCompiler(this, method);
-        }
+        invocationCompiler = OptoFactory.newInvocationCompiler(this, method);
     }
 
     public String getNativeMethodName() {
@@ -504,18 +492,6 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         buildObjectArray(StandardASMCompiler.IRUBYOBJECT, sourceArray, callback);
     }
 
-    public void createObjectArray(int elementCount) {
-        // if element count is less than 6, use helper methods
-        if (elementCount < 6) {
-            Class[] params = new Class[elementCount];
-            Arrays.fill(params, IRubyObject.class);
-            invokeUtilityMethod("constructObjectArray", sig(IRubyObject[].class, params));
-        } else {
-            // This is pretty inefficient for building an array, so just raise an error if someone's using it for a lot of elements
-            throw new NotCompilableException("Don't use createObjectArray(int) for more than 5 elements");
-        }
-    }
-
     private void buildObjectArray(String type, Object[] sourceArray, ArrayCallback callback) {
         if (sourceArray.length == 0) {
             method.getstatic(p(IRubyObject.class), "NULL_ARRAY", ci(IRubyObject[].class));
@@ -551,19 +527,31 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
             }
             invokeUtilityMethod("constructRubyArray", sig(RubyArray.class, params(Ruby.class, IRubyObject.class, sourceArray.length)));
         } else {
-            // brute force construction inline
+            // brute force construction
+            
+            // construct array all at once
             method.pushInt(sourceArray.length);
-            method.anewarray(p(IRubyObject.class));
+            invokeUtilityMethod("anewarrayIRubyObjects", sig(IRubyObject[].class, int.class));
 
-            for (int i = 0; i < sourceArray.length; i++) {
-                method.dup();
-                method.pushInt(i);
-
+            // iterate over elements, stuffing every ten into array in batches
+            int i = 0;
+            for (; i < sourceArray.length; i++) {
                 callback.nextValue(this, sourceArray, i);
 
-                method.arraystore();
+                if ((i + 1) % 10 == 0) {
+                    method.pushInt(i - 9);
+                    invokeUtilityMethod("aastoreIRubyObjects", sig(IRubyObject[].class, params(IRubyObject[].class, IRubyObject.class, 10, int.class)));
+                }
             }
             
+            // stuff remaining into array
+            int remain = i % 10;
+            if (remain != 0) {
+                method.pushInt(i - remain);
+                invokeUtilityMethod("aastoreIRubyObjects", sig(IRubyObject[].class, params(IRubyObject[].class, IRubyObject.class, remain, int.class)));
+            }
+            
+            // construct RubyArray wrapper
             if (light) {
                 method.invokestatic(p(RubyArray.class), "newArrayNoCopyLight", sig(RubyArray.class, Ruby.class, IRubyObject[].class));
             } else {
@@ -1379,7 +1367,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
             loadRuntime();
             createStringCallback.call(this);
             method.pushInt(options);
-            method.invokestatic(p(RubyRegexp.class), "newDRegexp", sig(RubyRegexp.class, params(Ruby.class, RubyString.class, int.class))); //[reg]
+            method.invokestatic(p(RubyRegexp.class), "newDRegexpEmbedded", sig(RubyRegexp.class, params(Ruby.class, RubyString.class, int.class))); //[reg]
         }
     }
 
@@ -2214,6 +2202,22 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         invokeUtilityMethod("appendToObjectArray", sig(IRubyObject[].class, params(IRubyObject[].class, IRubyObject.class)));
     }
 
+    public void splatToArguments() {
+        invokeUtilityMethod("splatToArguments", sig(IRubyObject[].class, IRubyObject.class));
+    }
+
+    public void splatToArguments19() {
+        invokeUtilityMethod("splatToArguments19", sig(IRubyObject[].class, IRubyObject.class));
+    }
+    
+    public void argsCatToArguments() {
+        invokeUtilityMethod("argsCatToArguments", sig(IRubyObject[].class, IRubyObject[].class, IRubyObject.class));
+    }
+    
+    public void argsCatToArguments19() {
+        invokeUtilityMethod("argsCatToArguments19", sig(IRubyObject[].class, IRubyObject[].class, IRubyObject.class));
+    }
+
     public void convertToJavaArray() {
         method.invokestatic(p(ArgsUtil.class), "convertToJavaArray", sig(IRubyObject[].class, params(IRubyObject.class)));
     }
@@ -2489,7 +2493,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
                 invokeUtilityMethod("getArgValues", sig(IRubyObject[].class, ThreadContext.class));
             }
         };
-        getInvocationCompiler().invokeDynamic(null, null, argsCallback, CallType.SUPER, closure, false);
+        getInvocationCompiler().invokeDynamicVarargs(null, null, argsCallback, CallType.SUPER, closure, false);
     }
 
     public void checkIsExceptionHandled(ArgumentsCallback rescueArgs) {

@@ -121,6 +121,7 @@ import org.jruby.ast.RootNode;
 import org.jruby.ast.SClassNode;
 import org.jruby.ast.SValueNode;
 import org.jruby.ast.SelfNode;
+import org.jruby.ast.SpecialArgs;
 import org.jruby.ast.SplatNode;
 import org.jruby.ast.StarNode;
 import org.jruby.ast.StrNode;
@@ -648,9 +649,13 @@ public class ASTCompiler {
                 context.createNewArray(childNodes.toArray(), callback, arrayNode.isLightweight());
             }
         } else {
-            for (Iterator<Node> iter = arrayNode.childNodes().iterator(); iter.hasNext();) {
-                Node nextNode = iter.next();
-                compile(nextNode, context, false);
+            if (isListAllLiterals(arrayNode)) {
+                // do nothing, no observable effect
+            } else {
+                for (Iterator<Node> iter = arrayNode.childNodes().iterator(); iter.hasNext();) {
+                    Node nextNode = iter.next();
+                    compile(nextNode, context, false);
+                }
             }
         }
     }
@@ -717,9 +722,10 @@ public class ASTCompiler {
         
         ArgumentsCallback argsCallback = getArgsCallback(attrAssignNode.getArgsNode());
 
-        context.getInvocationCompiler().invokeAttrAssign(attrAssignNode.getName(), receiverCallback, argsCallback);
-        // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
+        // Ruby 1.8 and 1.9 only bypass visibility check when receiver is statically
+        // determined to be self.
+        boolean isSelf = attrAssignNode.getReceiverNode() instanceof SelfNode;
+        context.getInvocationCompiler().invokeAttrAssign(attrAssignNode.getName(), receiverCallback, argsCallback, isSelf, expr);
     }
 
     public void compileAttrAssignAssignment(Node node, BodyCompiler context, boolean expr) {
@@ -732,7 +738,10 @@ public class ASTCompiler {
         };
         ArgumentsCallback argsCallback = getArgsCallback(attrAssignNode.getArgsNode());
 
-        context.getInvocationCompiler().invokeAttrAssignMasgn(attrAssignNode.getName(), receiverCallback, argsCallback);
+        // Ruby 1.8 and 1.9 only bypass visibility check when receiver is statically
+        // determined to be self.
+        boolean isSelf = attrAssignNode.getReceiverNode() instanceof SelfNode;
+        context.getInvocationCompiler().invokeAttrAssignMasgn(attrAssignNode.getName(), receiverCallback, argsCallback, isSelf);
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -859,9 +868,15 @@ public class ASTCompiler {
             }
         }
         
-        context.getInvocationCompiler().invokeDynamic(
-                name, receiverCallback, argsCallback,
-                callType, closureArg, callNode.getIterNode() instanceof IterNode);
+        if (callNode instanceof SpecialArgs) {
+            context.getInvocationCompiler().invokeDynamicVarargs(
+                    name, receiverCallback, argsCallback,
+                    callType, closureArg, callNode.getIterNode() instanceof IterNode);
+        } else {
+            context.getInvocationCompiler().invokeDynamic(
+                    name, receiverCallback, argsCallback,
+                    callType, closureArg, callNode.getIterNode() instanceof IterNode);
+        }
         
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
@@ -1367,8 +1382,8 @@ public class ASTCompiler {
 
             context.assignConstantInCurrent(constDeclNode.getName());
         } else if (constNode.getNodeType() == NodeType.COLON2NODE) {
-            compile(((Colon2Node) constNode).getLeftNode(), context,true);
             compile(constDeclNode.getValueNode(), context,true);
+            compile(((Colon2Node) constNode).getLeftNode(), context,true);
 
             context.assignConstantInModule(constDeclNode.getName());
         } else {// colon3, assign in Object
@@ -2388,7 +2403,12 @@ public class ASTCompiler {
             }
         }
 
-        context.getInvocationCompiler().invokeDynamic(fcallNode.getName(), null, argsCallback, CallType.FUNCTIONAL, closureArg, fcallNode.getIterNode() instanceof IterNode);
+        if (fcallNode instanceof SpecialArgs) {
+            context.getInvocationCompiler().invokeDynamicVarargs(fcallNode.getName(), null, argsCallback, CallType.FUNCTIONAL, closureArg, fcallNode.getIterNode() instanceof IterNode);
+        } else {
+            context.getInvocationCompiler().invokeDynamic(fcallNode.getName(), null, argsCallback, CallType.FUNCTIONAL, closureArg, fcallNode.getIterNode() instanceof IterNode);
+        }
+        
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -2948,8 +2968,14 @@ public class ASTCompiler {
         MultipleAsgnNode multipleAsgnNode = (MultipleAsgnNode) node;
 
         if (expr) {
-            // need the array, use unoptz version
-            compileUnoptimizedMultipleAsgn(multipleAsgnNode, context, expr);
+            if (RubyInstanceConfig.FAST_MULTIPLE_ASSIGNMENT) {
+                // optimized version, but expr so return true
+                compileOptimizedMultipleAsgn(multipleAsgnNode, context, false);
+                context.loadTrue();
+            } else {
+                // need the array, use unoptz version
+                compileUnoptimizedMultipleAsgn(multipleAsgnNode, context, expr);
+            }
         } else {
             // try optz version
             compileOptimizedMultipleAsgn(multipleAsgnNode, context, expr);
@@ -3712,7 +3738,13 @@ public class ASTCompiler {
 
         CompilerCallback closureArg = getBlock(superNode.getIterNode());
 
-        context.getInvocationCompiler().invokeDynamic(null, null, argsCallback, CallType.SUPER, closureArg, superNode.getIterNode() instanceof IterNode);
+        // this is a hacky check; would prefer arity-split Super nodes like Call and FCall
+        if (superNode.getArgsNode() instanceof ArgsCatNode) {
+            context.getInvocationCompiler().invokeDynamicVarargs(null, null, argsCallback, CallType.SUPER, closureArg, superNode.getIterNode() instanceof IterNode);
+        } else {
+            context.getInvocationCompiler().invokeDynamic(null, null, argsCallback, CallType.SUPER, closureArg, superNode.getIterNode() instanceof IterNode);
+        }
+        
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -3929,24 +3961,26 @@ public class ASTCompiler {
     public void compileArgsCatArguments(Node node, BodyCompiler context, boolean expr) {
         ArgsCatNode argsCatNode = (ArgsCatNode) node;
 
+        // arguments compilers always create IRubyObject[], but since we then combine
+        // with another IRubyObject[] from coercing second node to array, this can
+        // be inefficient. Escape analysis may help, though.
         compileArguments(argsCatNode.getFirstNode(), context);
-        // arguments compilers always create IRubyObject[], but we want to use RubyArray.concat here;
-        // FIXME: as a result, this is NOT efficient, since it creates and then later unwraps an array
-        context.createNewArray(true);
         compile(argsCatNode.getSecondNode(), context,true);
-        splatCurrentValue(context);
-        context.concatArrays();
-        context.convertToJavaArray();
+        context.argsCatToArguments();
+        
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
 
     public void compileArgsPushArguments(Node node, BodyCompiler context, boolean expr) {
         ArgsPushNode argsPushNode = (ArgsPushNode) node;
-        compile(argsPushNode.getFirstNode(), context,true);
+        // This constructs one or more intermediate IRubyObject[] because that's what
+        // arguments compilation produces, so it may be inefficient. Escape
+        // analysis may help.
+        compileArguments(argsPushNode.getFirstNode(), context);
         compile(argsPushNode.getSecondNode(), context,true);
-        context.appendToArray();
-        context.convertToJavaArray();
+        context.appendToObjectArray();
+        
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -3973,8 +4007,7 @@ public class ASTCompiler {
         SplatNode splatNode = (SplatNode) node;
 
         compile(splatNode.getValue(), context,true);
-        splatCurrentValue(context);
-        context.convertToJavaArray();
+        context.splatToArguments();
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }

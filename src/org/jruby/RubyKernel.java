@@ -43,9 +43,7 @@
 package org.jruby;
 
 import java.io.ByteArrayOutputStream;
-import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.Random;
 
 import static org.jruby.RubyEnumerator.enumeratorize;
 import static org.jruby.anno.FrameField.*;
@@ -312,7 +310,7 @@ public class RubyKernel {
 
     @JRubyMethod(name = "getc", module = true, visibility = PRIVATE)
     public static IRubyObject getc(ThreadContext context, IRubyObject recv) {
-        context.getRuntime().getWarnings().warn(ID.DEPRECATED_METHOD, "getc is obsolete; use STDIN.getc instead", "getc", "STDIN.getc");
+        context.getRuntime().getWarnings().warn(ID.DEPRECATED_METHOD, "getc is obsolete; use STDIN.getc instead");
         IRubyObject defin = context.getRuntime().getGlobalVariables().get("$stdin");
         return defin.callMethod(context, "getc");
     }
@@ -1596,7 +1594,11 @@ public class RubyKernel {
         return RubyRandom.randCommon19(context, recv, arg);
     }
 
-    @JRubyMethod(name = "spawn", required = 1, rest = true, module = true, visibility = PRIVATE, compat = RUBY1_9)
+    /**
+     * Now implemented in Ruby code. See Process::spawn in src/builtin/prelude.rb
+     * 
+     * @deprecated 
+     */
     public static RubyFixnum spawn(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         Ruby runtime = context.getRuntime();
         long pid = ShellLauncher.runExternalWithoutWait(runtime, args);
@@ -1644,24 +1646,53 @@ public class RubyKernel {
         return (int)tuple[0];
     }
     
-    @JRubyMethod(name = {"exec"}, required = 1, rest = true, module = true, visibility = PRIVATE)
+    @JRubyMethod(name = {"exec"}, required = 1, rest = true, module = true, compat = RUBY1_8, visibility = PRIVATE)
     public static IRubyObject exec(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         Ruby runtime = context.getRuntime();
+        
+        return execCommon(runtime, null, null, null, args);
+    }
+    
+    @JRubyMethod(required = 4, module = true, compat = RUBY1_9, visibility = PRIVATE)
+    public static IRubyObject _exec_internal(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
+        Ruby runtime = context.getRuntime();
+        
+        IRubyObject env = args[0];
+        IRubyObject prog = args[1];
+        IRubyObject options = args[2];
+        RubyArray cmdArgs = (RubyArray)args[3];
 
+        return execCommon(runtime, env, prog, options, cmdArgs.toJavaArray());
+    }
+    
+    private static IRubyObject execCommon(Ruby runtime, IRubyObject env, IRubyObject prog, IRubyObject options, IRubyObject[] args) {
         // This is a fairly specific hack for empty string, but it does the job
         if (args.length == 1 && args[0].convertToString().isEmpty()) {
             throw runtime.newErrnoENOENTError(args[0].convertToString().toString());
         }
+
+        ThreadContext context = runtime.getCurrentContext();
+        if (env != null && !env.isNil()) {
+            RubyHash envMap = (RubyHash) env.convertToHash();
+            if (envMap != null) {
+                runtime.getENV().merge_bang(context, envMap, Block.NULL_BLOCK);
+            }
+        }
+        
+        if (prog != null && prog.isNil()) prog = null;
         
         int resultCode;
         boolean nativeFailed = false;
         try {
             try {
+                // args to strings
                 String[] argv = new String[args.length];
                 for (int i = 0; i < args.length; i++) {
                     argv[i] = args[i].asJavaString();
                 }
-                resultCode = runtime.getPosix().exec(null, argv);
+                
+                resultCode = runtime.getPosix().exec(prog == null ? null : prog.asJavaString(), argv);
+                
                 // Only here because native exec could not exec (always -1)
                 nativeFailed = true;
             } catch (RaiseException e) {  // Not implemented error

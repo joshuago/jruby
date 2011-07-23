@@ -5,7 +5,7 @@
   <groupId>org.jruby</groupId>
   <artifactId>shared</artifactId>
   <packaging>pom</packaging>
-  <version>1.6.1</version>
+  <version>1.7.0.dev</version>
   <name>JRuby Shared</name>
   <url>http://www.jruby.org/</url>
   <description>A 1.8.7 compatible Ruby interpreter written in 100% pure Java</description>
@@ -16,9 +16,9 @@
   </issueManagement>
 
   <scm>
-    <connection>scm:git:git://kenai.com/jruby~main</connection>
-    <developerConnection>scm:git:ssh://git.kenai.com/jruby~main</developerConnection>
-    <url>http://kenai.com/projects/jruby/sources</url>
+    <connection>scm:git:git://github.com/jruby/jruby.git</connection>
+    <developerConnection>scm:git:git://github.com/jruby/jruby.git</developerConnection>
+    <url>http://github.com/jruby/jruby</url>
   </scm>
 
   <licenses>

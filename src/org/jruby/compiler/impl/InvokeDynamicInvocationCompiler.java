@@ -1,4 +1,3 @@
-
 /*
  ***** BEGIN LICENSE BLOCK *****
  * Version: CPL 1.0/GPL 2.0/LGPL 2.1
@@ -28,9 +27,11 @@
 
 package org.jruby.compiler.impl;
 
+import org.jruby.RubyInstanceConfig;
 import org.jruby.compiler.ArgumentsCallback;
 import org.jruby.compiler.BodyCompiler;
 import org.jruby.compiler.CompilerCallback;
+import org.jruby.compiler.NotCompilableException;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.CallType;
 import org.jruby.runtime.ThreadContext;
@@ -47,9 +48,44 @@ public class InvokeDynamicInvocationCompiler extends StandardInvocationCompiler 
         super(methodCompiler, method);
     }
 
-    public void invokeAttrAssign(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback) {
-        // TODO: NORMAL versus VARIABLE call type test
-        invokeDynamic(name, receiverCallback, argsCallback, CallType.VARIABLE, null, false);
+    @Override
+    public void invokeAttrAssign(String name, CompilerCallback receiverCallback, ArgumentsCallback argsCallback, boolean selfCall, boolean expr) {
+        methodCompiler.loadThreadContext(); // [adapter, tc]
+        
+        // for visibility checking without requiring frame self
+        // TODO: don't bother passing when fcall or vcall, and adjust callsite appropriately
+        methodCompiler.loadSelf();
+
+        if (receiverCallback != null) {
+            receiverCallback.call(methodCompiler);
+        } else {
+            methodCompiler.loadSelf();
+        }
+
+        methodCompiler.method.ldc(name);
+        String signature;
+
+        argsCallback.call(methodCompiler);
+        // with args, no block
+        switch (argsCallback.getArity()) {
+        case 1:
+            signature = sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class));
+            break;
+        case 2:
+            signature = sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, IRubyObject.class));
+            break;
+        case 3:
+            signature = sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
+            break;
+        default:
+            signature = sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject[].class));
+        }
+        
+        // adapter, tc, recv, args{0,1}, block{0,1}]
+        method.invokedynamic("attrAssign" + (selfCall ? "Self" : "") + (expr ? "Expr" : ""), signature, InvokeDynamicSupport.getInvocationHandle());
+        
+        // TODO: void invokedynamic to avoid pop
+        if (!expr) method.pop();
     }
 
     @Override
@@ -73,7 +109,12 @@ public class InvokeDynamicInvocationCompiler extends StandardInvocationCompiler 
 
         methodCompiler.method.ldc(name);
 
-        String invokeName = callType == CallType.NORMAL ? "call" : "fcall";
+        String invokeName;
+        if (iterator) {
+            invokeName = callType == CallType.NORMAL ? "callIter" : "fcallIter";
+        } else {
+            invokeName = callType == CallType.NORMAL ? "call" : "fcall";
+        }
         String signature;
 
         // args
@@ -126,7 +167,7 @@ public class InvokeDynamicInvocationCompiler extends StandardInvocationCompiler 
         }
         
         // adapter, tc, recv, args{0,1}, block{0,1}]
-        method.invokedynamic(invokeName, signature, InvokeDynamicSupport.bootstrapHandle());
+        method.invokedynamic(invokeName, signature, InvokeDynamicSupport.getInvocationHandle());
     }
 
     @Override
@@ -149,5 +190,56 @@ public class InvokeDynamicInvocationCompiler extends StandardInvocationCompiler 
                 super.invokeEqq(receivers, argument);
             }
         }
+    }
+
+    @Override
+    public void yieldSpecific(ArgumentsCallback argsCallback) {
+        methodCompiler.loadBlock();
+        methodCompiler.loadThreadContext();
+
+        String signature;
+        if (argsCallback == null) {
+            signature = sig(IRubyObject.class, Block.class, ThreadContext.class);
+        } else {
+            argsCallback.call(methodCompiler);
+            switch (argsCallback.getArity()) {
+            case 1:
+                signature = sig(IRubyObject.class, Block.class, ThreadContext.class, IRubyObject.class);
+                break;
+            case 2:
+                signature = sig(IRubyObject.class, Block.class, ThreadContext.class, IRubyObject.class, IRubyObject.class);
+                break;
+            case 3:
+                signature = sig(IRubyObject.class, Block.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class);
+                break;
+            default:
+                throw new NotCompilableException("Can't do specific-arity call for > 3 args yet");
+            }
+        }
+
+        method.invokedynamic("yieldSpecific", signature, InvokeDynamicSupport.getInvocationHandle());
+    }
+
+    public void invokeBinaryFixnumRHS(String name, CompilerCallback receiverCallback, long fixnum) {
+        if (!RubyInstanceConfig.INVOKEDYNAMIC_FASTOPS) {
+            super.invokeBinaryFixnumRHS(name, receiverCallback, fixnum);
+            return;
+        }
+        
+        methodCompiler.loadThreadContext(); // [adapter, tc]
+
+        // for visibility checking without requiring frame self
+        // TODO: don't bother passing when fcall or vcall, and adjust callsite appropriately
+        methodCompiler.loadSelf();
+
+        if (receiverCallback != null) {
+            receiverCallback.call(methodCompiler);
+        } else {
+            methodCompiler.loadSelf();
+        }
+
+        String signature = sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, IRubyObject.class));
+
+        method.invokedynamic("fixnumOperator", signature, InvokeDynamicSupport.getFixnumOperatorHandle(), name, fixnum);
     }
 }

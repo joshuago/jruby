@@ -17,10 +17,13 @@ cygwin=false
 case "`uname`" in
   CYGWIN*) cygwin=true;;
   Darwin) darwin=true;;
+  MINGW*) jruby.exe "$@"; exit $?;;
 esac
 
 # ----- Verify and Set Required Environment Variables -------------------------
-JAVA_VM=-client
+if [ -z "$JAVA_VM" ]; then
+  JAVA_VM=-client
+fi
 
 ## resolve links - $0 may be a link to  home
 PRG=$0
@@ -308,7 +311,7 @@ set -- "${ruby_args[@]}"
 JAVA_OPTS="$JAVA_OPTS $JAVA_MEM $JAVA_MEM_MIN $JAVA_STACK"
 
 JFFI_BOOT=""
-if [ -d $JRUBY_HOME/lib/native/ ]; then
+if [ -d "$JRUBY_HOME/lib/native/" ]; then
   for d in $JRUBY_HOME/lib/native/*`uname -s`; do
     if [ -z "$JFFI_BOOT" ]; then
       JFFI_BOOT="$d"

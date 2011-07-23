@@ -3,6 +3,9 @@
  */
 package org.jruby.ext.ffi.jffi;
 
+import java.lang.ref.Reference;
+import java.lang.ref.SoftReference;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.jruby.ext.ffi.Type;
@@ -12,13 +15,15 @@ import org.jruby.ext.ffi.Type;
  */
 final class JITHandle {
 
-    private static final int THRESHOLD = Integer.getInteger("jruby.ffi.compile.threshold", 10);
+    private static final int THRESHOLD = Integer.getInteger("jruby.ffi.compile.threshold", 100);
     private final JITSignature jitSignature;
     private volatile boolean compilationFailed = false;
     private final AtomicInteger counter = new AtomicInteger(0);
-    private volatile Class<? extends NativeInvoker> compiledClass = null;
+    private final JITCompiler compiler;
+    private Reference<Class<? extends NativeInvoker>> compiledClassRef = null;
 
-    JITHandle(JITSignature signature, boolean compilationFailed) {
+    JITHandle(JITCompiler compiler, JITSignature signature, boolean compilationFailed) {
+        this.compiler = compiler;
         this.jitSignature = signature;
         this.compilationFailed = compilationFailed;
     }
@@ -32,13 +37,16 @@ final class JITHandle {
             return null;
         }
 
+        Class<? extends NativeInvoker> compiledClass;
         synchronized (this) {
-            if (compiledClass == null) {
+            if (compiledClassRef == null || (compiledClass = compiledClassRef.get()) == null) {
                 compiledClass = newInvokerClass(jitSignature);
                 if (compiledClass == null) {
                     compilationFailed = true;
                     return null;
                 }
+                compiler.registerClass(this, compiledClass);
+                compiledClassRef = new WeakReference<Class<? extends NativeInvoker>>(compiledClass);
             }
         }
 
@@ -51,11 +59,10 @@ final class JITHandle {
         }
 
         try {
-            Constructor<? extends NativeInvoker> cons = compiledClass.getDeclaredConstructor(com.kenai.jffi.Function.class, NativeDataConverter.class, NativeDataConverter[].class, NativeInvoker.class);
-            return cons.newInstance(function, resultConverter, parameterConverters,
-                    createFallbackInvoker(function, jitSignature));
+            Constructor<? extends NativeInvoker> cons = compiledClass.getDeclaredConstructor(com.kenai.jffi.Function.class, Signature.class, NativeInvoker.class);
+            return cons.newInstance(function, signature, createFallbackInvoker(function, jitSignature));
         } catch (Throwable t) {
-            return null;
+            throw new RuntimeException(t);
         }
     }
 

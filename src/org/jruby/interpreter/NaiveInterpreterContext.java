@@ -23,6 +23,7 @@ import org.jruby.compiler.ir.operands.Label;
  */
 public class NaiveInterpreterContext implements InterpreterContext {
     private final Ruby runtime;
+	 private final Object NIL;
     private final ThreadContext context;
     protected Object returnValue;
     protected Object self;
@@ -32,6 +33,7 @@ public class NaiveInterpreterContext implements InterpreterContext {
     protected Object[] localVariables;
     protected Frame frame;
     protected Block block;
+    protected Block.Type blockType;
     protected DynamicScope currDynScope = null;
     protected boolean allocatedDynScope = false;
     protected RubyException currException = null;
@@ -42,18 +44,21 @@ public class NaiveInterpreterContext implements InterpreterContext {
 	 // - self if we are executing a class method of 'self'
 	 // - self.getMetaClass() if we are executing an instance method of 'self'
 	 // - the class in which the closure is lexically defined in if we are executing a closure
-    public NaiveInterpreterContext(ThreadContext context, RubyModule currentModule, IRubyObject self, int localVariablesSize, int temporaryVariablesSize, int renamedVariablesSize, IRubyObject[] parameters, Block block) {
-        context.preMethodFrameOnly(currentModule, null, self, block);
+    public NaiveInterpreterContext(ThreadContext context, RubyModule currentModule, IRubyObject self, String name, int localVariablesSize, int temporaryVariablesSize, int renamedVariablesSize, IRubyObject[] parameters, Block block, Block.Type blockType) {
+        context.preMethodFrameOnly(currentModule, name, self, block);
         this.frame = context.getCurrentFrame();
 
         this.context = context;
         this.runtime = context.getRuntime();
+		  this.NIL = runtime.getNil();
         this.self = self;
         this.parameters = parameters;
         this.localVariables = localVariablesSize > 0 ? new Object[localVariablesSize] : null;
         this.temporaryVariables = temporaryVariablesSize > 0 ? new Object[temporaryVariablesSize] : null;
         this.renamedVariables = renamedVariablesSize > 0 ? new Object[renamedVariablesSize] : null;
         this.block = block;
+		  // SSS FIXME: Can it happen that (block.type != blockType)?
+		  this.blockType = blockType;
     }
 
     public Ruby getRuntime() {
@@ -62,6 +67,10 @@ public class NaiveInterpreterContext implements InterpreterContext {
 
     public Block getBlock() {
         return block;
+    }
+
+    public boolean inLambda() {
+        return (blockType != null) && (blockType == Block.Type.LAMBDA);
     }
 
     public void setBlock(Block block) {
@@ -89,7 +98,7 @@ public class NaiveInterpreterContext implements InterpreterContext {
 
     public Object getReturnValue() {
         // FIXME: Maybe returnValue is a sure thing and we don't need this check.  Should be this way.
-        return returnValue == null ? context.getRuntime().getNil() : returnValue;
+        return returnValue == null ? NIL : returnValue;
     }
 
     public void setReturnValue(Object returnValue) {
@@ -145,7 +154,8 @@ public class NaiveInterpreterContext implements InterpreterContext {
     }
 
     public Object getLocalVariable(int offset) {
-        return localVariables[offset];
+        Object o = localVariables[offset];
+		  return (o == null) ? getRuntime().getNil() : o;
     }
 
     public Object setLocalVariable(int offset, Object value) {

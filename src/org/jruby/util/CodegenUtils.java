@@ -98,6 +98,10 @@ public class CodegenUtils {
         return n.getCanonicalName();
     }
     
+    public static String humanShort(Class n) {
+        return n.getSimpleName();
+    }
+    
     /**
      * Create a method signature from the given param types and return values
      */
@@ -158,6 +162,19 @@ public class CodegenUtils {
         return signature.toString();
     }
     
+    public static String prettyShortParams(Class... params) {
+        StringBuilder signature = new StringBuilder("(");
+        
+        for (int i = 0; i < params.length; i++) {
+            signature.append(humanShort(params[i]));
+            if (i < params.length - 1) signature.append(',');
+        }
+        
+        signature.append(")");
+        
+        return signature.toString();
+    }
+    
     public static Class[] params(Class... classes) {
         return classes;
     }
@@ -182,13 +199,21 @@ public class CodegenUtils {
         classes[1] = cls2;
         return classes;
     }
+
+    public static Class[] params(Class cls1, Class clsFill, int times, Class clsTail) {
+        Class[] classes = new Class[times + 2];
+        Arrays.fill(classes, clsFill);
+        classes[0] = cls1;
+        classes[times + 1] = clsTail;
+        return classes;
+    }
     
     public static String getAnnotatedBindingClassName(String javaMethodName, String typeName, boolean isStatic, int required, int optional, boolean multi, boolean framed) {
-        String commonClassSuffix;
+        String commonClassSuffix = "$INVOKER" + (isStatic ? "$s$" : "$i$" );
         if (multi) {
-            commonClassSuffix = (isStatic ? "$s$" : "$i$" ) + javaMethodName;
+            commonClassSuffix += javaMethodName;
         } else {
-            commonClassSuffix = (isStatic ? "$s$" : "$i$" ) + required + "$" + optional + "$" + javaMethodName;
+            commonClassSuffix += required + "$" + optional + "$" + javaMethodName;
         }
         return typeName + commonClassSuffix;
     }

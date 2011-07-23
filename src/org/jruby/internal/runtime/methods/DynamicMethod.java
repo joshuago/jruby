@@ -38,6 +38,7 @@
 
 package org.jruby.internal.runtime.methods;
 
+import java.util.Arrays;
 import org.jruby.MetaClass;
 import org.jruby.Ruby;
 import org.jruby.RubyLocalJumpError;
@@ -72,8 +73,10 @@ public abstract class DynamicMethod {
     protected long serialNumber;
     /** Is this a builtin core method or not */
     protected boolean builtin = false;
-    /** Data on what native call will eventually be made */
+    /** Single-arity native call */
     protected NativeCall nativeCall;
+    /** Alternate-arity NativeCalls */
+    protected NativeCall[] nativeCalls = new NativeCall[10];
     /** The simple, base name this method was defined under. May be null.*/
     protected String name;
     /** Whether this method is "not implemented". */
@@ -455,13 +458,19 @@ public abstract class DynamicMethod {
         private final Class nativeReturn;
         private final Class[] nativeSignature;
         private final boolean statik;
+        private final boolean java;
 
         public NativeCall(Class nativeTarget, String nativeName, Class nativeReturn, Class[] nativeSignature, boolean statik) {
+            this(nativeTarget, nativeName, nativeReturn, nativeSignature, statik, false);
+        }
+
+        public NativeCall(Class nativeTarget, String nativeName, Class nativeReturn, Class[] nativeSignature, boolean statik, boolean java) {
             this.nativeTarget = nativeTarget;
             this.nativeName = nativeName;
             this.nativeReturn = nativeReturn;
             this.nativeSignature = nativeSignature;
             this.statik = statik;
+            this.java = java;
         }
 
         public Class getNativeTarget() {
@@ -483,19 +492,62 @@ public abstract class DynamicMethod {
         public boolean isStatic() {
             return statik;
         }
+        
+        public boolean isJava() {
+            return java;
+        }
 
         @Override
         public String toString() {
-            return "" + (statik?"static ":"") + nativeReturn.getName() + " " + nativeTarget.getName() + "." + nativeName + CodegenUtils.prettyParams(nativeSignature);
+            return "" + (statik?"static ":"") + nativeReturn.getSimpleName() + " " + nativeTarget.getSimpleName() + "." + nativeName + CodegenUtils.prettyShortParams(nativeSignature);
         }
     }
 
-    public void setNativeCall(Class nativeTarget, String nativeName, Class nativeReturn, Class[] nativeSignature, boolean statik) {
-        this.nativeCall = new NativeCall(nativeTarget, nativeName, nativeReturn, nativeSignature, statik);
+    /**
+     * Set the single-arity NativeCall for this method. All signatures for the
+     * non-single-arity getNativeCall will also be set to this value.
+     * 
+     * @param nativeTarget native method target
+     * @param nativeName native method name
+     * @param nativeReturn native method return
+     * @param nativeSignature native method arguments
+     * @param statik static?
+     * @param java plain Java method?
+     */
+    public void setNativeCall(Class nativeTarget, String nativeName, Class nativeReturn, Class[] nativeSignature, boolean statik, boolean java) {
+        this.nativeCall = new NativeCall(nativeTarget, nativeName, nativeReturn, nativeSignature, statik, java);
+        Arrays.fill(nativeCalls, nativeCall);
     }
 
+
+    /**
+     * Set the single-arity NativeCall for this method. All signatures for the
+     * non-single-arity getNativeCall will also be set to this value.
+     * 
+     * @param nativeTarget native method target
+     * @param nativeName native method name
+     * @param nativeReturn native method return
+     * @param nativeSignature native method arguments
+     * @param statik static?
+     */
+    public void setNativeCall(Class nativeTarget, String nativeName, Class nativeReturn, Class[] nativeSignature, boolean statik) {
+        setNativeCall(nativeTarget, nativeName, nativeReturn, nativeSignature, statik, false);
+    }
+    
     public NativeCall getNativeCall() {
-        return nativeCall;
+        return this.nativeCall;
+    }
+    
+    public NativeCall getNativeCall(int args, boolean block) {
+        if (args == -1 || args > 3) args = 4;
+        if (block) args += 5;
+        return this.nativeCalls[args];
+    }
+    
+    public void setNativeCall(int args, boolean block, NativeCall nativeCall) {
+        if (args == -1 || args > 3) args = 4;
+        if (block) args += 5;
+        this.nativeCalls[args] = nativeCall;
     }
 
     /**

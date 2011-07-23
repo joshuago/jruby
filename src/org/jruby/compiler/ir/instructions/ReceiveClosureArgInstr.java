@@ -33,8 +33,21 @@ public class ReceiveClosureArgInstr extends NoOperandInstr {
 
     @Interp
     @Override
-    public Label interpret(InterpreterContext interp, IRubyObject self) {
-        getResult().store(interp, interp.getParameter(argIndex));
+    public Label interpret(InterpreterContext interp) {
+        Object o;
+        if (restOfArgArray) {
+            int numArgs = interp.getParameterCount();
+            IRubyObject[] restOfArgs = new IRubyObject[numArgs-argIndex];
+            int j = 0;
+            for (int i = argIndex; i < numArgs; i++) {
+                restOfArgs[j] = (IRubyObject)interp.getParameter(i);
+                j++;
+            }
+            o =  org.jruby.RubyArray.newArray(interp.getRuntime(), restOfArgs);
+        } else {
+            o = interp.getParameter(argIndex);
+        }
+        getResult().store(interp, o);
         return null;
     }
 }

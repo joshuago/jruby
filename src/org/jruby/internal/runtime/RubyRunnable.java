@@ -40,8 +40,13 @@ import org.jruby.runtime.Frame;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.profile.IProfileData;
+import org.jruby.util.log.Logger;
+import org.jruby.util.log.LoggerFactory;
 
 public class RubyRunnable implements Runnable {
+
+    private static final Logger LOG = LoggerFactory.getLogger("RubyRunnable");
+
     private Ruby runtime;
     private RubyProc proc;
     private IRubyObject[] arguments;
@@ -82,7 +87,7 @@ public class RubyRunnable implements Runnable {
         } catch (SecurityException se) {
             // can't set TC classloader
             if (!warnedAboutTC && runtime.getInstanceConfig().isVerbose()) {
-                System.err.println("WARNING: Security restrictions disallowed setting context classloader for Ruby threads.");
+                LOG.info("WARNING: Security restrictions disallowed setting context classloader for Ruby threads.");
             }
         }
         
@@ -106,8 +111,10 @@ public class RubyRunnable implements Runnable {
                 // Someone called exit!, so we need to kill the main thread
                 runtime.getThreadService().getMainThread().kill();
             } finally {
-                rubyThread.beDead();
+                rubyThread.unlockAll();
                 runtime.getThreadService().setCritical(false);
+                rubyThread.beDead();
+                
                 runtime.getThreadService().unregisterThread(rubyThread);
 
                 ((RubyThreadGroup)rubyThread.group()).remove(rubyThread);
@@ -118,7 +125,7 @@ public class RubyRunnable implements Runnable {
                 } catch (SecurityException se) {
                     // can't set TC classloader
                     if (!warnedAboutTC && runtime.getInstanceConfig().isVerbose()) {
-                        System.err.println("WARNING: Security restrictions disallowed setting context classloader for Ruby threads.");
+                        LOG.info("WARNING: Security restrictions disallowed setting context classloader for Ruby threads.");
                     }
                 }
 

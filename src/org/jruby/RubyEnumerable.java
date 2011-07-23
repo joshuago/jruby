@@ -736,8 +736,18 @@ public class RubyEnumerable {
 
             callEach19(runtime, context, self, block.arity(), new BlockCallback() {
                 public IRubyObject call(ThreadContext ctx, IRubyObject[] largs, Block blk) {
-                    IRubyObject larg = checkArgs(runtime, largs);
-                    IRubyObject value = block.yield(ctx, larg);
+                    IRubyObject larg;
+                    boolean newAry = false;
+                    if (largs.length == 0) {
+                        larg = ctx.nil;
+                    } else if (largs.length == 1) {
+                        larg = largs[0];
+                    } else {
+                        newAry = true;
+                        larg = RubyArray.newArrayNoCopy(ctx.runtime, largs);
+                    }
+                    
+                    IRubyObject value = newAry ? block.yieldArray(ctx, larg, null, null) : block.yield(ctx, larg);
                     synchronized (result) {
                         result.append(value);
                     }
@@ -895,6 +905,33 @@ public class RubyEnumerable {
         }
     }
 
+    private static class EachWithObject implements BlockCallback {
+        private int index = 0;
+        private final Block block;
+        private final IRubyObject arg;
+        private final Ruby runtime;
+
+        public EachWithObject(ThreadContext ctx, Block block, IRubyObject arg) {
+            this.block = block;
+            this.arg = arg;
+            this.runtime = ctx.getRuntime();
+        }
+
+        public IRubyObject call(ThreadContext context, IRubyObject[] iargs, Block block) {
+            switch (iargs.length) {
+            case 0:
+                // FIXME: Does this ever happen?
+            case 1:
+                this.block.call(context, checkArgs(runtime, iargs), arg);
+                break;
+            case 2:
+                this.block.call(context, runtime.newArrayNoCopy(iargs), arg);
+                break;
+            }
+            return runtime.getNil();            
+        }
+    }
+
     public static IRubyObject each_with_indexCommon(ThreadContext context, IRubyObject self, Block block) {
         callEach(context.getRuntime(), context, self, Arity.TWO_ARGUMENTS, new EachWithIndex(context, block));
         return self;
@@ -902,6 +939,11 @@ public class RubyEnumerable {
 
     public static IRubyObject each_with_indexCommon19(ThreadContext context, IRubyObject self, Block block, IRubyObject[] args) {
         callEach(context.getRuntime(), context, self, args, Arity.TWO_ARGUMENTS, new EachWithIndex(context, block));
+        return self;
+    }
+
+    public static IRubyObject each_with_objectCommon19(ThreadContext context, IRubyObject self, Block block, IRubyObject arg) {
+        callEach(context.getRuntime(), context, self, Arity.TWO_ARGUMENTS, new EachWithObject(context, block, arg));
         return self;
     }
 
@@ -918,6 +960,11 @@ public class RubyEnumerable {
     @JRubyMethod
     public static IRubyObject enum_with_index(ThreadContext context, IRubyObject self, Block block) {
         return block.isGiven() ? each_with_indexCommon(context, self, block) : enumeratorize(context.getRuntime(), self, "enum_with_index");
+    }
+
+    @JRubyMethod(name = "each_with_object", required = 1, compat = CompatVersion.RUBY1_9)
+    public static IRubyObject each_with(ThreadContext context, IRubyObject self, IRubyObject arg, Block block) {
+        return block.isGiven() ? each_with_objectCommon19(context, self, block, arg) : enumeratorize(context.getRuntime(), self, "each_with_index", arg);
     }
 
     @JRubyMethod(rest = true, compat = CompatVersion.RUBY1_9)
@@ -1362,9 +1409,21 @@ public class RubyEnumerable {
 
     public static IRubyObject[] zipCommonConvert(Ruby runtime, IRubyObject[] args, String method) {
         RubyClass array = runtime.getArray();
-
-        for (int i = 0; i < args.length; i++) {
-            args[i] = TypeConverter.convertToType(args[i], array, method);
+        ThreadContext context = runtime.getCurrentContext();
+        
+        // 1.9 tries to convert, and failing that tries to "each" elements into a new array
+        if (runtime.is1_9()) {
+            for (int i = 0; i < args.length; i++) {
+                IRubyObject result = TypeConverter.convertToTypeWithCheck19(args[i], array, method);
+                if (result.isNil()) {
+                    result = takeItems(context, args[i]);
+                }
+                args[i] = result;
+            }
+        } else {
+            for (int i = 0; i < args.length; i++) {
+                args[i] = TypeConverter.convertToType(args[i], array, method);
+            }
         }
 
         return args;
@@ -1501,6 +1560,30 @@ public class RubyEnumerable {
             });
             return zip;
         }
+    }
+    
+    /**
+     * Take all items from the given enumerable and insert them into a new array.
+     * 
+     * See take_items() in array.c.
+     * 
+     * @param context current context
+     * @param enumerable object from which to take
+     * @return an array of the object's elements
+     */
+    public static IRubyObject takeItems(ThreadContext context, IRubyObject enumerable) {
+        final RubyArray array = context.runtime.newArray();
+        synchronized (array) {
+            callEach(context.runtime, context, enumerable, Arity.ONE_ARGUMENT, new BlockCallback() {
+                public IRubyObject call(ThreadContext ctx, IRubyObject[] largs, Block blk) {
+                    IRubyObject larg = checkArgs(ctx.runtime, largs);
+                    array.append(larg);
+                    return larg;
+                }
+            });
+        }
+        
+        return array;
     }
     
     private static IRubyObject zipEnumNext(ThreadContext context, IRubyObject arg) {

@@ -43,6 +43,7 @@ import org.jcodings.Encoding;
 
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings.ID;
+import org.jruby.ext.posix.POSIX;
 import org.jruby.util.OSEnvironment;
 import org.jruby.internal.runtime.ValueAccessor;
 import org.jruby.javasupport.JavaUtil;
@@ -72,8 +73,8 @@ public class RubyGlobal {
      */
     public static class CaseInsensitiveStringOnlyRubyHash extends StringOnlyRubyHash {
         
-        public CaseInsensitiveStringOnlyRubyHash(Ruby runtime, Map valueMap, IRubyObject defaultValue) {
-            super(runtime, valueMap, defaultValue);
+        public CaseInsensitiveStringOnlyRubyHash(Ruby runtime, Map valueMap, IRubyObject defaultValue, boolean updateRealENV) {
+            super(runtime, valueMap, defaultValue, updateRealENV);
         }
 
         @Override
@@ -100,8 +101,19 @@ public class RubyGlobal {
      * Used for ENV_JAVA.
      */
     public static class StringOnlyRubyHash extends RubyHash {
-        public StringOnlyRubyHash(Ruby runtime, Map valueMap, IRubyObject defaultValue) {
+        // This is an ugly hack.  Windows ENV map processing all happens in this
+        // class and not in the caseinsensitive hash.  In order to not refactor 
+        // both of these maps we will pass in a flag to specify whether we want
+        // the op_aset to also update the real ENV map via setenv/unsetenv.
+        private boolean updateRealENV;
+        
+        public StringOnlyRubyHash(Ruby runtime, Map valueMap, IRubyObject defaultValue, boolean updateRealENV) {
             super(runtime, valueMap, defaultValue);
+            this.updateRealENV = updateRealENV;
+        }
+        
+        public StringOnlyRubyHash(Ruby runtime, Map valueMap, IRubyObject defaultValue) {
+            this(runtime, valueMap, defaultValue, false);
         }
 
         @Override
@@ -149,9 +161,23 @@ public class RubyGlobal {
             if (value.isNil()) {
                 return super.delete(context, key, org.jruby.runtime.Block.NULL_BLOCK);
             }
+            
+            IRubyObject keyAsStr = normalizeEnvString(RuntimeHelpers.invoke(context, key, "to_str"));
+            IRubyObject valueAsStr = value.isNil() ? getRuntime().getNil() : 
+                    normalizeEnvString(RuntimeHelpers.invoke(context, value, "to_str"));
+            
+            if (updateRealENV) {
+                POSIX posix = getRuntime().getPosix();
+                String keyAsJava = keyAsStr.asJavaString();
+                if (valueAsStr == getRuntime().getNil()) {
+                    posix.unsetenv(keyAsJava);
+                } else {
+                    posix.setenv(keyAsJava, valueAsStr.asJavaString(), 1);
+                }
+            }
 
-            return super.op_aset(context, normalizeEnvString(RuntimeHelpers.invoke(context, key, "to_str")),
-                    value.isNil() ? getRuntime().getNil() : normalizeEnvString(RuntimeHelpers.invoke(context, value, "to_str")));
+            return super.op_aset(context, keyAsStr, valueAsStr);
+                    
         }
 
         private RubyString getCorrectKey(IRubyObject key, ThreadContext context) {
@@ -356,10 +382,14 @@ public class RubyGlobal {
     		environmentVariableMap = new HashMap();
     	}
 
-        CaseInsensitiveStringOnlyRubyHash h1 = new CaseInsensitiveStringOnlyRubyHash(runtime,
-                                                       environmentVariableMap, runtime.getNil());
-        h1.getSingletonClass().defineAnnotatedMethods(CaseInsensitiveStringOnlyRubyHash.class);
-        runtime.defineGlobalConstant("ENV", h1);
+    	CaseInsensitiveStringOnlyRubyHash env = new CaseInsensitiveStringOnlyRubyHash(runtime,
+                                                       environmentVariableMap, 
+                                                       runtime.getNil(),
+                                                       RubyInstanceConfig.nativeEnabled && 
+                                                           runtime.getInstanceConfig().isUpdateNativeENVEnabled() );
+        env.getSingletonClass().defineAnnotatedMethods(CaseInsensitiveStringOnlyRubyHash.class);
+        runtime.defineGlobalConstant("ENV", env);
+        runtime.setENV(env);
 
         // Define System.getProperties() in ENV_JAVA
         Map systemProps = environment.getSystemPropertiesMap(runtime);
@@ -374,13 +404,13 @@ public class RubyGlobal {
 
         @Override
         public IRubyObject set(IRubyObject value) {
-            runtime.getWarnings().warn(ID.INEFFECTIVE_GLOBAL, "warning: variable " + name + " is no longer effective; ignored", name);
+            runtime.getWarnings().warn(ID.INEFFECTIVE_GLOBAL, "warning: variable " + name + " is no longer effective; ignored");
             return value;
         }
 
         @Override
         public IRubyObject get() {
-            runtime.getWarnings().warn(ID.INEFFECTIVE_GLOBAL, "warning: variable " + name + " is no longer effective", name);
+            runtime.getWarnings().warn(ID.INEFFECTIVE_GLOBAL, "warning: variable " + name + " is no longer effective");
             return runtime.getFalse();
         }
     }

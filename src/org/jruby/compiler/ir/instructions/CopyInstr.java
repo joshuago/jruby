@@ -11,11 +11,11 @@ import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
-import org.jruby.runtime.builtin.IRubyObject;
 
 public class CopyInstr extends OneOperandInstr {
     public CopyInstr(Variable d, Operand s) {
         super(Operation.COPY, d, s);
+        if (s == null) new Exception().printStackTrace();
     }
 
     @Override
@@ -31,7 +31,7 @@ public class CopyInstr extends OneOperandInstr {
     }
 
     @Override
-    public Label interpret(InterpreterContext interp, IRubyObject self) {
+    public Label interpret(InterpreterContext interp) {
         getResult().store(interp, getArg().retrieve(interp));
         return null;
     }

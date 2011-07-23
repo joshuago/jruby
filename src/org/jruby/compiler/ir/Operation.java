@@ -1,6 +1,6 @@
 package org.jruby.compiler.ir;
 
-enum OpType { dont_care, debug_op, obj_op, alu_op, call_op, yield_op, recv_arg_op, ret_op, eval_op, branch_op, compare_op, exc_op, load_op, store_op, declare_type_op, guard_op, box_op, marker_op, class_of };
+enum OpType { dont_care, debug_op, obj_op, alu_op, call_op, yield_op, recv_arg_op, ret_op, eval_op, branch_op, compare_op, exc_op, load_op, store_op, declare_type_op, guard_op, box_op, marker_op, class_of, def_op };
 
 public enum Operation {
 // ------ Define the operations below ----
@@ -24,13 +24,14 @@ public enum Operation {
     RECV_ARG(OpType.recv_arg_op), RECV_SELF(OpType.recv_arg_op), RECV_CLOSURE(OpType.recv_arg_op), RECV_OPT_ARG(OpType.recv_arg_op), RECV_CLOSURE_ARG(OpType.recv_arg_op),
     RECV_EXCEPTION(OpType.recv_arg_op),
     CALL(OpType.call_op), JRUBY_IMPL(OpType.call_op), RUBY_INTERNALS(OpType.call_op),
+	 RECORD_CLOSURE(OpType.recv_arg_op),
     METHOD_LOOKUP(OpType.dont_care),
 
 // closure instructions
     YIELD(OpType.yield_op),
 
 // def instructions
-    DEF_MODULE(OpType.dont_care), DEF_CLASS(OpType.dont_care), DEF_INST_METH(OpType.dont_care), DEF_CLASS_METH(OpType.dont_care),
+    DEF_MODULE(OpType.def_op), DEF_CLASS(OpType.def_op), DEF_META_CLASS(OpType.def_op), DEF_INST_METH(OpType.def_op), DEF_CLASS_METH(OpType.def_op),
 
 // exception instructions
     THROW(OpType.exc_op), RETRY(OpType.dont_care),
@@ -125,7 +126,7 @@ public enum Operation {
     // unless we know more about what the call is, what it does, etc.
     // Similarly for evals, stores, returns.
     public boolean hasSideEffects() {
-        return isCall() || isEval() || isStore() || isReturn() || isException() || type == OpType.yield_op;
+        return isCall() || isEval() || isStore() || isReturn() || isException() || type == OpType.def_op || type == OpType.yield_op;
     }
 
 	 // Conservative -- say no only if you know it for sure cannot

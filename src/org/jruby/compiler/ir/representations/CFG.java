@@ -77,8 +77,8 @@ public class CFG {
     List<ExceptionRegion>               _outermostERs;  // Outermost exception regions
 
     private Instr[]       _instrs;
-    private Set<Variable> _definedLocalVars;  // Local variables defined in this scope
-    private Set<Variable> _usedLocalVars;     // Local variables used in this scope
+    private Set<Variable> _definedLocalVars;   // Local variables defined in this scope
+    private Set<Variable> _usedLocalVars;      // Local variables used in this scope
 
     public CFG(IRExecutionScope s) {
         _nextBBId = 0; // Init before building basic blocks below!
@@ -1140,29 +1140,8 @@ public class CFG {
         }
     }
 
-    public Set<Variable> usedLocalVarsFromClosures() {
-        HashSet vs = new HashSet();
-        for (IRClosure cl: getScope().getClosures()) {
-            CFG c = cl.getCFG();
-            vs.addAll(c._usedLocalVars);
-            vs.addAll(c.usedLocalVarsFromClosures());
-        }
-
-        return vs;
-    }
-
-    public Set<Variable> definedLocalVarsFromClosures() {
-        HashSet vs = new HashSet();
-        for (IRClosure cl: getScope().getClosures()) {
-            CFG c = cl.getCFG();
-            vs.addAll(c._definedLocalVars);
-            vs.addAll(c.definedLocalVarsFromClosures());
-        }
-
-        return vs;
-    }
-
     public boolean usesLocalVariable(Variable v) {
+        if (_usedLocalVars == null) setUpUseDefLocalVarMaps();
         if (_usedLocalVars.contains(v)) {
             return true;
         }
@@ -1177,6 +1156,7 @@ public class CFG {
     }
 
     public boolean definesLocalVariable(Variable v) {
+        if (_definedLocalVars == null) setUpUseDefLocalVarMaps();
         if (_definedLocalVars.contains(v)) {
             return true;
         }

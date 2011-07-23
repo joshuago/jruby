@@ -62,6 +62,7 @@ import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.BlockBody;
 import org.jruby.runtime.ClassIndex;
+import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import static org.jruby.runtime.Visibility.*;
@@ -1942,11 +1943,10 @@ public class RubyArray extends RubyObject implements List {
             }
             return RuntimeHelpers.rbEqual(context, obj, this);
         }
-        return RecursiveComparator.compare(context, "==", this, obj, null);
+        return RecursiveComparator.compare(context, MethodIndex.OP_EQUAL, this, obj);
     }
 
-    public RubyBoolean compare(ThreadContext context, String method,
-            IRubyObject other, Set<RecursiveComparator.Pair> seen) {
+    public RubyBoolean compare(ThreadContext context, int method, IRubyObject other) {
 
         Ruby runtime = context.getRuntime();
 
@@ -1965,7 +1965,7 @@ public class RubyArray extends RubyObject implements List {
         }
 
         for (int i = 0; i < realLength; i++) {
-            if (!RecursiveComparator.compare(context, method, elt(i), ary.elt(i), seen).isTrue()) {
+            if (!invokedynamic(context, elt(i), method, ary.elt(i)).isTrue()) {
                 return runtime.getFalse();
             }
         }
@@ -1978,7 +1978,7 @@ public class RubyArray extends RubyObject implements List {
      */
     @JRubyMethod(name = "eql?", required = 1)
     public IRubyObject eql(ThreadContext context, IRubyObject obj) {
-        return RecursiveComparator.compare(context, "eql?", this, obj, null);
+        return RecursiveComparator.compare(context, MethodIndex.EQL, this, obj);
     }
 
     /** rb_ary_compact_bang
@@ -2252,7 +2252,7 @@ public class RubyArray extends RubyObject implements List {
      */
     @JRubyMethod(name = {"indexes", "indices"}, required = 1, rest = true)
     public IRubyObject indexes(IRubyObject[] args) {
-        getRuntime().getWarnings().warn(ID.DEPRECATED_METHOD, "Array#indexes is deprecated; use Array#values_at", "Array#indexes", "Array#values_at");
+        getRuntime().getWarnings().warn(ID.DEPRECATED_METHOD, "Array#indexes is deprecated; use Array#values_at");
 
         RubyArray ary = new RubyArray(getRuntime(), args.length);
 
@@ -2480,16 +2480,17 @@ public class RubyArray extends RubyObject implements List {
     /** rb_ary_delete_at
      *
      */
-    private final IRubyObject delete_at(int pos) {
+    public final IRubyObject delete_at(int pos) {
         int len = realLength;
         if (pos >= len || (pos < 0 && (pos += len) < 0)) return getRuntime().getNil();
 
         modify();
 
         IRubyObject nil = getRuntime().getNil();
-        IRubyObject obj = values[begin + pos];
+        IRubyObject obj = null; // should never return null below
 
         try {
+            obj = values[begin + pos];
             // fast paths for head and tail
             if (pos == 0) {
                 values[begin] = nil;
@@ -4037,6 +4038,15 @@ public class RubyArray extends RubyObject implements List {
     @Override
     public Class getJavaClass() {
         return List.class;
+    }
+    
+    /**
+     * Copy the values contained in this array into the target array at the specified offset.
+     * It is expected that the target array is large enough to hold all necessary values.
+     */
+    public void copyInto(IRubyObject[] target, int start) {
+        assert target.length - start >= realLength;
+        safeArrayCopy(values, begin, target, start, realLength);
     }
 
     // Satisfy java.util.List interface (for Java integration)

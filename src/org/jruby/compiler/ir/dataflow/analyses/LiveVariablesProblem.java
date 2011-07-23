@@ -6,6 +6,7 @@ import org.jruby.compiler.ir.dataflow.DataFlowVar;
 import org.jruby.compiler.ir.dataflow.FlowGraphNode;
 import org.jruby.compiler.ir.instructions.Instr;
 import org.jruby.compiler.ir.operands.Variable;
+import org.jruby.compiler.ir.operands.LocalVariable;
 import org.jruby.compiler.ir.representations.BasicBlock;
 import org.jruby.compiler.ir.representations.CFG;
 
@@ -30,8 +31,8 @@ public class LiveVariablesProblem extends DataFlowProblem
         DataFlowVar dfv = new DataFlowVar(this); 
         _dfVarMap.put(v, dfv); 
         _varDfVarMap.put(dfv._id, v);
-        if (recordVar)
-            _udVars.add(v);
+        if ((v instanceof LocalVariable) && !((LocalVariable)v).isSelf()) _localVars.add((LocalVariable)v);
+        if (recordVar) _udVars.add(v);
     }
 
     public void addDFVar(Variable v) { addDFVar(v, true); }
@@ -72,44 +73,6 @@ public class LiveVariablesProblem extends DataFlowProblem
     public void setup(CFG c)
     {
         super.setup(c);
-
-		  // Consider this example below
-		  //
-		  //     def foo
-		  //       (1..100).each { |i| v = ... }
-		  //       (1..100).each { |i| x = v+i }
-		  //       puts x
-		  //     end
-		  //
-		  // In this method 'v' that is defined in the first closure is live on exit from the first closure because
-		  // it is used in the second closure.  Nowhere within foo itself (except in closures) is v referenced and
-		  // hence won't be added as a dataflow var.
-		  //
-		  // So, we need to find all variables that are used before being defined in any closure in this method.
-		  //
-		  // But, this is not sufficient because of evals.  In general, we may have to pick defined vars as well.
-		  // Consider this:
-		  //
-		  //     def foo(str)
-		  //       (1..100).each { |i| v = ... }
-		  //       (1..100).each { |i| eval(str) }
-		  //       puts x
-		  //     end
-		  //     foo("x=v+i")
-		  //
-		  // So, in this example, even though 'v' is not used anywhere else, it is still live on exit because of the eval!
-		  //
-		  // SSS FIXME: For now, we are going to pick all used and defined variables across all closures as a proxy.
-
-        if (c.getScope() instanceof IRMethod) {
-            c.setUpUseDefLocalVarMaps();
-            for (Variable v: c.usedLocalVarsFromClosures()) {
-                addDFVar(v, true);
-            }
-            for (Variable v: c.definedLocalVarsFromClosures()) {
-                addDFVar(v, true);
-            }
-        }
 
         // Update setup with info. about variables live on exit.
         if ((_varsLiveOnExit != null) && !_varsLiveOnExit.isEmpty()) {
@@ -158,9 +121,14 @@ public class LiveVariablesProblem extends DataFlowProblem
         return _dfVarMap.keySet();
     }
 
+    public Set<LocalVariable> getNonSelfLocalVars() {
+        return _localVars;
+    }
+
 /* ----------- Private Interface ------------ */
     private HashMap<Variable, DataFlowVar> _dfVarMap    = new HashMap<Variable, DataFlowVar>();
     private HashMap<Integer, Variable> _varDfVarMap = new HashMap<Integer, Variable>();
+    private HashSet<LocalVariable> _localVars = new HashSet<LocalVariable>(); // Local variables that can be live across dataflow barriers
     private Collection<Variable> _varsLiveOnExit;
     private Set<Variable> _udVars;
 }

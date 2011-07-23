@@ -65,6 +65,8 @@ import org.jruby.runtime.Block;
 import org.jruby.runtime.Constants;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.JRubyFile;
+import org.jruby.util.log.Logger;
+import org.jruby.util.log.LoggerFactory;
 
 import static org.jruby.util.URLUtil.getPath;
 
@@ -128,6 +130,8 @@ import static org.jruby.util.URLUtil.getPath;
  * @author jpetersen
  */
 public class LoadService {
+    private static final Logger LOG = LoggerFactory.getLogger("LoadService");
+    
     private final LoadTimer loadTimer;
 
     public enum SuffixType {
@@ -164,8 +168,6 @@ public class LoadService {
     protected final Map<String, IAutoloadMethod> autoloadMap = new HashMap<String, IAutoloadMethod>();
 
     protected final Ruby runtime;
-
-    protected boolean caseInsensitiveFS = false;
     
     public LoadService(Ruby runtime) {
         this.runtime = runtime;
@@ -180,21 +182,7 @@ public class LoadService {
         loadPath = RubyArray.newArray(runtime);
         
         String jrubyHome = runtime.getJRubyHome();
-        if (jrubyHome != null) {
-            String lowerCaseJRubyHome = jrubyHome.toLowerCase();
-            String upperCaseJRubyHome = lowerCaseJRubyHome.toUpperCase();
-
-            try {
-                String canonNormal = new File(jrubyHome).getCanonicalPath();
-                String canonLower = new File(lowerCaseJRubyHome).getCanonicalPath();
-                String canonUpper = new File(upperCaseJRubyHome).getCanonicalPath();
-                if (canonNormal.equals(canonLower) && canonLower.equals(canonUpper)) {
-                    caseInsensitiveFS = true;
-                }
-            } catch (Exception e) {}
-        }
-        
-        loadedFeatures = new StringArraySet(runtime, caseInsensitiveFS);
+        loadedFeatures = new StringArraySet(runtime);
         
         // add all startup load paths to the list first
         for (Iterator iter = additionalDirectories.iterator(); iter.hasNext();) {
@@ -334,6 +322,7 @@ public class LoadService {
                 return RequireState.ALREADY_LOADED;
             }
 
+            // numbers from loadTimer does not include lock waiting time.
             long startTime = loadTimer.startLoad(requireName);
             try {
                 boolean loaded = smartLoadInternal(requireName);
@@ -433,12 +422,12 @@ public class LoadService {
         @Override
         public long startLoad(String file) {
             indent.incrementAndGet();
-            System.err.println(getIndentString() + "-> " + file);
+            LOG.info(getIndentString() + "-> " + file);
             return System.currentTimeMillis();
         }
         @Override
         public void endLoad(String file, long startTime) {
-            System.err.println(getIndentString() + "<- " + file + " - "
+            LOG.info(getIndentString() + "<- " + file + " - "
                     + (System.currentTimeMillis() - startTime) + "ms");
             indent.decrementAndGet();
         }
@@ -667,7 +656,7 @@ public class LoadService {
             }
 
             public void load(Ruby runtime, boolean wrap) {
-                runtime.loadScript(script);
+                runtime.loadScript(script, wrap);
             }
         }
         
@@ -827,13 +816,13 @@ public class LoadService {
 
     protected void debugLogTry(String what, String msg) {
         if (RubyInstanceConfig.DEBUG_LOAD_SERVICE) {
-            runtime.getErr().println( "LoadService: trying " + what + ": " + msg );
+            LOG.info( "LoadService: trying " + what + ": " + msg );
         }
     }
 
     protected void debugLogFound(String what, String msg) {
         if (RubyInstanceConfig.DEBUG_LOAD_SERVICE) {
-            runtime.getErr().println( "LoadService: found " + what + ": " + msg );
+            LOG.info( "LoadService: found " + what + ": " + msg );
         }
     }
 
@@ -845,7 +834,7 @@ public class LoadService {
             } catch (IOException e) {
                 resourceUrl = e.getMessage();
             }
-            runtime.getErr().println( "LoadService: found: " + resourceUrl );
+            LOG.info( "LoadService: found: " + resourceUrl );
         }
     }
 
@@ -911,7 +900,11 @@ public class LoadService {
         }
         String file = state.loadName;
         if (file.endsWith(".so") || file.endsWith(".dll") || file.endsWith(".bundle")) {
-            return new CExtension(resource);
+            if (RubyInstanceConfig.nativeEnabled) {
+                return new CExtension(resource);
+            } else {
+                throw runtime.newLoadError("native code is disabled, can't load cext `" + resource.getName() + "'");
+            }
         } else if (file.endsWith(".jar")) {
             return new JarredScript(resource);
         } else if (file.endsWith(".class")) {
@@ -1131,7 +1124,7 @@ public class LoadService {
                 jarFiles.put(loadPathEntry,current);
             } catch (ZipException ignored) {
                 if (runtime.getInstanceConfig().isDebug()) {
-                    runtime.getErr().println("ZipException trying to access " + loadPathEntry + ", stack trace follows:");
+                    LOG.info("ZipException trying to access " + loadPathEntry + ", stack trace follows:");
                     ignored.printStackTrace(runtime.getErr());
                 }
             } catch (FileNotFoundException ignored) {
@@ -1171,22 +1164,20 @@ public class LoadService {
         try {
             if (!Ruby.isSecurityRestricted()) {
                 String reportedPath = loadPathEntry + "/" + namePlusSuffix;
-                JRubyFile actualPath;
-                boolean absolute = false;
+                boolean absolute = true;
                 // we check length == 0 for 'load', which does not use load path
-                if (new File(reportedPath).isAbsolute()) {
-                    absolute = true;
-                    // it's an absolute path, use it as-is
-                    actualPath = JRubyFile.create(loadPathEntry, RubyFile.expandUserPath(runtime.getCurrentContext(), namePlusSuffix));
-                } else {
+                if (!new File(reportedPath).isAbsolute()) {
                     absolute = false;
                     // prepend ./ if . is not already there, since we're loading based on CWD
                     if (reportedPath.charAt(0) != '.') {
                         reportedPath = "./" + reportedPath;
                     }
-                    actualPath = JRubyFile.create(JRubyFile.create(runtime.getCurrentDirectory(), loadPathEntry).getAbsolutePath(), RubyFile.expandUserPath(runtime.getCurrentContext(), namePlusSuffix));
+                    loadPathEntry = JRubyFile.create(runtime.getCurrentDirectory(), loadPathEntry).getAbsolutePath();
                 }
-                debugLogTry("resourceFromLoadPath", "'" + actualPath.toString() + "' " + actualPath.isFile() + " " + actualPath.canRead());
+                JRubyFile actualPath = JRubyFile.create(loadPathEntry, RubyFile.expandUserPath(runtime.getCurrentContext(), namePlusSuffix));
+                if (RubyInstanceConfig.DEBUG_LOAD_SERVICE) {
+                    debugLogTry("resourceFromLoadPath", "'" + actualPath.toString() + "' " + actualPath.isFile() + " " + actualPath.canRead());
+                }
                 if (actualPath.isFile() && actualPath.canRead()) {
                     foundResource = new LoadServiceResource(actualPath, reportedPath, absolute);
                     debugLogFound(foundResource);
@@ -1365,16 +1356,5 @@ public class LoadService {
             s = "./" + s;
         }
         return s;
-    }
-
-    /**
-     * Is the jruby home dir on a case-insensitive fs. Determined by comparing
-     * a canonicalized jruby home with canonicalized lower and upper-case versions
-     * of the same path.
-     *
-     * @return true if jruby home is on a case-insensitive FS; false otherwise
-     */
-    public boolean isCaseInsensitiveFS() {
-        return caseInsensitiveFS;
     }
 }

@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.regex.Pattern;
 
 import org.jruby.ast.executable.Script;
 import org.jruby.compiler.ASTCompiler;
@@ -92,6 +93,29 @@ public class RubyInstanceConfig {
     
     /** The version to use for generated classes. Set to current JVM version by default */
     public static final int JAVA_VERSION;
+    static {
+        String specVersion = null;
+        try {
+            specVersion = System.getProperty("jruby.bytecode.version");
+            if (specVersion == null) {
+                specVersion = System.getProperty("java.specification.version");
+            }
+        } catch (SecurityException se) {
+            specVersion = "1.5";
+        }
+        
+        // stack map calculation is failing for some compilation scenarios, so
+        // forcing both 1.5 and 1.6 to use 1.5 bytecode for the moment.
+        if (specVersion.equals("1.5")) {// || specVersion.equals("1.6")) {
+            JAVA_VERSION = Opcodes.V1_5;
+        } else if (specVersion.equals("1.6")) {
+            JAVA_VERSION = Opcodes.V1_6;
+        } else if (specVersion.equals("1.7")) {
+            JAVA_VERSION = Opcodes.V1_7;
+        } else {
+            throw new RuntimeException("unsupported Java version: " + specVersion);
+        }
+    }
     
     /**
      * Default size for chained compilation.
@@ -227,7 +251,8 @@ public class RubyInstanceConfig {
     private String threadDumpSignal = null;
     private boolean hardExit = false;
     private boolean disableGems = false;
-
+    private boolean updateNativeENVEnabled = true;
+    
     private int safeLevel = 0;
 
     private String jrubyHome;
@@ -255,6 +280,9 @@ public class RubyInstanceConfig {
     public static boolean INLINE_DYNCALL_ENABLED
             = FASTEST_COMPILE_ENABLED
             || SafePropertyAccessor.getBoolean("jruby.compile.inlineDyncalls");
+    public static boolean FAST_MULTIPLE_ASSIGNMENT
+            = SafePropertyAccessor.getBoolean("jruby.compile.fastMasgn", false);
+    
     public static final boolean POOLING_ENABLED
             = SafePropertyAccessor.getBoolean("jruby.thread.pool.enabled");
     public static final int POOL_MAX
@@ -272,7 +300,8 @@ public class RubyInstanceConfig {
 
     public static final String COMPILE_EXCLUDE
             = SafePropertyAccessor.getProperty("jruby.jit.exclude");
-    public static boolean nativeEnabled = true;
+    
+    public final static boolean nativeEnabled = SafePropertyAccessor.getBoolean("jruby.native.enabled", true);
 
     public static final boolean REIFY_RUBY_CLASSES
             = SafePropertyAccessor.getBoolean("jruby.reify.classes", false);
@@ -318,13 +347,53 @@ public class RubyInstanceConfig {
 
     public static final boolean CAN_SET_ACCESSIBLE = SafePropertyAccessor.getBoolean("jruby.ji.setAccessible", true);
     
-    public static final boolean USE_INVOKEDYNAMIC = SafePropertyAccessor.getBoolean("jruby.compile.invokedynamic", true);
+    public static final boolean USE_INVOKEDYNAMIC =
+            JAVA_VERSION == Opcodes.V1_7
+            && SafePropertyAccessor.getBoolean("jruby.compile.invokedynamic", true);
+    
+    // max times an indy call site can fail before it goes to simple IC
+    public static final int MAX_FAIL_COUNT = SafePropertyAccessor.getInt("jruby.invokedynamic.maxfail", 2);
+    
+    // logging of various indy aspects
+    public static final boolean LOG_INDY_BINDINGS = SafePropertyAccessor.getBoolean("jruby.invokedynamic.log.binding");
+    public static final boolean LOG_INDY_CONSTANTS = SafePropertyAccessor.getBoolean("jruby.invokedynamic.log.constants");
+    
+    // properties enabling or disabling certain uses of invokedynamic
+    public static final boolean INVOKEDYNAMIC_ALL = USE_INVOKEDYNAMIC && (SafePropertyAccessor.getBoolean("jruby.invokedynamic.all", false));
+    public static final boolean INVOKEDYNAMIC_SAFE = USE_INVOKEDYNAMIC && (SafePropertyAccessor.getBoolean("jruby.invokedynamic.safe", false));
+    
+    public static final boolean INVOKEDYNAMIC_INVOCATION = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && SafePropertyAccessor.getBoolean("jruby.invokedynamic.invocation", true);
+    public static final boolean INVOKEDYNAMIC_INDIRECT = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && INVOKEDYNAMIC_INVOCATION && SafePropertyAccessor.getBoolean("jruby.invokedynamic.indirect", false);
+    public static final boolean INVOKEDYNAMIC_JAVA = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && INVOKEDYNAMIC_INVOCATION && SafePropertyAccessor.getBoolean("jruby.invokedynamic.java", true);
+    public static final boolean INVOKEDYNAMIC_ATTR = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && INVOKEDYNAMIC_INVOCATION && SafePropertyAccessor.getBoolean("jruby.invokedynamic.attr", true);
+    public static final boolean INVOKEDYNAMIC_FASTOPS = INVOKEDYNAMIC_ALL ||
+            USE_INVOKEDYNAMIC && INVOKEDYNAMIC_INVOCATION && SafePropertyAccessor.getBoolean("jruby.invokedynamic.fastops", false);
+    
+    public static final boolean INVOKEDYNAMIC_CACHE = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && SafePropertyAccessor.getBoolean("jruby.invokedynamic.cache", true);
+    public static final boolean INVOKEDYNAMIC_CONSTANTS = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && INVOKEDYNAMIC_CACHE && SafePropertyAccessor.getBoolean("jruby.invokedynamic.constants", false);
+    public static final boolean INVOKEDYNAMIC_LITERALS = INVOKEDYNAMIC_ALL || INVOKEDYNAMIC_SAFE ||
+            USE_INVOKEDYNAMIC && INVOKEDYNAMIC_CACHE && SafePropertyAccessor.getBoolean("jruby.invokedynamic.literals", true);
+    
+    // properties for logging exceptions, backtraces, and caller invocations
+    public static final boolean LOG_EXCEPTIONS = SafePropertyAccessor.getBoolean("jruby.log.exceptions");
+    public static final boolean LOG_BACKTRACES = SafePropertyAccessor.getBoolean("jruby.log.backtraces");
+    public static final boolean LOG_CALLERS = SafePropertyAccessor.getBoolean("jruby.log.callers");
 
     private TraceType traceType =
             TraceType.traceTypeFor(SafePropertyAccessor.getProperty("jruby.backtrace.style", "ruby_framed"));
     
     public static final boolean ERRNO_BACKTRACE
             = SafePropertyAccessor.getBoolean("jruby.errno.backtrace", false);
+    
+    public static final boolean IR_DEBUG = SafePropertyAccessor.getBoolean("jruby.ir.debug");
+    public static final boolean IR_LIVE_VARIABLE = SafePropertyAccessor.getBoolean("jruby.ir.pass.live_variable");
+    public static final boolean IR_DEAD_CODE = SafePropertyAccessor.getBoolean("jruby.ir.pass.dead_code");
 
     public static interface LoadServiceCreator {
         LoadService create(Ruby runtime);
@@ -340,35 +409,6 @@ public class RubyInstanceConfig {
     }
 
     private LoadServiceCreator creator = LoadServiceCreator.DEFAULT;
-
-
-    static {
-        String specVersion = null;
-        try {
-            specVersion = System.getProperty("jruby.bytecode.version");
-            if (specVersion == null) {
-                specVersion = System.getProperty("java.specification.version");
-            }
-            if (System.getProperty("jruby.native.enabled") != null) {
-                nativeEnabled = Boolean.getBoolean("jruby.native.enabled");
-            }
-        } catch (SecurityException se) {
-            nativeEnabled = false;
-            specVersion = "1.5";
-        }
-        
-        // stack map calculation is failing for some compilation scenarios, so
-        // forcing both 1.5 and 1.6 to use 1.5 bytecode for the moment.
-        if (specVersion.equals("1.5")) {// || specVersion.equals("1.6")) {
-            JAVA_VERSION = Opcodes.V1_5;
-        } else if (specVersion.equals("1.6")) {
-            JAVA_VERSION = Opcodes.V1_6;
-        } else if (specVersion.equals("1.7")) {
-            JAVA_VERSION = Opcodes.V1_7;
-        } else {
-            throw new RuntimeException("unsupported Java version: " + specVersion);
-        }
-    }
 
     public int characterIndex = 0;
 
@@ -388,6 +428,7 @@ public class RubyInstanceConfig {
         runRubyInProcess = parentConfig.runRubyInProcess;
         excludedMethods = parentConfig.excludedMethods;
         threadDumpSignal = parentConfig.threadDumpSignal;
+        updateNativeENVEnabled = parentConfig.updateNativeENVEnabled;
         
         classCache = new ClassCache<Script>(loader, jitMax);
 
@@ -738,7 +779,7 @@ public class RubyInstanceConfig {
             // if it wasn't found on the first line and the -x option
             // was specified
             if (isxFlag()) {
-                while (firstLine != null && !isShebangLine(firstLine)) {
+                while (firstLine != null && !isRubyShebangLine(firstLine)) {
                     firstLine = reader.readLine();
                 }
             }
@@ -781,9 +822,11 @@ public class RubyInstanceConfig {
         }
         return result;
     }
+    
+    private static final Pattern RUBY_SHEBANG = Pattern.compile("#!.*ruby.*");
 
-    protected static boolean isShebangLine(String line) {
-        return (line.length() > 2 && line.charAt(0) == '#' && line.charAt(1) == '!');
+    protected static boolean isRubyShebangLine(String line) {
+        return RUBY_SHEBANG.matcher(line).matches();
     }
 
     public CompileMode getCompileMode() {
@@ -987,6 +1030,16 @@ public class RubyInstanceConfig {
         }
         return home;
     }
+
+    
+    public boolean isUpdateNativeENVEnabled() {
+        return updateNativeENVEnabled;
+    }
+
+    public void setUpdateNativeENVEnabled(boolean updateNativeENVEnabled) {
+        this.updateNativeENVEnabled = updateNativeENVEnabled;
+    }
+
 
     private final class Argument {
         public final String originalValue;
@@ -1558,7 +1611,7 @@ public class RubyInstanceConfig {
         StringBuffer buf = new StringBuffer();
         BufferedReader br = new BufferedReader(new FileReader(file));
         String currentLine = br.readLine();
-        while (currentLine != null && !(currentLine.length() > 2 && currentLine.charAt(0) == '#' && currentLine.charAt(1) == '!')) {
+        while (currentLine != null && !isRubyShebangLine(currentLine)) {
             currentLine = br.readLine();
         }
 

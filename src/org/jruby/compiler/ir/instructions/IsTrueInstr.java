@@ -41,8 +41,8 @@ public class IsTrueInstr extends OneOperandInstr {
     public boolean canRaiseException() { return false; }
 
     @Override
-    public Label interpret(InterpreterContext interp, IRubyObject self) {
-        getResult().store(interp, ((IRubyObject) getArg().retrieve(interp)).isTrue());
+    public Label interpret(InterpreterContext interp) {
+        getResult().store(interp, interp.getRuntime().newBoolean(((IRubyObject) getArg().retrieve(interp)).isTrue()));
         return null;
     }
 }

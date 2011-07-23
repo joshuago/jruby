@@ -41,12 +41,14 @@ import org.jruby.runtime.profile.IProfileData;
 import java.util.ArrayList;
 import org.jruby.runtime.profile.ProfileData;
 import java.util.List;
+import java.util.Set;
 import org.jruby.runtime.scope.ManyVarsDynamicScope;
 
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
 import org.jruby.RubyContinuation.Continuation;
+import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyModule;
 import org.jruby.RubyString;
 import org.jruby.RubyThread;
@@ -57,8 +59,10 @@ import org.jruby.libraries.FiberLibrary.Fiber;
 import org.jruby.parser.BlockStaticScope;
 import org.jruby.parser.LocalStaticScope;
 import org.jruby.parser.StaticScope;
+import org.jruby.runtime.backtrace.TraceType;
 import org.jruby.runtime.backtrace.TraceType.Gather;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.RecursiveComparator;
 
 public final class ThreadContext {
     public static ThreadContext newContext(Ruby runtime) {
@@ -150,6 +154,7 @@ public final class ThreadContext {
         }
         ThreadContext.pushBacktrace(this, "", "", "", 0);
         ThreadContext.pushBacktrace(this, "", "", "", 0);
+        fiber = (Fiber) runtime.getRootFiber();
     }
 
     @Override
@@ -679,12 +684,16 @@ public final class ThreadContext {
      */
     public IRubyObject createCallerBacktrace(Ruby runtime, int level) {
         runtime.incrementCallerCount();
+        
         RubyStackTraceElement[] trace = gatherCallerBacktrace(level);
+        
         RubyArray newTrace = runtime.newArray(trace.length - level);
 
         for (int i = level; i < trace.length; i++) {
             addBackTraceElement(runtime, newTrace, trace[i]);
         }
+        
+        if (RubyInstanceConfig.LOG_CALLERS) TraceType.dumpCaller(newTrace);
         
         return newTrace;
     }
@@ -1274,4 +1283,14 @@ public final class ThreadContext {
     public boolean isProfiling() {
         return isProfiling;
     }
+    
+    public Set<RecursiveComparator.Pair> getRecursiveSet() {
+        return recursiveSet;
+    }
+    
+    public void setRecursiveSet(Set<RecursiveComparator.Pair> recursiveSet) {
+        this.recursiveSet = recursiveSet;
+    }
+    
+    private Set<RecursiveComparator.Pair> recursiveSet;
 }

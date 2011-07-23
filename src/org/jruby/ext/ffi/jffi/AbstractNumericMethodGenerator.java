@@ -1,5 +1,6 @@
 package org.jruby.ext.ffi.jffi;
 
+import com.kenai.jffi.ObjectParameterInfo;
 import com.kenai.jffi.Platform;
 import org.jruby.ext.ffi.Buffer;
 import org.jruby.RubyString;
@@ -28,28 +29,28 @@ abstract class AbstractNumericMethodGenerator implements JITMethodGenerator {
 
         mv.start();
         generate(builder, mv, signature);
-        mv.visitMaxs(10, 10);
+        mv.visitMaxs(30, 30);
         mv.visitEnd();
     }
 
     public void generate(AsmClassBuilder builder, SkinnyMethodAdapter mv, JITSignature signature) {
         final Class nativeIntType = getInvokerIntType();
-        int maxPointerIndex = -1;
-        Label[] fallback = new Label[signature.getParameterCount()];
-        for (int i = 0; i < signature.getParameterCount(); i++) {
-            fallback[i] = new Label();
-        }
-        
-        mv.aload(1); // load ThreadContext arg for result boxing
+        int pointerCount = 0;
 
-        mv.getstatic(builder.getClassName(), "invoker", ci(com.kenai.jffi.Invoker.class));
+        mv.aload(1); // load ThreadContext arg for result boxing
+        mv.getstatic(p(JITNativeInvoker.class), "invoker", ci(com.kenai.jffi.Invoker.class));
         mv.aload(0);
-        mv.getfield(builder.getClassName(), builder.getFunctionFieldName(), ci(com.kenai.jffi.Function.class));
+        mv.getfield(p(JITNativeInvoker.class), "function", ci(com.kenai.jffi.Function.class));
         // [ stack now contains: Invoker, Function ]
+
         final int firstParam = 2;
+        int nextLocalVar = firstParam + signature.getParameterCount();
+        final int heapPointerCountVar = nextLocalVar++;
+        final int firstStrategyVar = nextLocalVar; nextLocalVar += signature.getParameterCount();
+        int nextStrategyVar = firstStrategyVar;
         
         // Perform any generic data conversions on the parameters
-        for (int i = 0; i < signature.getParameterCount(); ++i) {
+        for (int i = 0; i < signature.getParameterCount(); i++) {
             if (signature.hasParameterConverter(i)) {
                 mv.aload(0);
                 mv.getfield(builder.getClassName(), builder.getParameterConverterFieldName(i), ci(NativeDataConverter.class));
@@ -61,148 +62,110 @@ abstract class AbstractNumericMethodGenerator implements JITMethodGenerator {
         }
 
         // Load and un-box parameters
-        for (int i = 0; i < signature.getParameterCount(); ++i) {
+        for (int i = 0; i < signature.getParameterCount(); i++) {
             final NativeType parameterType = signature.getParameterType(i);
             final int paramVar = i + firstParam;
             mv.aload(paramVar);
             switch (parameterType) {
                 case BOOL:
-                    mv.invokestatic(p(JITRuntime.class), "boolValue", sig(boolean.class, IRubyObject.class));
-                    widen(mv, int.class, nativeIntType);
+                    unbox(mv, "boolValue");
                     break;
 
                 case CHAR:
-                    mv.invokestatic(p(JITRuntime.class), "s8Value", sig(int.class, IRubyObject.class));
-                    widen(mv, int.class, nativeIntType);
+                    unbox(mv, "s8Value");
                     break;
                 
                 case UCHAR:
-                    mv.invokestatic(p(JITRuntime.class), "u8Value", sig(int.class, IRubyObject.class));
-                    widen(mv, int.class, nativeIntType);
+                    unbox(mv, "u8Value");
                     break;
                 
                 case SHORT:
-                    mv.invokestatic(p(JITRuntime.class), "s16Value", sig(int.class, IRubyObject.class));
-                    widen(mv, int.class, nativeIntType);
+                    unbox(mv, "s16Value");
                     break;
                 
                 case USHORT:
-                    mv.invokestatic(p(JITRuntime.class), "u16Value", sig(int.class, IRubyObject.class));
-                    widen(mv, int.class, nativeIntType);
+                    unbox(mv, "u16Value");
                     break;
                 
                 case INT:
-                    mv.invokestatic(p(JITRuntime.class), "s32Value", sig(int.class, IRubyObject.class));
-                    widen(mv, int.class, nativeIntType);
+                    unbox(mv, "s32Value");
                     break;
                 
                 case UINT:
-                    mv.invokestatic(p(JITRuntime.class), "u32Value", sig(long.class, IRubyObject.class));
-                    narrow(mv, long.class, nativeIntType);
+                    unbox(mv, "u32Value");
                     break;
                     
                 case LONG:
                     if (Platform.getPlatform().longSize() == 32) {
-                        mv.invokestatic(p(JITRuntime.class), "s32Value", sig(int.class, IRubyObject.class));
-                        widen(mv, int.class, nativeIntType);
+                        unbox(mv, "s32Value");
                     } else {
-                        mv.invokestatic(p(JITRuntime.class), "s64Value", sig(long.class, IRubyObject.class));
+                        unbox(mv, "s64Value");
                     }
                     break;
                 
                 case ULONG:
                     if (Platform.getPlatform().longSize() == 32) {
-                        mv.invokestatic(p(JITRuntime.class), "u32Value", sig(long.class, IRubyObject.class));
-                        narrow(mv, long.class, nativeIntType);
+                        unbox(mv, "u32Value");
                     } else {
-                        mv.invokestatic(p(JITRuntime.class), "u64Value", sig(long.class, IRubyObject.class));
+                        unbox(mv, "u64Value");
                     }
                     break;
                 
                 case LONG_LONG:
-                    mv.invokestatic(p(JITRuntime.class), "s64Value", sig(long.class, IRubyObject.class));
+                    unbox(mv, "s64Value");
                     break;
                 
                 case ULONG_LONG:
-                    mv.invokestatic(p(JITRuntime.class), "u64Value", sig(long.class, IRubyObject.class));
+                    unbox(mv, "u64Value");
                     break;
                 
                 case POINTER:
                 case BUFFER_IN:
                 case BUFFER_OUT:
                 case BUFFER_INOUT:
-                    maxPointerIndex = i;
-                    Label direct = new Label();
-                    Label done = new Label();
-                    Label nilTest = new Label();
-                    Label stringTest = new Label();
-                    Label converted = new Label();
-                    
-                    // If a direct pointer is passed in, jump straight to conversion
-                    mv.instance_of(p(Pointer.class));
-                    mv.iftrue(direct);
-                    
-                    // If the parameter is a struct, fetch its memory pointer
+                case STRING:
+                    Label address = new Label();
+                    Label next = new Label();
+                    if (pointerCount++ < 1) {
+                        mv.pushInt(0);
+                        mv.istore(heapPointerCountVar);
+                    }
+
+                    mv.invokestatic(p(JITRuntime.class), "pointerParameterStrategy",
+                            sig(PointerParameterStrategy.class, IRubyObject.class));
+                    mv.astore(nextStrategyVar);
+                    mv.aload(nextStrategyVar);
+                    mv.invokevirtual(p(PointerParameterStrategy.class), "isDirect", sig(boolean.class));
+                    mv.iftrue(address);
+                    mv.iinc(heapPointerCountVar, 1);
+
+                    mv.label(address);
+                    // It is now direct, get the address, and convert to the native int type
+                    mv.aload(nextStrategyVar);
                     mv.aload(paramVar);
-                    mv.instance_of(p(Struct.class));
-                    mv.iffalse(nilTest);
-                    
-                    mv.aload(paramVar);
-                    mv.checkcast(p(Struct.class));
-                    mv.invokevirtual(p(Struct.class), "getMemory", sig(AbstractMemory.class));
-                    mv.go_to(converted);
-                    
-                    // Convert nil -> 0
-                    mv.label(nilTest);
-                    mv.aload(paramVar);
-                    mv.invokeinterface(p(IRubyObject.class), "isNil", sig(boolean.class));
-                    mv.iffalse(stringTest);
-                    if (int.class == nativeIntType) mv.iconst_0(); else mv.lconst_0();
-                    mv.go_to(done);
-                    
-                    // If it is a String or Buffer, it can only be handled via the fallback route
-                    mv.label(stringTest);
-                    mv.aload(paramVar);
-                    mv.instance_of(p(RubyString.class));
-                    mv.iftrue(fallback[i]);
-                    
-                    mv.aload(paramVar);
-                    mv.instance_of(p(Buffer.class));
-                    mv.iftrue(fallback[i]);
-                    
-                    mv.aload(1);
-                    mv.aload(paramVar);
-                    mv.invokestatic(p(JITRuntime.class), "other2ptr", sig(IRubyObject.class, ThreadContext.class, IRubyObject.class));
-                    mv.label(converted);
-                    mv.dup();
-                    mv.astore(paramVar);
-                    mv.instance_of(p(Pointer.class));
-                    mv.iffalse(fallback[i]);
-                    
-                    mv.label(direct);
-                    // The parameter is guaranteed to be a direct pointer now
-                    mv.aload(paramVar);
-                    mv.checkcast(p(Pointer.class));
-                    mv.invokevirtual(p(Pointer.class), "getAddress", sig(long.class));
+                    mv.invokevirtual(p(PointerParameterStrategy.class), "getAddress", sig(long.class, IRubyObject.class));
                     narrow(mv, long.class, nativeIntType);
-                    mv.label(done);
+                    nextStrategyVar++;
+                    mv.label(next);
                     break;
 
                 case FLOAT:
-                    if (int.class == nativeIntType) {
-                        mv.invokestatic(p(JITRuntime.class), "float2int", sig(int.class, IRubyObject.class));
-                    } else {
-                        mv.invokestatic(p(JITRuntime.class), "float2long", sig(long.class, IRubyObject.class));
-                    }
+                    unbox(mv, "f32Value");
                     break;
 
                 case DOUBLE:
-                    mv.invokestatic(p(JITRuntime.class), "double2long", sig(long.class, IRubyObject.class));
+                    unbox(mv, "f64Value");
                     break;
 
                 default:
                     throw new UnsupportedOperationException("unsupported parameter type " + parameterType);
             }
+        }
+
+        Label indirect = new Label();
+        if (pointerCount > 0) {
+            mv.iload(heapPointerCountVar);
+            mv.ifne(indirect);
         }
 
         // stack now contains [ Invoker, Function, int/long args ]
@@ -211,40 +174,104 @@ abstract class AbstractNumericMethodGenerator implements JITMethodGenerator {
                 getInvokerSignature(signature.getParameterCount()));
 
 
+        Label boxResult = new Label();
+        if (pointerCount > 0) mv.label(boxResult);
+
         // box up the raw int/long result
         boxResult(mv, signature.getResultType());
-        emitResultConversion(mv, builder, signature);;
+        Label resultConversion = new Label();
+        if (pointerCount > 0) mv.label(resultConversion);
+        emitResultConversion(mv, builder, signature);
         mv.areturn();
-        
-        // Generate code to pop all the converted arguments off the stack 
-        // when falling back to buffer-invocation
-        if (maxPointerIndex >= 0) {
-            for (int i = maxPointerIndex; i > 0; i--) {
-                mv.label(fallback[i]);
-                if (int.class == nativeIntType) {
-                    mv.pop();
-                } else {
-                    mv.pop2();
-                }
-            }
 
-            mv.label(fallback[0]);
-            // Pop ThreadContext, Invoker and Function
-            mv.pop(); mv.pop(); mv.pop();
-            
-            // Call the fallback invoker
-            mv.aload(0);
-            mv.getfield(builder.getClassName(), builder.getFallbackInvokerFieldName(), ci(NativeInvoker.class));
-            mv.aload(1);
-            
-            for (int i = 0; i < signature.getParameterCount(); i++) {
-                mv.aload(2 + i);
+        // Handle non-direct pointer parameters
+        if (pointerCount > 0) {
+            mv.label(indirect);
+
+            // For functions with only a few pointer args, we can possibly use the jffi object fast-path
+            if (signature.getParameterCount() <= 4 && pointerCount <= 4) {
+                Label fallback = new Label();
+                if (pointerCount > 3) {
+                    mv.iload(heapPointerCountVar);
+                    mv.iconst_3();
+                    mv.if_icmpgt(fallback);
+                }
+
+                if (int.class == nativeIntType) {
+                    // For i386, need to convert the int params to long to pass to the invokeNrN helpers
+                    final int firstIntParam = nextLocalVar;
+                    for (int i = 0; i < signature.getParameterCount() - 1; i++) {
+                        mv.istore(firstIntParam + i);
+                    }
+
+                    // first param is still on operand stack, just convert in-place
+                    mv.i2l();
+
+                    // now convert the rest
+                    for (int i = signature.getParameterCount() - 2; i >= 0; i--) {
+                        mv.iload(firstIntParam + i);
+                        mv.i2l();
+                    }
+                }
+
+                mv.iload(heapPointerCountVar);
+
+                // Just load all the pointer parameters, conversion strategies and parameter info onto
+                // the operand stack, so the helper functions can sort them out.
+                for (int i = 0, ptrIdx = 0; i < signature.getParameterCount(); i++) {
+                    switch (signature.getParameterType(i)) {
+                        case POINTER:
+                        case BUFFER_IN:
+                        case BUFFER_OUT:
+                        case BUFFER_INOUT:
+                        case STRING:
+                            mv.aload(firstParam + i);
+                            mv.aload(firstStrategyVar + ptrIdx);
+                            mv.aload(0);
+                            mv.getfield(p(JITNativeInvoker.class), "parameterInfo" + i, ci(ObjectParameterInfo.class));
+                            ptrIdx++;
+                            break;
+                    }
+                }
+
+                
+                Class[] paramTypes = makeObjectParamSignature(signature, pointerCount);
+                mv.invokestatic(p(JITRuntime.class), "invokeN" + signature.getParameterCount() + "OrN",
+                        sig(long.class, paramTypes));
+                narrow(mv, long.class, nativeIntType);
+                mv.go_to(boxResult);
+                mv.label(fallback);
             }
             
-            mv.invokevirtual(p(NativeInvoker.class), "invoke", 
-                    sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, signature.getParameterCount())));
-            emitResultConversion(mv, builder, signature);
-            mv.areturn();
+            // Emit the fallback code to call the generic invoker path, if 
+            // more than 3 pointer parameters are present.
+            if (pointerCount > 3) {
+
+                // pop all the converted arguments off the stack
+                for (int i = 0; i < signature.getParameterCount(); i++) {
+                    if (int.class == nativeIntType) {
+                        mv.pop();
+                    } else {
+                        mv.pop2();
+                    }
+                }
+
+                // Pop ThreadContext, Invoker and Function
+                mv.pop(); mv.pop(); mv.pop();
+
+                // Call the fallback invoker
+                mv.aload(0);
+                mv.getfield(builder.getClassName(), builder.getFallbackInvokerFieldName(), ci(NativeInvoker.class));
+                mv.aload(1);
+
+                for (int i = 0; i < signature.getParameterCount(); i++) {
+                    mv.aload(firstParam + i);
+                }
+
+                mv.invokevirtual(p(NativeInvoker.class), "invoke", 
+                        sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class, signature.getParameterCount())));
+                mv.go_to(resultConversion);
+            }
         }
     }
 
@@ -259,89 +286,118 @@ abstract class AbstractNumericMethodGenerator implements JITMethodGenerator {
         }
     }
     
-    private void boxResult(SkinnyMethodAdapter mv, NativeType type,
-            String boxMethodName, Class primitiveType) {
-        // convert to the appropriate primitiv result type
-        narrow(mv, getInvokerIntType(), primitiveType);
-        widen(mv, getInvokerIntType(), primitiveType);
+    private static Class[] makeObjectParamSignature(JITSignature signature, int pointerCount) {
+        Class[] paramTypes = new Class[3 + signature.getParameterCount() + (pointerCount * 3)];
+        int idx = 0;
+
+        paramTypes[idx++] = com.kenai.jffi.Invoker.class;
+        paramTypes[idx++] = com.kenai.jffi.Function.class;
+
+        for (int i = 0; i < signature.getParameterCount(); i++) {
+            paramTypes[idx++] = long.class;
+        }
         
+        paramTypes[idx++] = int.class;
+
+        for (int i = 0; i < pointerCount; i++) {
+            paramTypes[idx++] = IRubyObject.class;
+            paramTypes[idx++] = PointerParameterStrategy.class;
+            paramTypes[idx++] = ObjectParameterInfo.class;
+        }
+
+        return paramTypes;
+    }
+
+    private void emitHeapPointerLoad(SkinnyMethodAdapter mv, Signature signature, int lvar) {
+
+    }
+
+    private void unbox(SkinnyMethodAdapter mv, String method) {
+        mv.invokestatic(p(JITRuntime.class), getRuntimeMethod(method), sig(getInvokerIntType(), IRubyObject.class));
+    }
+
+    private String getRuntimeMethod(String method) {
+        return method + (int.class == getInvokerIntType() ? "32" : "64");
+    }
+
+    private void boxResult(SkinnyMethodAdapter mv,
+                           String boxMethodName) {
         mv.invokestatic(p(JITRuntime.class), boxMethodName,
-                sig(IRubyObject.class, ThreadContext.class, primitiveType));
+                sig(IRubyObject.class, ThreadContext.class, getInvokerIntType()));
     }
 
     private void boxResult(SkinnyMethodAdapter mv, NativeType type) {
         switch (type) {
             case BOOL:
-                boxResult(mv, type, "newBoolean", getInvokerIntType());
+                boxResult(mv, "newBoolean");
                 break;
 
             case CHAR:
-                boxResult(mv, type, "newSigned8", byte.class);
+                boxResult(mv, "newSigned8");
                 break;
 
             case UCHAR:
-                boxResult(mv, type, "newUnsigned8", byte.class);
+                boxResult(mv, "newUnsigned8");
                 break;
 
             case SHORT:
-                boxResult(mv, type, "newSigned16", short.class);
+                boxResult(mv, "newSigned16");
                 break;
 
             case USHORT:
-                boxResult(mv, type, "newUnsigned16", short.class);
+                boxResult(mv, "newUnsigned16");
                 break;
 
             case INT:
-                boxResult(mv, type, "newSigned32", int.class);
+                boxResult(mv, "newSigned32");
                 break;
 
             case UINT:
-                boxResult(mv, type, "newUnsigned32", int.class);
+                boxResult(mv, "newUnsigned32");
                 break;
 
             case LONG:
                 if (Platform.getPlatform().longSize() == 32) {
-                    boxResult(mv, type, "newSigned32", int.class);
+                    boxResult(mv, "newSigned32");
                 } else {
-                    boxResult(mv, type, "newSigned64", long.class);
+                    boxResult(mv, "newSigned64");
                 }
                 break;
 
             case ULONG:
                 if (Platform.getPlatform().longSize() == 32) {
-                    boxResult(mv, type, "newUnsigned32", int.class);
+                    boxResult(mv, "newUnsigned32");
                 } else {
-                    boxResult(mv, type, "newUnsigned64", long.class);
+                    boxResult(mv, "newUnsigned64");
                 }
                 break;
 
             case LONG_LONG:
-                boxResult(mv, type, "newSigned64", long.class);
+                boxResult(mv, "newSigned64");
                 break;
 
             case ULONG_LONG:
-                boxResult(mv, type, "newUnsigned64", long.class);
+                boxResult(mv, "newUnsigned64");
                 break;
                 
             case FLOAT:
-                boxResult(mv, type, "newFloat32", getInvokerIntType());
+                boxResult(mv, "newFloat32");
                 break;
                 
             case DOUBLE:
-                boxResult(mv, type, "newFloat64", long.class);
+                boxResult(mv, "newFloat64");
                 break;
 
             case VOID:
-                boxResult(mv, type, "newNil", getInvokerIntType());
+                boxResult(mv, "newNil");
                 break;
 
             case POINTER:
-                boxResult(mv, type, "newPointer" + Platform.getPlatform().addressSize(),
-                    getInvokerIntType());
+                boxResult(mv, "newPointer" + Platform.getPlatform().addressSize());
                 break;
 
             case STRING:
-                boxResult(mv, type, "newString", getInvokerIntType());
+                boxResult(mv, "newString");
                 break;
 
 
