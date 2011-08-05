@@ -6,6 +6,7 @@ import org.jruby.compiler.ir.operands.Label;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
+import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 
 // This instruction encodes the receive of an argument into a closure
@@ -33,10 +34,10 @@ public class ReceiveClosureArgInstr extends NoOperandInstr {
 
     @Interp
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         Object o;
+        int numArgs = interp.getParameterCount();
         if (restOfArgArray) {
-            int numArgs = interp.getParameterCount();
             IRubyObject[] restOfArgs = new IRubyObject[numArgs-argIndex];
             int j = 0;
             for (int i = argIndex; i < numArgs; i++) {
@@ -45,7 +46,11 @@ public class ReceiveClosureArgInstr extends NoOperandInstr {
             }
             o =  org.jruby.RubyArray.newArray(interp.getRuntime(), restOfArgs);
         } else {
-            o = interp.getParameter(argIndex);
+            if (numArgs <= argIndex) {
+                o = interp.getRuntime().getNil();
+            } else {
+                o = interp.getParameter(argIndex);
+            }
         }
         getResult().store(interp, o);
         return null;

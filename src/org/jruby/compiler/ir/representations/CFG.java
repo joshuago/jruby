@@ -341,7 +341,10 @@ public class CFG {
                 } // SSS FIXME: To be done
                 else if (i instanceof BREAK_Instr) {
                     tgt = null;
-                    retBBs.add(currBB); // the break instruction transfers control to the end of this closure cfg
+                    if (((BREAK_Instr)i).target == null) {
+                        // the break instruction transfers control to the end of this closure cfg
+                        retBBs.add(currBB);
+                    }
                     bbEndedWithControlXfer = true;
                 } else if (i instanceof ReturnInstr) {
                     tgt = null;
@@ -493,6 +496,10 @@ public class CFG {
     }
 
     private void inlineClosureAtYieldSite(InlinerInfo ii, IRClosure cl, BasicBlock yieldBB, YieldInstr yield) {
+        // Mark this closure as inlined so we dont run any destructive operations on it.
+        // since the closure in its original form will get destroyed by the inlining.
+        cl.markInlined();
+
         // 1. split yield site bb and move outbound edges from yield site bb to split bb.
         BasicBlock splitBB = yieldBB.splitAtInstruction(yield, getNewLabel(), false);
         _cfg.addVertex(splitBB);
@@ -509,14 +516,23 @@ public class CFG {
         // NOTE: No need to clone basic blocks in the closure because they are part of the caller's cfg
         // and is being merged in at the yield site -- there is no need for the closure after the merge.
         CFG ccfg = cl.getCFG();
-        BasicBlock cEntry = ccfg.getEntryBB(); 
-        BasicBlock cExit  = ccfg.getExitBB(); 
+        BasicBlock cEntry = ccfg.getEntryBB();
+        BasicBlock cExit  = ccfg.getExitBB();
         for (BasicBlock b: ccfg.getNodes()) {
             if (b != cEntry && b != cExit) {
-              _cfg.addVertex(b);
-              _bbMap.put(b._label, b);
-              b.updateCFG(this);
-              b.processClosureArgAndReturnInstrs(ii, yield);
+                _cfg.addVertex(b);
+                _bbMap.put(b._label, b);
+                b.updateCFG(this);
+                b.processClosureArgAndReturnInstrs(ii, yield);
+            }
+        }
+        for (BasicBlock b: ccfg.getNodes()) {
+            if (b != cEntry && b != cExit) {
+                for (CFG_Edge e: ccfg.outgoingEdgesOf(b)) {
+                    BasicBlock c = e._dst;
+                    if (c != cExit)
+                        _cfg.addEdge(b, c)._type = e._type;
+                }
             }
         }
         for (CFG_Edge e: ccfg.outgoingEdgesOf(cEntry)) {
@@ -591,9 +607,9 @@ public class CFG {
         DirectedGraph<BasicBlock, CFG_Edge> g = getNewCFG();
         for (BasicBlock b: mcfg.getNodes()) {
             if (b != mEntry && b != mExit) {
-              BasicBlock bCloned = b.cloneForInlining(ii);
-              _cfg.addVertex(bCloned);
-              _bbMap.put(bCloned._label, bCloned);
+                BasicBlock bCloned = b.cloneForInlining(ii);
+                _cfg.addVertex(bCloned);
+                _bbMap.put(bCloned._label, bCloned);
             }
         }
 
@@ -1090,7 +1106,7 @@ public class CFG {
                     Set<CFG_Edge> succs = _cfg.outgoingEdgesOf(curr);
                     if (succs.size() == 1) {
                         BasicBlock tgt = succs.iterator().next()._dst;
-                        if ((tgt != next) && ((li == null) || !li.operation.xfersControl())) {
+                        if ((tgt != next) && ((li == null) || !li.operation.transfersControl())) {
 //                            System.out.println("BB " + curr.getID() + " doesn't fall through to " + next.getID() + ".  Adding a jump to " + tgt._label);
                             curr.addInstr(new JumpInstr(tgt._label));
                         }
@@ -1107,7 +1123,7 @@ public class CFG {
                 Set<CFG_Edge> succs = _cfg.outgoingEdgesOf(curr);
                 assert succs.size() == 1;
                 BasicBlock tgt = succs.iterator().next()._dst;
-                if ((li == null) || !li.operation.xfersControl()) {
+                if ((li == null) || !li.operation.transfersControl()) {
 //                    System.out.println("BB " + curr.getID() + " is the last bb in the layout! Adding a jump to " + tgt._label);
                     curr.addInstr(new JumpInstr(tgt._label));
                 }

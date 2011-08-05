@@ -1,13 +1,15 @@
 package org.jruby.compiler.ir.instructions;
 
 import java.util.Map;
+import org.jruby.MetaClass;
 import org.jruby.Ruby;
-import org.jruby.RubyRegexp;
 import org.jruby.RubyClass;
 import org.jruby.RubyModule;
-import org.jruby.MetaClass;
+import org.jruby.RubyRegexp;
+import org.jruby.RubyString;
 import org.jruby.compiler.ir.Operation;
 import org.jruby.compiler.ir.operands.BooleanLiteral;
+import org.jruby.compiler.ir.operands.Fixnum;
 import org.jruby.compiler.ir.operands.Label;
 import org.jruby.compiler.ir.operands.MethAddr;
 import org.jruby.compiler.ir.operands.Nil;
@@ -16,8 +18,9 @@ import org.jruby.compiler.ir.operands.StringLiteral;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
-import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.Arity;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.util.ByteList;
@@ -36,24 +39,17 @@ public class JRubyImplCallInstr extends CallInstr {
     public enum JRubyImplementationMethod {
        // SSS FIXME: Note that compiler/impl/BaseBodyCompiler is using op_match2 for match() and and op_match for match2,
        // and we are replicating it here ... Is this a bug there?
-       MATCH("op_match2"), 
-       MATCH2("op_match"), 
+       MATCH("op_match2"),
+       MATCH2("op_match"),
        MATCH3("match3"),
-       // SSS FIXME: This method (at least in the context of multiple assignment) is a little weird.
-       // It calls regular to_ary on the object.  But, if it encounters a method_missing, the value
-       // is inserted into an 1-element array!
-       // try "a,b,c = 1" first; then define Fixnum.to_ary method and try it again.
-       // Ex: http://gist.github.com/163551
-       TO_ARY("to_ary"),
-       UNDEF_METHOD("undefMethod"),
-       BLOCK_GIVEN("block_isGiven"),
        RT_IS_GLOBAL_DEFINED("runtime_isGlobalDefined"),
        RT_GET_OBJECT("runtime_getObject"),
        RT_GET_BACKREF("runtime_getBackref"),
        RTH_GET_DEFINED_CONSTANT_OR_BOUND_METHOD("getDefinedConstantOrBoundMethod"),
-       SELF_METACLASS("self_metaClass"),
-       SELF_HAS_INSTANCE_VARIABLE("self_hasInstanceVariable"),
-       SELF_IS_METHOD_BOUND("self_isMethodBound"),
+       BLOCK_GIVEN("block_isGiven"), // SSS FIXME: Should this be a Ruby internals call rather than a JRUBY internals call?
+       SELF_METACLASS("self_metaClass"), // SSS FIXME: Should this be a Ruby internals call rather than a JRUBY internals call?
+       SELF_HAS_INSTANCE_VARIABLE("self_hasInstanceVariable"), // SSS FIXME: Should this be a Ruby internals call rather than a JRUBY internals call?
+       SELF_IS_METHOD_BOUND("self_isMethodBound"), // SSS FIXME: Should this be a Ruby internals call rather than a JRUBY internals call?
        TC_SAVE_ERR_INFO("threadContext_saveErrInfo"),
        TC_RESTORE_ERR_INFO("threadContext_restoreErrInfo"),
        TC_GET_CONSTANT_DEFINED("threadContext_getConstantDefined"),
@@ -62,7 +58,9 @@ public class JRubyImplCallInstr extends CallInstr {
        METHOD_PUBLIC_ACCESSIBLE("methodIsPublicAccessible"),
        CLASS_VAR_DEFINED("isClassVarDefined"),
        FRAME_SUPER_METHOD_BOUND("frame_superMethodBound"),
-       SET_WITHIN_DEFINED("setWithinDefined");
+       SET_WITHIN_DEFINED("setWithinDefined"),
+       CHECK_ARITY("checkArity"),
+       RAISE_ARGUMENT_ERROR("raiseArgumentError");
 
        public MethAddr methAddr;
        JRubyImplementationMethod(String methodName) {
@@ -116,13 +114,30 @@ public class JRubyImplCallInstr extends CallInstr {
 
     @Override
     public Instr cloneForInlining(InlinerInfo ii) {
-        return new JRubyImplCallInstr(ii.getRenamedVariable(result), this.implMethod,
-                getReceiver().cloneForInlining(ii), cloneCallArgs(ii),
-                closure == null ? null : closure.cloneForInlining(ii));
+        Operand receiver = getReceiver();
+        if (this.implMethod == JRubyImplementationMethod.CHECK_ARITY) {
+            Operand[] args = getCallArgs();
+            int required = ((Fixnum)args[0]).value.intValue();
+            int opt      = ((Fixnum)args[1]).value.intValue();
+            int rest     = ((Fixnum)args[2]).value.intValue();
+            int numArgs  = ii.getArgsCount();
+            if ((numArgs < required) || ((rest == -1) && (numArgs > (required + opt)))) {
+                // Argument error! Throw it at runtime
+                return new JRubyImplCallInstr(null, JRubyImplementationMethod.RAISE_ARGUMENT_ERROR, null, new Operand[]{args[0],args[1],args[2],new Fixnum((long)numArgs)});
+            }
+            else {
+                return null;
+            }
+        }
+        else {
+            return new JRubyImplCallInstr(result == null ? null : ii.getRenamedVariable(result), this.implMethod,
+                    receiver == null ? null : receiver.cloneForInlining(ii), cloneCallArgs(ii),
+                    closure == null ? null : closure.cloneForInlining(ii));
+        }
     }
 
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         String   name;
         Object   receiver;
         Ruby     rt   = interp.getRuntime();
@@ -133,31 +148,31 @@ public class JRubyImplCallInstr extends CallInstr {
             // and we are replicating it here ... Is this a bug there?
             case MATCH:
                 receiver = getReceiver().retrieve(interp);
-                rVal = ((RubyRegexp) receiver).op_match2(interp.getContext());
+                rVal = ((RubyRegexp) receiver).op_match2(context);
                 break;
             case MATCH2:
                 receiver = getReceiver().retrieve(interp);
-                rVal = ((RubyRegexp) receiver).op_match(interp.getContext(), (IRubyObject) getCallArgs()[0].retrieve(interp));
+                rVal = ((RubyRegexp) receiver).op_match(context, (IRubyObject) getCallArgs()[0].retrieve(interp));
                 break;
-            case MATCH3: // ENEBO: Only for rubystring?
+            case MATCH3: {// ENEBO: Only for rubystring?
                 receiver = getReceiver().retrieve(interp);
-                rVal = ((RubyRegexp) receiver).op_match(interp.getContext(), (IRubyObject) getCallArgs()[0].retrieve(interp));
+                IRubyObject value = (IRubyObject) getCallArgs()[0].retrieve(interp);
+                        
+                if (value instanceof RubyString) {
+                    rVal = ((RubyRegexp) receiver).op_match(context, value);
+                } else {
+                    rVal = value.callMethod(context, "=~", (IRubyObject) receiver);
+                }
                 break;
-            case UNDEF_METHOD:
-                rVal = RuntimeHelpers.undefMethod(interp.getContext(), getReceiver().retrieve(interp));
-                break;
-            case TO_ARY:
-                receiver = getReceiver().retrieve(interp);
-                rVal = RuntimeHelpers.aryToAry((IRubyObject) receiver);
-                break;
+            }
             case SET_WITHIN_DEFINED:
-                interp.getContext().setWithinDefined(((BooleanLiteral)getCallArgs()[0]).isTrue());
+                context.setWithinDefined(((BooleanLiteral)getCallArgs()[0]).isTrue());
                 break;
             case RTH_GET_DEFINED_CONSTANT_OR_BOUND_METHOD:
             {
                 IRubyObject v = (IRubyObject)getCallArgs()[0].retrieve(interp);
                 name = ((StringLiteral)getCallArgs()[1])._str_value;
-					 ByteList definedType = RuntimeHelpers.getDefinedConstantOrBoundMethod(v, name);
+                ByteList definedType = RuntimeHelpers.getDefinedConstantOrBoundMethod(v, name);
                 rVal = (definedType == null ? Nil.NIL : (new StringLiteral(definedType))).retrieve(interp);
                 break;
             }
@@ -174,17 +189,39 @@ public class JRubyImplCallInstr extends CallInstr {
                 break;
             case RT_GET_BACKREF:
                 // SSS: FIXME: Or use this directly? "context.getCurrentScope().getBackRef(rt)" What is the diff??
-                rVal = RuntimeHelpers.getBackref(rt, interp.getContext());
+                rVal = RuntimeHelpers.getBackref(rt, context);
                 break;
             case SELF_METACLASS:
                 rVal = ((IRubyObject)getReceiver().retrieve(interp)).getMetaClass();
                 break;
+            case CHECK_ARITY:
+            {
+                Operand[] args = getCallArgs();
+                int required = ((Fixnum)args[0]).value.intValue();
+                int opt      = ((Fixnum)args[1]).value.intValue();
+                int rest     = ((Fixnum)args[2]).value.intValue();
+                int numArgs  = interp.getParameterCount();
+                if ((numArgs < required) || ((rest == -1) && (numArgs > (required + opt)))) {
+                    Arity.raiseArgumentError(context.getRuntime(), numArgs, required, required+opt);
+                }
+                break;
+            }
+            case RAISE_ARGUMENT_ERROR:
+            {
+                Operand[] args = getCallArgs();
+                int required = ((Fixnum)args[0]).value.intValue();
+                int opt      = ((Fixnum)args[1]).value.intValue();
+                int rest     = ((Fixnum)args[2]).value.intValue();
+                int numArgs  = ((Fixnum)args[3]).value.intValue();
+                Arity.raiseArgumentError(context.getRuntime(), numArgs, required, required+opt);
+                break;
+            }
             case SELF_HAS_INSTANCE_VARIABLE:
             {
                 receiver = getReceiver().retrieve(interp);
                 //name = getCallArgs()[0].retrieve(interp).toString();
                 name = ((StringLiteral)getCallArgs()[0])._str_value;
-                rVal = rt.newBoolean(((IRubyObject)receiver).getInstanceVariables().fastHasInstanceVariable(name));
+                rVal = rt.newBoolean(((IRubyObject)receiver).getInstanceVariables().hasInstanceVariable(name));
                 break;
             }
             case SELF_IS_METHOD_BOUND:
@@ -240,11 +277,11 @@ public class JRubyImplCallInstr extends CallInstr {
                 boolean flag;
                 RubyModule cm = (RubyModule)getReceiver().retrieve(interp);
                 name = ((StringLiteral)getCallArgs()[0])._str_value;
-                flag = cm.fastIsClassVarDefined(name);
+                flag = cm.isClassVarDefined(name);
                 if (!flag) {
                     if (cm.isSingleton()) {
                         IRubyObject ao = ((MetaClass)cm).getAttached();
-                        if (ao instanceof RubyModule) flag = ((RubyModule)ao).fastIsClassVarDefined(name);
+                        if (ao instanceof RubyModule) flag = ((RubyModule)ao).isClassVarDefined(name);
                     }
                 }
                 rVal = rt.newBoolean(flag);

@@ -8,22 +8,25 @@ import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
 import org.jruby.Ruby;
 import org.jruby.runtime.Block;
-import org.jruby.runtime.Frame;
 import org.jruby.runtime.Block.Type;
+import org.jruby.runtime.ThreadContext;
+import org.jruby.runtime.builtin.IRubyObject;
 
-/* Receiver the closure argument (either implicit or explicit in Ruby source code) */
+/* Receive the closure argument (either implicit or explicit in Ruby source code) */
 public class ReceiveClosureInstr extends NoOperandInstr {
     public ReceiveClosureInstr(Variable dest) {
         super(Operation.RECV_CLOSURE, dest);
     }
 
     public Instr cloneForInlining(InlinerInfo ii) {
+		  // SSS FIXME: This is not strictly correct -- we have to wrap the block into an
+		  // operand type that converts the static code block to a proc which is a closure.
         return new CopyInstr(ii.getRenamedVariable(result), ii.getCallClosure());
     }
 
     @Interp
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         Block blk = interp.getBlock();
         Ruby  runtime = interp.getRuntime();
         getResult().store(interp, blk == Block.NULL_BLOCK ? runtime.getNil() : runtime.newProc(Type.PROC, blk));

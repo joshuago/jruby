@@ -19,11 +19,16 @@ import org.jruby.compiler.ir.representations.CFG;
 import org.jruby.internal.runtime.methods.InterpretedIRMethod;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.exceptions.JumpException;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.RubyEvent;
-
+import org.jruby.util.log.Logger;
+import org.jruby.util.log.LoggerFactory;
 
 public class Interpreter {
+
+    private static final Logger LOG = LoggerFactory.getLogger("Interpreter");
+
     public static IRubyObject interpret(Ruby runtime, Node rootNode, IRubyObject self) {
         IRScope scope = new IRBuilder().buildRoot((RootNode) rootNode);
         scope.prepareForInterpretation();
@@ -55,14 +60,15 @@ public class Interpreter {
         ThreadContext context = runtime.getCurrentContext();
 
         IRubyObject rv =  method.call(context, self, currModule, "", IRubyObject.NULL_ARRAY);
-        if (isDebug()) System.out.println("-- Interpreted " + interpInstrsCount + " instructions");
+        if (isDebug()) LOG.debug("-- Interpreted instructions: {}", interpInstrsCount);
 
         return rv;
     }
 
-    public static IRubyObject interpret(ThreadContext context, CFG cfg, InterpreterContext interp) {
+    public static IRubyObject interpret(ThreadContext context, IRubyObject self, CFG cfg, InterpreterContext interp) {
         Ruby runtime = context.getRuntime();
         boolean inClosure = (cfg.getScope() instanceof IRClosure);
+        boolean passThroughBreak = false;
         
         try {
             interp.setMethodExitLabel(cfg.getExitBB().getLabel()); // used by return and break instructions!
@@ -75,10 +81,10 @@ public class Interpreter {
                 interpInstrsCount++;
                 lastInstr = instrs[ipc];
                 
-                if (isDebug()) System.out.println("I: " + lastInstr);
+                if (isDebug()) LOG.debug("I: {}", lastInstr);
                 
                 try {
-                    Label jumpTarget = lastInstr.interpret(interp);
+                    Label jumpTarget = lastInstr.interpret(interp, context, self);
                     ipc = (jumpTarget == null) ? ipc + 1 : jumpTarget.getTargetPC();
                 }
                 // SSS FIXME: This only catches Ruby exceptions
@@ -102,17 +108,21 @@ public class Interpreter {
             else if (lastInstr instanceof BREAK_Instr) {
                 if (!inClosure) throw runtime.newLocalJumpError(Reason.BREAK, rv, "unexpected break");
 
+                passThroughBreak = true;
                 RuntimeHelpers.breakJump(context, rv);
             }
 
             return rv;
+        } catch (JumpException.BreakJump bj) {
+            if (passThroughBreak) throw bj;
+            return (IRubyObject)bj.getValue();
         } catch (IRReturnJump rj) {
-				// - If we are in a lambda, stop propagating
-				// - If not in a lambda
-				//   - if in a closure, pass it along
-				//   - if not in a closure, we got this return jump from a closure further up the call stack.
-				//     So, continue popping the call stack till we get to the right method
-				if (!interp.inLambda() && (inClosure || (rj.methodToReturnFrom != cfg.getScope()))) throw rj; // pass it along
+            // - If we are in a lambda, stop propagating
+            // - If not in a lambda
+            //   - if in a closure, pass it along
+            //   - if not in a closure, we got this return jump from a closure further up the call stack.
+            //     So, continue popping the call stack till we get to the right method
+            if (!interp.inLambda() && (inClosure || (rj.methodToReturnFrom != cfg.getScope()))) throw rj; // pass it along
 
             return (IRubyObject) rj.returnValue;
         } finally {
@@ -126,7 +136,7 @@ public class Interpreter {
     }
 
     public static IRubyObject INTERPRET_METHOD(ThreadContext context, CFG cfg, 
-            InterpreterContext interp, String name, RubyModule implClass, boolean isTraceable) {
+            InterpreterContext interp, IRubyObject self, String name, RubyModule implClass, boolean isTraceable) {
         Ruby runtime = interp.getRuntime();
         boolean syntheticMethod = name == null || name.equals("");
         
@@ -134,7 +144,7 @@ public class Interpreter {
             String className = implClass.getName();
             if (!syntheticMethod) ThreadContext.pushBacktrace(context, className, name, context.getFile(), context.getLine());
             if (isTraceable) methodPreTrace(runtime, context, name, implClass);
-            return interpret(context, cfg, interp);
+            return interpret(context, self, cfg, interp);
         } finally {
             if (isTraceable) {
                 try {methodPostTrace(runtime, context, name, implClass);}

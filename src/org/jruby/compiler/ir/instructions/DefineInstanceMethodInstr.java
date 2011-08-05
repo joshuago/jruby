@@ -3,16 +3,17 @@ package org.jruby.compiler.ir.instructions;
 import java.util.Map;
 
 import org.jruby.MetaClass;
+import org.jruby.Ruby;
 import org.jruby.RubyModule;
 import org.jruby.RubyObject;
 
-import org.jruby.compiler.ir.IRMetaClass;
 import org.jruby.compiler.ir.IRMethod;
 import org.jruby.compiler.ir.operands.Label;
-import org.jruby.compiler.ir.operands.MetaObject;
 import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.Operation;
 import org.jruby.compiler.ir.representations.InlinerInfo;
+
+import org.jruby.common.IRubyWarnings.ID;
 
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.internal.runtime.methods.WrapperMethod;
@@ -55,11 +56,24 @@ public class DefineInstanceMethodInstr extends OneOperandInstr {
 
     // SSS FIXME: Go through this and DefineClassmethodInstr.interpret, clean up, extract common code
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         RubyObject arg   = (RubyObject)getArg().retrieve(interp);
         RubyModule clazz = (arg instanceof RubyModule) ? (RubyModule)arg : arg.getMetaClass();
         String     name  = method.getName();
-        ThreadContext context = interp.getContext();
+
+		  // Error checks and warnings on method definitions
+        Ruby runtime = context.getRuntime();
+        if (clazz == runtime.getDummy()) {
+            throw runtime.newTypeError("no class/module to add method");
+        }
+
+        if (clazz == runtime.getObject() && name == "initialize") {
+            runtime.getWarnings().warn(ID.REDEFINING_DANGEROUS, "redefining Object#initialize may cause infinite loop");
+        }
+
+        if (name == "__id__" || name == "__send__") {
+            runtime.getWarnings().warn(ID.REDEFINING_DANGEROUS, "redefining `" + name + "' may cause serious problem"); 
+        }
 
         Visibility visibility = context.getCurrentVisibility();
         if (name == "initialize" || name == "initialize_copy" || visibility == Visibility.MODULE_FUNCTION) {
@@ -71,14 +85,14 @@ public class DefineInstanceMethodInstr extends OneOperandInstr {
 
         if (visibility == Visibility.MODULE_FUNCTION) {
             clazz.getSingletonClass().addMethod(name, new WrapperMethod(clazz.getSingletonClass(), newMethod, Visibility.PUBLIC));
-            clazz.callMethod(context, "singleton_method_added", interp.getRuntime().fastNewSymbol(name));
+            clazz.callMethod(context, "singleton_method_added", runtime.fastNewSymbol(name));
         }
    
         // 'class << state.self' and 'class << obj' uses defn as opposed to defs
         if (clazz.isSingleton()) {
-            ((MetaClass) clazz).getAttached().callMethod(context, "singleton_method_added", interp.getRuntime().fastNewSymbol(name));
+            ((MetaClass) clazz).getAttached().callMethod(context, "singleton_method_added", runtime.fastNewSymbol(name));
         } else {
-            clazz.callMethod(context, "method_added", interp.getRuntime().fastNewSymbol(name));
+            clazz.callMethod(context, "method_added", runtime.fastNewSymbol(name));
         }
         return null;
     }

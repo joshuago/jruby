@@ -1,13 +1,19 @@
 package org.jruby.compiler.ir.instructions;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
+import org.jruby.RubyArray;
 import org.jruby.RubyString;
 import org.jruby.compiler.ir.operands.Label;
+import org.jruby.compiler.ir.operands.Splat;
+import org.jruby.compiler.ir.operands.CompoundArray;
 import org.jruby.compiler.ir.Operation;
 import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
+import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 
 public class AttrAssignInstr extends MultiOperandInstr {
@@ -71,23 +77,26 @@ public class AttrAssignInstr extends MultiOperandInstr {
     }
 
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         IRubyObject receiver = (IRubyObject) obj.retrieve(interp);
         String      attrMeth = ((RubyString) attr.retrieve(interp)).asJavaString();
-        IRubyObject[] callArgs = new IRubyObject[args.length + ((value == null) ? 0 : 1)];
-
-        int i = 0;
+        List<IRubyObject> argList = new ArrayList<IRubyObject>();
 
         // SSS FIXME: Is this correct?  Is value the 1st arg (or the last arg??)
         if (value != null) {
-            callArgs[0] = (IRubyObject)value.retrieve(interp);
-            i++;
+            argList.add((IRubyObject)value.retrieve(interp));
         }
 
-        for ( ; i < callArgs.length; i++)
-            callArgs[i] = (IRubyObject) args[i].retrieve(interp);
+        for (int i = 0; i < args.length; i++) {
+            IRubyObject rArg = (IRubyObject)args[i].retrieve(interp);
+            if ((args[i] instanceof Splat) || (args[i] instanceof CompoundArray)) { 
+                argList.addAll(Arrays.asList(((RubyArray)rArg).toJavaArray()));
+            } else {
+                argList.add(rArg);
+            }
+        }
 
-        receiver.callMethod(interp.getContext(), attrMeth, callArgs);
+        receiver.callMethod(interp.getContext(), attrMeth, argList.toArray(new IRubyObject[argList.size()]));
         return null;
     }
 }

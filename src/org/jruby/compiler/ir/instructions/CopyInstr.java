@@ -11,6 +11,8 @@ import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 import org.jruby.interpreter.InterpreterContext;
+import org.jruby.runtime.ThreadContext;
+import org.jruby.runtime.builtin.IRubyObject;
 
 public class CopyInstr extends OneOperandInstr {
     public CopyInstr(Variable d, Operand s) {
@@ -31,9 +33,14 @@ public class CopyInstr extends OneOperandInstr {
     }
 
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         getResult().store(interp, getArg().retrieve(interp));
         return null;
+    }
+
+    @Override
+    public String toString() { 
+        return (argument instanceof Variable) ? super.toString() : (getResult() + " = " + getArg());
     }
 
     // Can this instruction raise exceptions?

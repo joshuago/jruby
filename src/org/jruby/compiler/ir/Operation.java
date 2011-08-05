@@ -4,6 +4,7 @@ enum OpType { dont_care, debug_op, obj_op, alu_op, call_op, yield_op, recv_arg_o
 
 public enum Operation {
 // ------ Define the operations below ----
+    NOP(OpType.dont_care),
 
 // value copy and type conversion operations
     COPY(OpType.dont_care), SET_RETADDR(OpType.dont_care),
@@ -23,8 +24,8 @@ public enum Operation {
     RETURN(OpType.ret_op), CLOSURE_RETURN(OpType.ret_op), BREAK(OpType.ret_op),
     RECV_ARG(OpType.recv_arg_op), RECV_SELF(OpType.recv_arg_op), RECV_CLOSURE(OpType.recv_arg_op), RECV_OPT_ARG(OpType.recv_arg_op), RECV_CLOSURE_ARG(OpType.recv_arg_op),
     RECV_EXCEPTION(OpType.recv_arg_op),
+	 SET_ARGS(OpType.dont_care), RECORD_CLOSURE(OpType.dont_care),
     CALL(OpType.call_op), JRUBY_IMPL(OpType.call_op), RUBY_INTERNALS(OpType.call_op),
-	 RECORD_CLOSURE(OpType.recv_arg_op),
     METHOD_LOOKUP(OpType.dont_care),
 
 // closure instructions
@@ -78,7 +79,7 @@ public enum Operation {
         return type == OpType.alu_op;
     }
 
-    public boolean xfersControl() { 
+    public boolean transfersControl() { 
         return isBranch() || isReturn() || isException();
     }
 
@@ -119,17 +120,17 @@ public enum Operation {
     }
 
     public boolean endsBasicBlock() {
-        return xfersControl();
+        return transfersControl();
     }
 
     // By default, call instructions cannot be deleted even if their results aren't used by anyone
     // unless we know more about what the call is, what it does, etc.
     // Similarly for evals, stores, returns.
     public boolean hasSideEffects() {
-        return isCall() || isEval() || isStore() || isReturn() || isException() || type == OpType.def_op || type == OpType.yield_op;
+        return isCall() || isEval() || isStore() || isReturn() || isException() || this == SET_ARGS || this == RECORD_CLOSURE || this == THREAD_POLL || type == OpType.def_op || type == OpType.yield_op;
     }
 
-	 // Conservative -- say no only if you know it for sure cannot
+    // Conservative -- say no only if you know it for sure cannot
     public boolean canRaiseException() {
         return (type != OpType.ret_op) && (type != OpType.debug_op) && (type != OpType.recv_arg_op) && (type != OpType.branch_op) && (type != OpType.marker_op);
     }

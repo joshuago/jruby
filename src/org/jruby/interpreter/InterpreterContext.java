@@ -31,22 +31,18 @@ import org.jruby.compiler.ir.operands.Label;
  */
 public interface InterpreterContext {
     // Section: Return value, Local Variables, Temporary Variables
+    public IRubyObject[] setNewParameters(IRubyObject[] args);
     public Object getParameter(int offset);
     public int getParameterCount(); // How many parameters were passed into a call
+
+    public IRubyObject[] getParametersFrom(int argIndex);
     public Object getReturnValue();
     public void setReturnValue(Object returnValue);
 
     public Object getTemporaryVariable(int offset);
     public Object setTemporaryVariable(int offset, Object value);
-/**
-    public Object getLocalVariable(String name);
-    public Object setLocalVariable(String name, Object value);
-**/
     public Object getLocalVariable(int offset);
     public Object setLocalVariable(int offset, Object value);
-    public void   updateRenamedVariablesCount(int n);
-    public Object getRenamedVariable(int offset);
-    public Object setRenamedVariable(int offset, Object value);
 
     public void setDynamicScope(DynamicScope s);
     public void allocateSharedBindingScope(IRMethod method);
@@ -66,8 +62,6 @@ public interface InterpreterContext {
 
     public void setFrame(Frame currentFrame);
     public Frame getFrame();
-
-    public IRubyObject[] getParametersFrom(int argIndex);
 
     public void setMethodExitLabel(Label l);
 

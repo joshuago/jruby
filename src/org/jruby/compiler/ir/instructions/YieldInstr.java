@@ -12,6 +12,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.RubyProc;
+import org.jruby.RubyNil;
 
 public class YieldInstr extends Instr {
     Operand block;
@@ -30,14 +31,15 @@ public class YieldInstr extends Instr {
 
     @Interp
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
         Object resultValue;
         Object blk = (Object)block.retrieve(interp);
         if (blk instanceof RubyProc) blk = ((RubyProc)blk).getBlock();
+        if (blk instanceof RubyNil) blk = Block.NULL_BLOCK;
         if (yieldArg == null) {
-            resultValue = ((Block)blk).call(interp.getContext());
+            resultValue = ((Block)blk).yieldSpecific(context);
         } else {
-            resultValue = ((Block)blk).yield(interp.getContext(), (IRubyObject)yieldArg.retrieve(interp));
+            resultValue = ((Block)blk).yield(context, (IRubyObject)yieldArg.retrieve(interp));
         }
         getResult().store(interp, resultValue);
         return null;
@@ -50,6 +52,10 @@ public class YieldInstr extends Instr {
 
     public Operand[] getOperands() {
         return (yieldArg == null) ? new Operand[]{block} : new Operand[] {block, yieldArg};
+    }
+
+    public Operand[] getNonBlockOperands() {
+        return (yieldArg == null) ? new Operand[]{} : new Operand[] {yieldArg};
     }
 
     public void simplifyOperands(Map<Operand, Operand> valueMap) {

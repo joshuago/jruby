@@ -154,12 +154,13 @@ import org.jruby.compiler.ir.instructions.ReceiveSelfInstruction;
 import org.jruby.compiler.ir.instructions.ReceiveArgumentInstruction;
 import org.jruby.compiler.ir.instructions.ReceiveClosureArgInstr;
 import org.jruby.compiler.ir.instructions.ReceiveClosureInstr;
-import org.jruby.compiler.ir.instructions.RecordImplicitClosureArgInstr;
 import org.jruby.compiler.ir.instructions.RECV_EXCEPTION_Instr;
 import org.jruby.compiler.ir.instructions.ReceiveOptionalArgumentInstr;
 import org.jruby.compiler.ir.instructions.ReturnInstr;
 import org.jruby.compiler.ir.instructions.RubyInternalCallInstr;
+import org.jruby.compiler.ir.instructions.RubyInternalCallInstr.RubyInternalsMethod;
 import org.jruby.compiler.ir.instructions.SET_RETADDR_Instr;
+import org.jruby.compiler.ir.instructions.SetArgumentsInstr;
 import org.jruby.compiler.ir.instructions.SearchConstInstr;
 import org.jruby.compiler.ir.instructions.ThreadPollInstr;
 import org.jruby.compiler.ir.instructions.THROW_EXCEPTION_Instr;
@@ -169,7 +170,6 @@ import org.jruby.compiler.ir.operands.Backref;
 import org.jruby.compiler.ir.operands.BacktickString;
 import org.jruby.compiler.ir.operands.Bignum;
 import org.jruby.compiler.ir.operands.BooleanLiteral;
-import org.jruby.compiler.ir.operands.BreakResult;
 import org.jruby.compiler.ir.operands.ClassMetaObject;
 import org.jruby.compiler.ir.operands.CompoundArray;
 import org.jruby.compiler.ir.operands.CompoundString;
@@ -197,6 +197,8 @@ import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.BlockBody;
 import org.jruby.util.ByteList;
+import org.jruby.util.log.Logger;
+import org.jruby.util.log.LoggerFactory;
 
 // This class converts an AST into a bunch of IR instructions
 
@@ -247,6 +249,9 @@ import org.jruby.util.ByteList;
 // this is not a big deal.  Think this through!
 
 public class IRBuilder {
+
+    private static final Logger LOG = LoggerFactory.getLogger("IRBuilder");
+
     private static final UnexecutableNil U_NIL = UnexecutableNil.U_NIL;
     private static final Operand[] NO_ARGS = new Operand[]{};
 
@@ -270,13 +275,13 @@ public class IRBuilder {
             IRScope scope = new IRBuilder().buildRoot((RootNode) ast);
             long t3 = new Date().getTime();
             if (isDebug) {
-                System.out.println("################## Before local optimization pass ##################");
+                LOG.debug("################## Before local optimization pass ##################");
                 scope.runCompilerPass(new IR_Printer());
             }
             scope.runCompilerPass(new org.jruby.compiler.ir.compiler_pass.opts.LocalOptimizationPass());
             long t4 = new Date().getTime();
             if (isDebug) {
-                System.out.println("################## After local optimization pass ##################");
+                LOG.debug("################## After local optimization pass ##################");
                 scope.runCompilerPass(new IR_Printer());
             }
             scope.runCompilerPass(new CFG_Builder());
@@ -285,15 +290,15 @@ public class IRBuilder {
             long t6 = new Date().getTime();
            
             if (methName != null) {
-                System.out.println("################## After inline pass ##################");
-                System.out.println("Asked to inline " + methName);
+                LOG.debug("################## After inline pass ##################");
+                LOG.debug("Asked to inline " + methName);
                 scope.runCompilerPass(new InlineTest(methName));
                 scope.runCompilerPass(new LocalOptimizationPass());
                 scope.runCompilerPass(new IR_Printer());
             }
            
             if (isDebug) {
-                System.out.println("################## After dead code elimination pass ##################");
+                LOG.debug("################## After dead code elimination pass ##################");
             }
             scope.runCompilerPass(new LiveVariableAnalysis());
             long t7 = new Date().getTime();
@@ -306,18 +311,18 @@ public class IRBuilder {
             }
             scope.runCompilerPass(new LinearizeCFG());
             if (isDebug) {
-                System.out.println("################## After cfg linearization pass ##################");
+                LOG.debug("################## After cfg linearization pass ##################");
                 scope.runCompilerPass(new IR_Printer());
             }
            
-            System.out.println("Time to build AST         : " + (t2 - t1));
-            System.out.println("Time to build IR          : " + (t3 - t2));
-            System.out.println("Time to run local opts    : " + (t4 - t3));
-            System.out.println("Time to run build cfg     : " + (t5 - t4));
-            System.out.println("Time to run build domtree : " + (t6 - t5));
-            System.out.println("Time to run lva           : " + (t7 - t6));
-            System.out.println("Time to run dead code elim: " + (t8 - t7));
-            System.out.println("Time to add frame instrs  : " + (t9 - t8));
+            LOG.debug("Time to build AST         : {}", (t2 - t1));
+            LOG.debug("Time to build IR          : {}", (t3 - t2));
+            LOG.debug("Time to run local opts    : {}", (t4 - t3));
+            LOG.debug("Time to run build cfg     : {}", (t5 - t4));
+            LOG.debug("Time to run build domtree : {}", (t6 - t5));
+            LOG.debug("Time to run lva           : {}", (t7 - t6));
+            LOG.debug("Time to run dead code elim: {}", (t8 - t7));
+            LOG.debug("Time to add frame instrs  : {}", (t9 - t8));
             i++;
         }
     }
@@ -430,7 +435,13 @@ public class IRBuilder {
         return n;
     }
 
-    public Operand generateJRubyUtilityCall(IRScope m, JRubyImplementationMethod meth, Operand receiver, Operand[] args) {
+    public Variable generateRubyInternalsCall(IRScope m, RubyInternalsMethod meth, boolean hasResult, Operand receiver, Operand[] args) {
+        Variable ret = hasResult ? m.getNewTemporaryVariable() : null;
+        m.addInstr(new RubyInternalCallInstr(ret, meth, receiver, args));
+        return ret;
+    }
+
+    public Variable generateJRubyUtilityCall(IRScope m, JRubyImplementationMethod meth, Operand receiver, Operand[] args) {
         Variable ret = m.getNewTemporaryVariable();
         m.addInstr(new JRubyImplCallInstr(ret, meth, receiver, args));
         return ret;
@@ -654,8 +665,12 @@ public class IRBuilder {
                 break;
             }
             case MULTIPLEASGNNODE:
-                buildMultipleAsgnAssignment((MultipleAsgnNode) node, s, v);
+            {
+                // Invoke to_ary on the operand only if it is not an array already
+                Variable nv = generateRubyInternalsCall(s, RubyInternalsMethod.TO_ARY, true, v, new Operand[] { BooleanLiteral.FALSE });
+                buildMultipleAsgnAssignment((MultipleAsgnNode) node, s, nv);
                 break;
+            }
             case ZEROARGNODE:
                 throw new NotCompilableException("Shouldn't get here; zeroarg does not do assignment: " + node);
             default:
@@ -664,7 +679,7 @@ public class IRBuilder {
     }
 
     // This method is called to build arguments for a block!
-    public void buildBlockArgsAssignment(Node node, IRScope s, int argIndex, boolean isSplat) {
+    public void buildBlockArgsAssignment(Node node, IRScope s, int argIndex, boolean isRoot, boolean isSplat) {
         Variable v;
         switch (node.getNodeType()) {
             case ATTRASSIGNNODE: 
@@ -719,9 +734,24 @@ public class IRBuilder {
                 break;
             }
             case MULTIPLEASGNNODE:
-                // SSS FIXME: Are we guaranteed that splats dont head to multiple-assignment nodes!  i.e. |*(a,b)|?
+            {
+                Variable oldArgs = null;
+                // Push
+                if (!isRoot) {
+                    v = s.getNewTemporaryVariable();
+                    s.addInstr(new ReceiveClosureArgInstr(v, argIndex, isSplat));
+                    oldArgs = s.getNewTemporaryVariable();
+                    s.addInstr(new SetArgumentsInstr(oldArgs, v, true));      // convert to array via to_ary if necessary 
+                    // SSS FIXME: Are we guaranteed that splats dont head to multiple-assignment nodes!  i.e. |*(a,b)|?
+                }
+                // Build
                 buildMultipleAsgnAssignment((MultipleAsgnNode) node, s, null);
+                // Pop
+                if (!isRoot) {
+                    s.addInstr(new SetArgumentsInstr(null, oldArgs, false));  // restore oldArgs -- no to_ary required
+                }
                 break;
+            }
             case ZEROARGNODE:
                 throw new NotCompilableException("Shouldn't get here; zeroarg does not do assignment: " + node);
             default:
@@ -734,8 +764,7 @@ public class IRBuilder {
     public Operand buildAlias(final AliasNode alias, IRScope s) {
         Operand newName = build(alias.getNewName(), s);
         Operand oldName = build(alias.getOldName(), s);
-        Operand[] args = new Operand[] { newName, oldName };
-        s.addInstr(new RubyInternalCallInstr(null, MethAddr.DEFINE_ALIAS, getSelf(s), args));
+        generateRubyInternalsCall(s, RubyInternalsMethod.DEFINE_ALIAS, false, getSelf(s), new Operand[] { newName, oldName });
         return Nil.NIL;
     }
 
@@ -831,18 +860,19 @@ public class IRBuilder {
 
     public Operand buildBreak(BreakNode breakNode, IRExecutionScope s) {
         Operand rv = build(breakNode.getValueNode(), s);
-        // SSS FIXME: If we are not in a closure or a loop, the break instruction will throw a runtime exception
-        // Since we know this right now, should we build an exception instruction here?
-        if ((s instanceof IRClosure) || s.getCurrentLoop() == null) {
-            s.addInstr(new BREAK_Instr(rv));
-            return rv;
+        IRLoop currLoop = s.getCurrentLoop();
+        if (currLoop != null) {
+            s.addInstr(new BREAK_Instr(rv, currLoop.loopEndLabel));
+        }
+        else if (s instanceof IRClosure) {
+            s.addInstr(new BREAK_Instr(rv, null));
         }
         else {
-            // If this is not a closure, the break is equivalent to jumping to the loop end label
-            // But, since break can return a result even in loops, we need to pass back both
-            // the return value as well as the jump target -- so, create a special-purpose operand just for that purpose!
-            return new BreakResult(rv, s.getCurrentLoop().loopEndLabel);
+            // SSS FIXME: If we are not in a closure or a loop, the break instruction will throw a runtime exception
+            // Since we know this right now, should we build an exception instruction here?
+            s.addInstr(new BREAK_Instr(rv, null));
         }
+        return rv;
     }
 
     public Operand buildCall(CallNode callNode, IRScope s) {
@@ -935,14 +965,10 @@ public class IRBuilder {
             Operand bodyValue = build(entry.getValue(), m);
             // bodyValue can be null if the body ends with a return!
             if (bodyValue != null) {
-               // Local optimization of break results (followed by a copy & jump) to short-circuit the jump right away
-               // rather than wait to do it during an optimization pass when a dead jump needs to be removed.
+               // SSS FIXME: Do local optimization of break results (followed by a copy & jump) to short-circuit the jump right away
+               // rather than wait to do it during an optimization pass when a dead jump needs to be removed.  For this, you have
+               // to look at what the last generated instruction was.
                Label tgt = endLabel;
-               if (bodyValue instanceof BreakResult) {
-                   BreakResult br = (BreakResult)bodyValue;
-                   bodyValue = br._result;
-                   tgt = br._jumpTarget;
-               }
                m.addInstr(new CopyInstr(result, bodyValue));
                m.addInstr(new JumpInstr(tgt));
             }
@@ -1064,7 +1090,8 @@ public class IRBuilder {
             Operand module = build(((Colon2Node) constNode).getLeftNode(), s);
             s.addInstr(new PutConstInstr(module, constDeclNode.getName(), val));
         } else { // colon3, assign in Object
-            s.addInstr(new PutConstInstr(getSelf(s), constDeclNode.getName(), val));
+            MetaObject object = MetaObject.create(IRClass.getCoreClass("Object"));            
+            s.addInstr(new PutConstInstr(object, constDeclNode.getName(), val));            
         }
 
         return val;
@@ -1086,7 +1113,7 @@ public class IRBuilder {
         if (iVisited instanceof Colon2ConstNode) {
             // 1. Load the module first (lhs of node)
             // 2. Then load the constant from the module
-            Operand module = build(iVisited.getLeftNode(), s);
+            Operand module = build(leftNode, s);
             if (module instanceof MetaObject) module = MetaObject.create(((MetaObject)module).scope);
             Variable constVal = s.getNewTemporaryVariable();
             s.addInstr(new GetConstInstr(constVal, module, name));
@@ -1188,7 +1215,8 @@ public class IRBuilder {
         m.addInstr(new RECV_EXCEPTION_Instr(exc));
         // Verify that the exception is of type 'JumpException'.
         // Since this is JRuby implementation Java code, we dont need EQQ here.
-        m.addInstr(new InstanceOfInstr(eqqResult, exc, "JumpException")); 
+        // SSS FIXME: Hardcoded exception class name!
+        m.addInstr(new InstanceOfInstr(eqqResult, exc, "org.jruby.exceptions.JumpException")); 
         m.addInstr(new BEQInstr(eqqResult, BooleanLiteral.FALSE, uncaughtLabel));
         Object v2 = rescueBlock.run(rescueBlockArgs); // YIELD: Run the protected code block
         if (v2 != null) m.addInstr(new CopyInstr(rv, (Operand)v1));
@@ -1674,8 +1702,11 @@ public class IRBuilder {
         final int opt = argsNode.getOptionalArgsCount();
         final int rest = argsNode.getRestArg();
 
-        // FIXME: Add IR instructions for checking method arity!
-        // s.getVariableCompiler().checkMethodArity(required, opt, rest);
+        // FIXME: Expensive to this explicitly?  But, 2 advantages:
+        // (a) on inlining, we'll be able to get rid of these checks in almost every case.
+        // (b) compiler to bytecode will anyway generate this and this is explicit.
+        // For now, we are going explicit instruction route.  But later, perhaps can make this implicit in the method setup preamble?  
+        generateJRubyUtilityCall(s, JRubyImplementationMethod.CHECK_ARITY, null, new Operand[] { new Fixnum((long)required), new Fixnum((long)opt), new Fixnum((long)rest) });
 
             // self = args[0]
         s.addInstr(new ReceiveSelfInstruction(getSelf(s)));
@@ -2046,7 +2077,7 @@ public class IRBuilder {
         Operand  receiver = build(forNode.getIterNode(), m);
         Operand  forBlock = buildForIter(forNode, m);     
         // SSS FIXME: Really?  Why the internal call?
-        m.addInstr(new RubyInternalCallInstr(ret, MethAddr.FOR_EACH, receiver, NO_ARGS, forBlock));
+        m.addInstr(new RubyInternalCallInstr(ret, RubyInternalsMethod.FOR_EACH, receiver, NO_ARGS, forBlock));
         return ret;
     }
 
@@ -2063,11 +2094,8 @@ public class IRBuilder {
         if (forNode.getVarNode() != null) {
             argsNodeId = forNode.getVarNode().getNodeType();
             if (argsNodeId != null)
-                buildBlockArgsAssignment(forNode.getVarNode(), closure, 0, false);
+                buildBlockArgsAssignment(forNode.getVarNode(), closure, 0, true, false);
         }
-
-            // Record implicit closure/block arg (passed into lexical method)
-        closure.addInstr(new RecordImplicitClosureArgInstr(((IRExecutionScope)s).getImplicitBlockArg()));
 
             // Build closure body and return the result of the closure
         Operand closureRetVal = forNode.getBodyNode() == null ? Nil.NIL : build(forNode.getBodyNode(), closure);
@@ -2141,14 +2169,9 @@ public class IRBuilder {
         if (ifNode.getThenBody() != null) {
             thenResult = build(ifNode.getThenBody(), s);
             if (thenResult != U_NIL) { // thenResult can be U_NIL if then-body ended with a return!
-                // Local optimization of break results to short-circuit the jump right away
-                // rather than wait to do it during an optimization pass.
+                // SSS FIXME: Can look at the last instr and short-circuit this jump if it is a break rather
+                // than wait for dead code elimination to do it
                 Label tgt = doneLabel;
-                if (thenResult instanceof BreakResult) {
-                    BreakResult br = (BreakResult)thenResult;
-                    thenResult = br._result;
-                    tgt = br._jumpTarget;
-                }
                 s.addInstr(new CopyInstr(result, thenResult));
                 s.addInstr(new JumpInstr(tgt));
             }
@@ -2214,10 +2237,7 @@ public class IRBuilder {
             // Build args
         NodeType argsNodeId = BlockBody.getArgumentTypeWackyHack(iterNode);
         if ((iterNode.getVarNode() != null) && (argsNodeId != null))
-            buildBlockArgsAssignment(iterNode.getVarNode(), closure, 0, false);  // SSS: Changed this from 1 to 0
-
-            // Record implicit closure/block arg (passed into lexical method)
-        closure.addInstr(new RecordImplicitClosureArgInstr(((IRExecutionScope)s).getImplicitBlockArg()));
+            buildBlockArgsAssignment(iterNode.getVarNode(), closure, 0, true, false);  // SSS: Changed this from 1 to 0
 
             // Build closure body and return the result of the closure
         Operand closureRetVal = iterNode.getBodyNode() == null ? Nil.NIL : build(iterNode.getBodyNode(), closure);
@@ -2316,7 +2336,7 @@ public class IRBuilder {
             ListNode headNode = (ListNode) sourceArray;
             for (Node an: headNode.childNodes()) {
                 if (values == null) {
-                    buildBlockArgsAssignment(an, s, i, false);
+                    buildBlockArgsAssignment(an, s, i, false, false);
                 } else {
                     buildAssignment(an, s, values, i, false);
                 }
@@ -2337,7 +2357,7 @@ public class IRBuilder {
             buildAssignment(an, s, values, i, true); // rest of the argument array!
         }
         else {
-            buildBlockArgsAssignment(an, s, i, true); // rest of the argument array!
+            buildBlockArgsAssignment(an, s, i, false, true); // rest of the argument array!
         }
 
     }
@@ -2887,7 +2907,7 @@ public class IRBuilder {
         List<Operand> args  = setupCallArgs(superNode.getArgsNode(), s);
         Operand       block = setupCallClosure(superNode.getIterNode(), s);
         Variable      ret   = s.getNewTemporaryVariable();
-        s.addInstr(new RubyInternalCallInstr(ret, MethAddr.SUPER, getSelf(s),
+        s.addInstr(new RubyInternalCallInstr(ret, RubyInternalsMethod.SUPER, getSelf(s),
                 args.toArray(new Operand[args.size()]), block));
         return ret;
     }
@@ -2907,8 +2927,8 @@ public class IRBuilder {
         // 1. Make this a TO_ARY IR instruction to enable optimization 
         // 2. Alternatively make this a regular call which would be subject to inlining
         //    if these utility methods are implemented as ruby ir code.
-        Operand  array = build(node.getValue(), s);
-        return generateJRubyUtilityCall(s, JRubyImplementationMethod.TO_ARY, array, NO_ARGS);
+        Operand array = build(node.getValue(), s);
+        return generateRubyInternalsCall(s, RubyInternalsMethod.TO_ARY, true, array, NO_ARGS);
     }
 
     public Operand buildTrue(Node node, IRScope m) {
@@ -2918,7 +2938,7 @@ public class IRBuilder {
 
     public Operand buildUndef(Node node, IRScope m) {
         Operand methName = build(((UndefNode) node).getName(), m);
-        return generateJRubyUtilityCall(m, JRubyImplementationMethod.UNDEF_METHOD, methName, NO_ARGS);
+        return generateRubyInternalsCall(m, RubyInternalsMethod.UNDEF_METHOD, true, methName, NO_ARGS);
     }
 
     private Operand buildConditionalLoop(IRExecutionScope s, Node conditionNode, Node bodyNode, boolean isWhile, boolean isLoopHeadCondition)
@@ -2981,10 +3001,9 @@ public class IRBuilder {
 
     // SSS FIXME: Got a little lazy?  We could/should define a special instruction ALIAS_GLOBAL_VAR_Instr probably
     // Is this a ruby-internals or a jruby-internals call?
-    public Operand buildVAlias(Node node, IRScope m) {
+    public Operand buildVAlias(Node node, IRScope s) {
         VAliasNode valiasNode = (VAliasNode) node;
-        Operand[] args = new Operand[] { new StringLiteral(valiasNode.getOldName()) };
-        m.addInstr(new RubyInternalCallInstr(null, MethAddr.GVAR_ALIAS, new StringLiteral(valiasNode.getNewName()), args));
+        generateRubyInternalsCall(s, RubyInternalsMethod.GVAR_ALIAS, false, new StringLiteral(valiasNode.getNewName()), new Operand[] { new StringLiteral(valiasNode.getOldName()) });
         return Nil.NIL;
     }
 
@@ -3030,7 +3049,7 @@ public class IRBuilder {
     public Operand buildZSuper(ZSuperNode zsuperNode, IRScope s) {
         Operand    block = setupCallClosure(zsuperNode.getIterNode(), s);
         Variable   ret   = s.getNewTemporaryVariable();
-        s.addInstr(new RubyInternalCallInstr(ret, MethAddr.ZSUPER, getSelf(s),
+        s.addInstr(new RubyInternalCallInstr(ret, RubyInternalsMethod.ZSUPER, getSelf(s),
                 ((IRExecutionScope) s).getClosestMethodAncestor().getCallArgs(), block));
         return ret;
     }
@@ -3042,8 +3061,9 @@ public class IRBuilder {
     }
 
     public void buildArgsPushArguments(List<Operand> args, ArgsPushNode argsPushNode, IRScope m) {
-        Operand a = new Array(new Operand[]{ build(argsPushNode.getFirstNode(), m), build(argsPushNode.getSecondNode(), m) });
-        args.add(a);
+        Operand v1 = build(argsPushNode.getFirstNode(), m);
+        Operand v2 = build(argsPushNode.getSecondNode(), m);
+        args.add(new CompoundArray(v1, v2, true));
     }
 
     public void buildArrayArguments(List<Operand> args, Node node, IRScope s) {

@@ -122,26 +122,6 @@ public class RubyDigest {
         return toHexString(recv.getRuntime(), arg.convertToString().getBytes());
     }
 
-    @JRubyMethod(name = "const_missing", required = 1, module = true)
-    public static IRubyObject const_missing(ThreadContext ctx, IRubyObject recv, IRubyObject symbol) {
-        Ruby runtime = ctx.getRuntime();
-        String sym = ((RubySymbol)symbol).asJavaString();
-        String libName;
-        if("SHA256".equals(sym) || "SHA384".equals(sym) || "SHA512".equals(sym)) {
-            libName = "digest/sha2.jar";
-        }
-        else {
-            libName = "digest/" + sym.toLowerCase();
-        }
-
-        runtime.getLoadService().require(libName);
-        RubyModule digest = runtime.getModule("Digest");
-        if(!digest.hasConstant(sym)) {
-            throw runtime.newNameError("unitialized constant Digest::" + sym, "Digest::" + sym);
-        }
-        return digest.getConstant(sym);
-    }
-
 
     private static class Metadata {
 
@@ -177,41 +157,41 @@ public class RubyDigest {
     public static class SHA512 {}
 
     public static void createDigestMD5(Ruby runtime) {
-        runtime.getLoadService().require("digest.so");
-        RubyModule mDigest = runtime.fastGetModule("Digest");
-        RubyClass cDigestBase = mDigest.fastGetClass("Base");
+        runtime.getLoadService().require("digest");
+        RubyModule mDigest = runtime.getModule("Digest");
+        RubyClass cDigestBase = mDigest.getClass("Base");
         RubyClass cDigest_MD5 = mDigest.defineClassUnder("MD5",cDigestBase,cDigestBase.getAllocator());
         cDigest_MD5.setInternalVariable("metadata", new Metadata("MD5", 64));
     }
 
     public static void createDigestRMD160(Ruby runtime) {
-        runtime.getLoadService().require("digest.so");
+        runtime.getLoadService().require("digest");
         if(provider == null) {
             throw runtime.newLoadError("RMD160 not supported without BouncyCastle");
         }
-        RubyModule mDigest = runtime.fastGetModule("Digest");
-        RubyClass cDigestBase = mDigest.fastGetClass("Base");
+        RubyModule mDigest = runtime.getModule("Digest");
+        RubyClass cDigestBase = mDigest.getClass("Base");
         RubyClass cDigest_RMD160 = mDigest.defineClassUnder("RMD160",cDigestBase,cDigestBase.getAllocator());
         cDigest_RMD160.setInternalVariable("metadata", new Metadata("RIPEMD160", 64));
     }
 
     public static void createDigestSHA1(Ruby runtime) {
-        runtime.getLoadService().require("digest.so");
-        RubyModule mDigest = runtime.fastGetModule("Digest");
-        RubyClass cDigestBase = mDigest.fastGetClass("Base");
+        runtime.getLoadService().require("digest");
+        RubyModule mDigest = runtime.getModule("Digest");
+        RubyClass cDigestBase = mDigest.getClass("Base");
         RubyClass cDigest_SHA1 = mDigest.defineClassUnder("SHA1",cDigestBase,cDigestBase.getAllocator());
         cDigest_SHA1.setInternalVariable("metadata", new Metadata("SHA1", 64));
     }
 
     public static void createDigestSHA2(Ruby runtime) {
-        runtime.getLoadService().require("digest.so");
+        runtime.getLoadService().require("digest");
         try {
             createMessageDigest(runtime, "SHA-256");
         } catch(NoSuchAlgorithmException e) {
             throw runtime.newLoadError("SHA2 not supported");
         }
-        RubyModule mDigest = runtime.fastGetModule("Digest");
-        RubyClass cDigestBase = mDigest.fastGetClass("Base");
+        RubyModule mDigest = runtime.getModule("Digest");
+        RubyClass cDigestBase = mDigest.getClass("Base");
         RubyClass cDigest_SHA2_256 = mDigest.defineClassUnder("SHA256",cDigestBase,cDigestBase.getAllocator());
         Metadata sha256Metadata = new Metadata("SHA-256", 64);
         cDigest_SHA2_256.setInternalVariable("metadata", sha256Metadata);
@@ -258,7 +238,7 @@ public class RubyDigest {
         @JRubyMethod(name = "==", required = 1)
         public static IRubyObject op_equal(ThreadContext ctx, IRubyObject self, IRubyObject oth) {
             RubyString str1, str2;
-            RubyModule instance = (RubyModule)self.getRuntime().fastGetModule("Digest").fastGetConstantAt("Instance");
+            RubyModule instance = (RubyModule)self.getRuntime().getModule("Digest").getConstantAt("Instance");
             if (oth.getMetaClass().getRealClass().hasModuleInHierarchy(instance)) {
                 str1 = digest(ctx, self, null).convertToString();
                 str2 = digest(ctx, oth, null).convertToString();
@@ -323,35 +303,6 @@ public class RubyDigest {
         public static IRubyObject length(ThreadContext ctx, IRubyObject self) {
             return self.callMethod(ctx, "digest_length");
         }
-
-        @JRubyMethod
-        public static IRubyObject file(ThreadContext ctx, IRubyObject self, IRubyObject filename) {
-            Ruby runtime = self.getRuntime();
-            RubyString filenameStr = filename.convertToString();
-            
-            if (RubyFileTest.directory_p(runtime, filenameStr).isTrue()) {
-                if (Platform.IS_WINDOWS) {
-                    throw runtime.newErrnoEACCESError(filenameStr.asJavaString());
-                } else {
-                    throw runtime.newErrnoEISDirError(filenameStr.asJavaString());
-                }
-            }
-
-            IRubyObject io = RuntimeHelpers.invoke(ctx, runtime.getFile(),
-                    "open", filenameStr, runtime.newString("rb"));
-
-            try {
-                RubyString buf = runtime.newString();
-                final RubyFixnum bufSize = runtime.newFixnum(16 * 1024);
-                while(!RuntimeHelpers.invoke(ctx, io, "read", bufSize, buf).isNil()) {
-                    self.callMethod(ctx, "update", buf);
-                }
-            } finally {
-                io.callMethod(ctx, "close");
-            }
-
-            return self;
-        }
     }
 
 
@@ -386,12 +337,6 @@ public class RubyDigest {
             byte[] digest = recv.callMethod(ctx, "digest", args, Block.NULL_BLOCK).convertToString().getBytes();
             return RubyDigest.toHexString(runtime, digest);
         }
-
-        @JRubyMethod(meta = true)
-        public static IRubyObject file(ThreadContext ctx, IRubyObject recv, IRubyObject filename) {
-            IRubyObject obj = ((RubyClass)recv).newInstance(ctx, new IRubyObject[0], Block.NULL_BLOCK);
-            return obj.callMethod(ctx, "file", filename);
-        }
     }
 
 
@@ -409,7 +354,7 @@ public class RubyDigest {
         public DigestBase(Ruby runtime, RubyClass type) {
             super(runtime,type);
 
-            if(type == runtime.fastGetModule("Digest").fastGetClass("Base")) {
+            if(type == runtime.getModule("Digest").getClass("Base")) {
                 throw runtime.newNotImplementedError("Digest::Base is an abstract class");
             }
 

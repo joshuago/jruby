@@ -9,9 +9,11 @@ import org.jruby.compiler.ir.operands.Operand;
 import org.jruby.compiler.ir.operands.Variable;
 import org.jruby.compiler.ir.representations.InlinerInfo;
 
+import org.jruby.Ruby;
+import org.jruby.runtime.ThreadContext;
+
 import java.util.Map;
 import org.jruby.RubyModule;
-import org.jruby.compiler.ir.operands.LocalVariable;
 import org.jruby.interpreter.InterpreterContext;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -34,9 +36,9 @@ public class SearchConstInstr extends GetInstr {
         simplifyOperands(valueMap);
         if (!(getSource() instanceof MetaObject)) return null;
 
-		  // SSS FIXME: Isn't this always going to be an IR Module?
+        // SSS FIXME: Isn't this always going to be an IR Module?
         IRScope s = ((MetaObject) getSource()).scope;
-		  return (s instanceof IRModule) ? ((IRModule)s).getConstantValue(getName()) : null;
+        return (s instanceof IRModule) ? ((IRModule)s).getConstantValue(getName()) : null;
     }
 
     public Instr cloneForInlining(InlinerInfo ii) {
@@ -44,7 +46,8 @@ public class SearchConstInstr extends GetInstr {
     }
 
     @Override
-    public Label interpret(InterpreterContext interp) {
+    public Label interpret(InterpreterContext interp, ThreadContext context, IRubyObject self) {
+        String name = getName();
         Object n = getSource();
 
         assert n instanceof MetaObject: "All sources should be a meta object";
@@ -54,9 +57,14 @@ public class SearchConstInstr extends GetInstr {
         RubyModule object = interp.getRuntime().getObject();
         Object constant;
         if (staticScope == null) { // FIXME: CORE CLASSES have no staticscope yet...hack for now
-            constant = object.getConstant(getName());
+            constant = object.getConstant(name);
         } else {
-            constant = staticScope.getConstant(interp.getRuntime(), getName(), object);
+            constant = staticScope.getConstant(interp.getRuntime(), name, object);
+        }
+
+        if (constant == null) {
+            Ruby runtime = context.getRuntime();
+            constant = context.getCurrentScope().getStaticScope().getModule().callMethod(context, "const_missing", runtime.fastNewSymbol(name));
         }
         
         getResult().store(interp, constant);
