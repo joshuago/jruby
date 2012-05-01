@@ -31,6 +31,7 @@ package org.jruby.ext.ffi;
 import java.util.ArrayList;
 import java.util.List;
 import org.jruby.Ruby;
+import org.jruby.RubyHash;
 import org.jruby.RubyModule;
 import org.jruby.ext.ffi.io.FileDescriptorIO;
 
@@ -138,7 +139,9 @@ public abstract class Factory {
             if (ffi.getClass(FileDescriptorIO.CLASS_NAME) == null) {
                 FileDescriptorIO.createFileDescriptorIOClass(runtime, ffi);
             }
-            
+
+            ffi.setConstant("TypeDefs", RubyHash.newHash(runtime));
+
             Platform.createPlatformModule(runtime, ffi);
             IOModule.createIOModule(runtime, ffi);
             
@@ -164,6 +167,16 @@ public abstract class Factory {
      * @return A new <tt>AllocatedDirectMemoryIO</tt>.
      */
     public abstract AllocatedDirectMemoryIO allocateDirectMemory(Ruby runtime, int size, int align, boolean clear);
+
+    /**
+     * Allocates transient native memory (not from C heap) and wraps it in a <tt>MemoryIO</tt> accessor.
+     *
+     * @param size The number of bytes to allocate.
+     * @param align The minimum alignment of the memory
+     * @param clear If the memory should be cleared.
+     * @return A new <tt>AllocatedDirectMemoryIO</tt>.
+     */
+    public abstract DirectMemoryIO allocateTransientDirectMemory(Ruby runtime, int size, int align, boolean clear);
 
     /**
      * Wraps a  native C memory address in a <tt>MemoryIO</tt> accessor.

@@ -5,7 +5,7 @@ require 'rbconfig'
 # Determine if we need to put a 32 or 64 bit flag to the command-line
 # based on what java reports as the hardward architecture.
 def jvm_model
-  return nil if Config::CONFIG['host_os'] =~ /mswin|mingw/
+  return nil if RbConfig::CONFIG['host_os'] =~ /mswin|mingw/
 
   case ENV_JAVA['os.arch']
   when 'amd64', 'x86_64', 'sparcv9', 's390x' then
@@ -72,6 +72,7 @@ end
 
 def mspec(mspec_options = {}, java_options = {}, &code)
   java_options[:dir] ||= BASE_DIR
+  java_options[:maxmemory] ||= JRUBY_LAUNCH_MEMORY
 
   mspec_options[:compile_mode] ||= 'OFF'
   mspec_options[:jit_threshold] ||= 20
@@ -95,6 +96,7 @@ def mspec(mspec_options = {}, java_options = {}, &code)
 
     env :key => "JAVA_OPTS", :value => "-Demma.verbosity.level=silent"
     env :key => "JRUBY_OPTS", :value => ""
+    arg :line => "--1.8" # we launch mspec in 1.8 mode due to oddities in loading .mspec files
     arg :line => "#{MSPEC_BIN} ci"
     arg :line => "-T -J-ea"
     arg :line => "-T -J-Djruby.launch.inproc=false"
@@ -109,6 +111,7 @@ def mspec(mspec_options = {}, java_options = {}, &code)
     arg :line => "-T -J-Demma.coverage.out.merge=true"
     arg :line => "-T -J-Demma.verbosity.level=silent"
     arg :line => "-T -J#{JVM_MODEL}" if JVM_MODEL
+    arg :line => "-T -J-XX:MaxPermSize=512M"
     arg :line => "-f m"
     arg :line => "-B #{ms[:spec_config]}" if ms[:spec_config]
   end

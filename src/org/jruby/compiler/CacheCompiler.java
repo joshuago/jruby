@@ -24,7 +24,9 @@ public interface CacheCompiler {
     
     public void cacheByteList(BaseBodyCompiler method, ByteList contents);
 
-    public void cacheEncoding(BaseBodyCompiler method, Encoding encoding);
+    public void cacheRubyEncoding(BaseBodyCompiler method, Encoding encoding);
+
+    public int cacheEncoding(BaseBodyCompiler method, Encoding encoding);
     
     public void cacheSymbol(BaseBodyCompiler method, String symbol);
     
@@ -42,6 +44,8 @@ public interface CacheCompiler {
 
     public void cacheDRegexp(BaseBodyCompiler method, CompilerCallback createStringCallback, int options);
 
+    public void cacheDRegexp19(BaseBodyCompiler method, ArrayCallback arrayCallback, Object[] sourceArray, int options);
+
     public void cacheClosure(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, ASTInspector inspector);
 
     public void cacheClosure19(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, String parameterList, ASTInspector inspector);
@@ -52,7 +56,9 @@ public interface CacheCompiler {
 
     public void cacheConstantFrom(BaseBodyCompiler method, String constantName);
 
-    public void cacheStaticScope(BaseBodyCompiler method, StaticScope scope);
+    public int cacheStaticScope(BaseBodyCompiler method, StaticScope scope);
+    
+    public void loadStaticScope(BaseBodyCompiler method, int index);
 
     public void cacheMethod(BaseBodyCompiler method, String methodName);
 

@@ -33,7 +33,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 /**
  * Native types
  */
-public enum NativeType implements NativeParam {
+public enum NativeType {
     VOID,
     BOOL,
     CHAR,
@@ -60,8 +60,9 @@ public enum NativeType implements NativeParam {
      * An immutable string.  Nul terminated, but only copies in to the native function 
      */
     STRING,
-    /** A Rubinus :string arg - copies data both ways, and nul terminates */
-    RBXSTRING,
+
+    /* As above, but ok to use temporary memory for native copy of string */
+    TRANSIENT_STRING,
 
     VARARGS,
     // ARRAY and STRUCT are only used internally
@@ -74,24 +75,11 @@ public enum NativeType implements NativeParam {
     public final int intValue() {
         return ordinal();
     }
-
-    public final NativeType getNativeType() {
-        return this;
-    }
-
-    public static final NativeType valueOf(int type) {
-        NativeType[] values = NativeType.values();
-        if (type < 0 || type >= values.length) {
-            return NativeType.VOID;
-        }
-        return values[type];
-    }
     
     public static final NativeType valueOf(IRubyObject type) {
-        if (type instanceof Type.Builtin) {
-            return ((Type.Builtin) type).getNativeType();
-        } else if (type instanceof NativeParam) {
-            return ((NativeParam) type).getNativeType();
+        if  (type instanceof Type) {
+            return ((Type) type).getNativeType();
+
         } else {
             return NativeType.VOID;
         }

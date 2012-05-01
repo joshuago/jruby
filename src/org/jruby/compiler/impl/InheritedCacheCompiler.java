@@ -44,6 +44,7 @@ import org.jruby.ast.NodeType;
 import org.jruby.ast.executable.AbstractScript;
 import org.jruby.ast.executable.RuntimeCache;
 import org.jruby.compiler.ASTInspector;
+import org.jruby.compiler.ArrayCallback;
 import org.jruby.compiler.CacheCompiler;
 import org.jruby.compiler.CompilerCallback;
 import org.jruby.internal.runtime.methods.DynamicMethod;
@@ -70,6 +71,7 @@ public class InheritedCacheCompiler implements CacheCompiler {
     int callSiteCount = 0;
     List<String> callSiteList = new ArrayList<String>();
     List<CallType> callTypeList = new ArrayList<CallType>();
+    Map<String, String> stringEncToString = new HashMap<String, String>();
     Map<String, Integer> stringIndices = new HashMap<String, Integer>();
     Map<String, Integer> encodingIndices = new HashMap<String, Integer>();
     Map<String, Integer> stringEncodings = new HashMap<String, Integer>();
@@ -96,22 +98,35 @@ public class InheritedCacheCompiler implements CacheCompiler {
         this.scriptCompiler = scriptCompiler;
     }
 
-    public void cacheStaticScope(BaseBodyCompiler method, StaticScope scope) {
+    public int cacheStaticScope(BaseBodyCompiler method, StaticScope scope) {
         String scopeString = RuntimeHelpers.encodeScope(scope);
+        
+        int index = scopeCount;
+        scopeCount++;
 
         // retrieve scope from scopes array
         method.loadThis();
         method.loadThreadContext();
         method.method.ldc(scopeString);
-        if (scopeCount < AbstractScript.NUMBERED_SCOPE_COUNT) {
+        if (index < AbstractScript.NUMBERED_SCOPE_COUNT) {
             // use numbered access method
-            method.method.invokevirtual(scriptCompiler.getClassname(), "getScope" + scopeCount, sig(StaticScope.class, ThreadContext.class, String.class));
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getScope" + index, sig(StaticScope.class, ThreadContext.class, String.class));
         } else {
-            method.method.pushInt(scopeCount);
+            method.method.pushInt(index);
             method.method.invokevirtual(scriptCompiler.getClassname(), "getScope", sig(StaticScope.class, ThreadContext.class, String.class, int.class));
         }
 
-        scopeCount++;
+        return index;
+    }
+    
+    public void loadStaticScope(BaseBodyCompiler method, int index) {
+        if (scopeCount < AbstractScript.NUMBERED_SCOPE_COUNT) {
+            // use numbered access method
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getScope" + index, sig(StaticScope.class, ThreadContext.class, String.class));
+        } else {
+            method.method.pushInt(index);
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getScope", sig(StaticScope.class, ThreadContext.class, String.class, int.class));
+        }
     }
     
     public void cacheCallSite(BaseBodyCompiler method, String name, CallType callType) {
@@ -187,6 +202,31 @@ public class InheritedCacheCompiler implements CacheCompiler {
         createStringCallback.call(method);
         method.method.ldc(options);
         method.method.invokevirtual(p(RuntimeCache.class), "cacheRegexp", sig(RubyRegexp.class, int.class, RubyString.class, int.class));
+
+        method.method.label(alreadyCompiled);
+    }
+
+    public void cacheDRegexp19(BaseBodyCompiler method, ArrayCallback arrayCallback, Object[] sourceArray, int options) {
+        int index = inheritedRegexpCount++;
+        Label alreadyCompiled = new Label();
+
+        method.loadThis();
+        method.method.getfield(scriptCompiler.getClassname(), "runtimeCache", ci(RuntimeCache.class));
+        method.method.pushInt(index);
+        method.method.invokevirtual(p(RuntimeCache.class), "getRegexp", sig(RubyRegexp.class, int.class));
+        method.method.dup();
+
+        method.ifNotNull(alreadyCompiled);
+
+        method.method.pop();
+        method.loadThis();
+        method.method.getfield(scriptCompiler.getClassname(), "runtimeCache", ci(RuntimeCache.class));
+        method.method.pushInt(index);
+        method.loadRuntime();
+        method.createObjectArray(sourceArray, arrayCallback);
+        method.method.ldc(options);
+        method.method.invokestatic(p(RubyRegexp.class), "newDRegexpEmbedded19", sig(RubyRegexp.class, params(Ruby.class, IRubyObject[].class, int.class))); //[reg]
+        method.method.invokevirtual(p(RuntimeCache.class), "cacheRegexp", sig(RubyRegexp.class, int.class, RubyRegexp.class));
 
         method.method.label(alreadyCompiled);
     }
@@ -293,12 +333,14 @@ public class InheritedCacheCompiler implements CacheCompiler {
 
     public void cacheString(BaseBodyCompiler method, ByteList contents, int codeRange) {
         String asString = RuntimeHelpers.rawBytesToString(contents.bytes());
+        String key = asString + contents.getEncoding();
         
-        Integer index = stringIndices.get(asString);
+        Integer index = stringIndices.get(key);
         if (index == null) {
             index = Integer.valueOf(inheritedStringCount++);
-            stringIndices.put(asString, index);
-            stringEncodings.put(asString, cacheEncoding(contents.getEncoding()));
+            stringEncToString.put(key, asString);
+            stringIndices.put(key, index);
+            stringEncodings.put(key, cacheEncodingInternal(contents.getEncoding()));
         }
 
         method.loadThis();
@@ -315,12 +357,14 @@ public class InheritedCacheCompiler implements CacheCompiler {
 
     public void cacheByteList(BaseBodyCompiler method, ByteList contents) {
         String asString = RuntimeHelpers.rawBytesToString(contents.bytes());
+        String key = asString + contents.getEncoding();
 
-        Integer index = stringIndices.get(asString);
+        Integer index = stringIndices.get(key);
         if (index == null) {
             index = Integer.valueOf(inheritedStringCount++);
-            stringIndices.put(asString, index);
-            stringEncodings.put(asString, cacheEncoding(contents.getEncoding()));
+            stringEncToString.put(key, asString);
+            stringIndices.put(key, index);
+            stringEncodings.put(key, cacheEncodingInternal(contents.getEncoding()));
         }
 
         method.loadThis();
@@ -332,14 +376,19 @@ public class InheritedCacheCompiler implements CacheCompiler {
         }
     }
 
-    public void cacheEncoding(BaseBodyCompiler method, Encoding encoding) {
+    public void cacheRubyEncoding(BaseBodyCompiler method, Encoding encoding) {
         // split into three methods since ByteList depends on two parts in different places
-        int encodingIndex = cacheEncoding(encoding);
-        loadEncoding(method.method, encodingIndex);
+        cacheEncoding(method, encoding);
         createRubyEncoding(method);
     }
+    
+    public int cacheEncoding(BaseBodyCompiler method, Encoding encoding) {
+        int index = cacheEncodingInternal(encoding);
+        loadEncoding(method.method, index);
+        return index;
+    }
 
-    private int cacheEncoding(Encoding encoding) {
+    private int cacheEncodingInternal(Encoding encoding) {
         String encodingName = new String(encoding.getName());
 
         Integer index = encodingIndices.get(encodingName);
@@ -593,7 +642,8 @@ public class InheritedCacheCompiler implements CacheCompiler {
                 for (Map.Entry<String, Integer> entry : stringIndices.entrySet()) {
                     initMethod.aload(0);
                     initMethod.ldc(entry.getValue());
-                    initMethod.ldc(entry.getKey());
+                    String key = entry.getKey();
+                    initMethod.ldc(stringEncToString.get(key));
                     loadEncoding(initMethod, stringEncodings.get(entry.getKey()));
                     initMethod.invokevirtual(p(AbstractScript.class), "setByteList", sig(void.class, int.class, String.class, Encoding.class));
                 }

@@ -189,6 +189,9 @@ public class OpenFile {
         if (mainStream != null) {
             mainStream.setBinmode();
         }
+        if (pipeStream != null) {
+            pipeStream.setBinmode();
+        }
     }
 
     public boolean isOpen() {
@@ -301,16 +304,28 @@ public class OpenFile {
         try {
             ChannelDescriptor main = null;
             ChannelDescriptor pipe = null;
+            
+            // Recent JDKs shut down streams in the parent when child
+            // terminates, so we can't trust that they'll be open for our
+            // close. Check for that.
+            
+            boolean isProcess = process != null;
 
             synchronized (this) {
                 Stream ps = pipeStream;
                 if (ps != null) {
                     pipe = ps.getDescriptor();
 
-                    // TODO: Ruby logic is somewhat more complicated here, see comments after
                     try {
-                        ps.fflush();
-                        ps.fclose();
+                        // Newer JDKs actively close the process streams when
+                        // the child exits, so we have to confirm it's still
+                        // open to avoid raising an error here when we try to
+                        // flush and close the stream.
+                        if (isProcess && ps.getChannel().isOpen()
+                                || !isProcess) {
+                            ps.fflush();
+                            ps.fclose();
+                        }
                     } finally {
                         // make sure the pipe stream is set to null
                         pipeStream = null;
@@ -320,11 +335,39 @@ public class OpenFile {
                 if (ms != null) {
                     // TODO: Ruby logic is somewhat more complicated here, see comments after
                     main = ms.getDescriptor();
+                    runtime.removeFilenoIntMap(main.getFileno());
                     try {
-                        if (pipe == null && isWriteBuffered()) {
-                            ms.fflush();
+                        // Newer JDKs actively close the process streams when
+                        // the child exits, so we have to confirm it's still
+                        // open to avoid raising an error here when we try to
+                        // flush and close the stream.
+                        if (isProcess) {
+                            if (ms.getChannel().isOpen()) {
+                                if (pipe == null && isWriteBuffered()) {
+                                    ms.fflush();
+                                }
+                                try {
+                                    ms.fclose();
+                                } catch (IOException ioe) {
+                                    // OpenJDK 7 seems to leave the FileChannel in a state where
+                                    // the fd is no longer valid, but the channel is not marked
+                                    // as open, so we get IOException: Bad file descriptor here.
+
+                                    if (!ioe.getMessage().equals("Bad file descriptor")) throw ioe;
+
+                                    // If the process is still alive, allow the error to propagate
+
+                                    boolean isAlive = false;
+                                    try { process.exitValue(); } catch (IllegalThreadStateException itse) { isAlive = true; }
+                                    if (isAlive) throw ioe;
+                                }
+                            }
+                        } else {
+                            if (pipe == null && isWriteBuffered()) {
+                                ms.fflush();
+                            }
+                            ms.fclose();
                         }
-                        ms.fclose();
                     } catch (BadDescriptorException bde) {
                         if (main == pipe) {
                         } else {

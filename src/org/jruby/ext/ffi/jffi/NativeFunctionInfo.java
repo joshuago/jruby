@@ -1,6 +1,7 @@
 
 package org.jruby.ext.ffi.jffi;
 
+import com.kenai.jffi.CallContextCache;
 import com.kenai.jffi.CallingConvention;
 import org.jruby.Ruby;
 
@@ -13,6 +14,7 @@ class NativeFunctionInfo {
     final com.kenai.jffi.Type jffiReturnType;
     final com.kenai.jffi.Type[] jffiParameterTypes;
     final com.kenai.jffi.CallingConvention convention;
+    final com.kenai.jffi.CallContext callContext;
 
     public NativeFunctionInfo(Ruby runtime, org.jruby.ext.ffi.Type returnType,
             org.jruby.ext.ffi.Type[] parameterTypes, CallingConvention convention) {
@@ -31,10 +33,7 @@ class NativeFunctionInfo {
             }
         }
 
+        this.callContext = CallContextCache.getInstance().getCallContext(jffiReturnType, jffiParameterTypes, convention);
         this.convention = convention;
     }
-
-
-
-
 }

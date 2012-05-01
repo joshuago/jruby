@@ -12,10 +12,9 @@
 **********************************************************************/
 
 #ifndef JRUBY_RUBY_H
-#define	JRUBY_RUBY_H
+#define JRUBY_RUBY_H
 #define JRUBY
 
-#include <sys/types.h>
 #include <stdint.h>
 #include <limits.h>
 #include <assert.h>
@@ -35,24 +34,21 @@
 // Some platform specific includes
 #if defined(__WIN32__) || defined(__MINGW32__)
 #   include "jruby_win32.h"
-#   include "asprintf.h"
 #else
 #   define RUBY_DLLSPEC
-#	include <sys/select.h>
-#	include <pthread.h>
-#endif
-
-#if defined (__SVR4) && defined (__sun)
-#   define HAVE_VA_COPY
-#   include "asprintf.h"
+#       include <sys/select.h>
+#       include <pthread.h>
 #endif
 
 #ifdef RUBY_EXTCONF_H
 #include RUBY_EXTCONF_H
 #endif
 
-#ifdef	__cplusplus
+#ifdef  __cplusplus
 extern "C" {
+#if 0
+} /* satisfy cc-mode */
+#endif
 #endif
 
 #ifndef  HAVE_PROTOTYPES
@@ -133,6 +129,8 @@ typedef intptr_t SIGNED_VALUE;
 #define OBJ_INFECT(o1, o2) jruby_infect((o1), (o2))
 #define OBJ_TAINT(obj) rb_obj_taint((obj))
 #define OBJ_TAINTED(obj) rb_obj_tainted((obj))
+
+#define BUILTIN_TYPE(handle) rb_type(handle)
 
 /** The false object. */
 #define Qfalse ((VALUE)0)
@@ -229,10 +227,6 @@ typedef enum JRubyType {
 #define T_MASK (0x1f)
 
 
-#define RTEST(v) (((v) & ~Qnil) != 0)
-#define NIL_P(v) ((v) == Qnil)
-#define TYPE(x) rb_type((VALUE)(x))
-
 #ifdef __GNUC__
 #define rb_special_const_p(obj) \
     __extension__ ({VALUE special_const_obj = (obj); (int)(SPECIAL_CONST_P(special_const_obj) ? Qtrue : Qfalse);})
@@ -297,6 +291,23 @@ RUBY_DLLSPEC void xfree(void*);
 #define TYPE(x) rb_type((VALUE)(x))
 #define CLASS_OF(x) rb_class_of((VALUE)(x))
 
+#define RB_TYPE_P(obj, type) ( \
+	((type) == T_FIXNUM) ? FIXNUM_P(obj) : \
+	((type) == T_TRUE) ? ((obj) == Qtrue) : \
+	((type) == T_FALSE) ? ((obj) == Qfalse) : \
+	((type) == T_NIL) ? ((obj) == Qnil) : \
+	((type) == T_UNDEF) ? ((obj) == Qundef) : \
+	((type) == T_SYMBOL) ? SYMBOL_P(obj) : \
+	(!SPECIAL_CONST_P(obj) && BUILTIN_TYPE(obj) == (type)))
+
+#ifdef __GNUC__
+#define rb_type_p(obj, type) \
+    __extension__ (__builtin_constant_p(type) ? RB_TYPE_P((obj), (type)) : \
+		   rb_type(obj) == (type))
+#else
+#define rb_type_p(obj, type) (rb_type(obj) == (type))
+#endif
+
 
 /** The length of string str. */
 #define RSTRING_LEN(str)  jruby_str_length((str))
@@ -310,8 +321,37 @@ RUBY_DLLSPEC void xfree(void*);
 #define StringValuePtr(v)     rb_string_value_ptr(&(v))
 #define StringValueCStr(str)  rb_string_value_cstr(&(str))
 
+RUBY_DLLSPEC void rb_check_safe_obj(VALUE);
+RUBY_DLLSPEC void rb_check_safe_str(VALUE);
+#define SafeStringValue(v) do {\
+    StringValue(v);\
+    rb_check_safe_obj(v);\
+} while (0)
+/* obsolete macro - use SafeStringValue(v) */
+#define Check_SafeStr(v) rb_check_safe_str((VALUE)(v))
+
+RUBY_DLLSPEC VALUE rb_str_export(VALUE);
+#define ExportStringValue(v) do {\
+    SafeStringValue(v);\
+   (v) = rb_str_export(v);\
+} while (0)
+RUBY_DLLSPEC VALUE rb_str_export_locale(VALUE);
+
+RUBY_DLLSPEC VALUE rb_get_path(VALUE);
+#define FilePathValue(v) (RB_GC_GUARD(v) = rb_get_path(v))
+
+RUBY_DLLSPEC VALUE rb_get_path_no_checksafe(VALUE);
+#define FilePathStringValue(v) ((v) = rb_get_path_no_checksafe(v))
+
+RUBY_DLLSPEC void rb_secure(int);
+RUBY_DLLSPEC int rb_safe_level(void);
+RUBY_DLLSPEC void rb_set_safe_level(int);
+RUBY_DLLSPEC void rb_set_safe_level_force(int);
+RUBY_DLLSPEC void rb_secure_update(VALUE);
+RUBY_DLLSPEC NORETURN(void rb_insecure_operation(void));
+
 /** The length of the array. */
-#define RARRAY_LEN(ary) RARRAY(ary)->len
+#define RARRAY_LEN(ary) jruby_ary_len(ary)
 /** Returns a pointer to a VALUE[] that mirrors the data in
  * the ruby array. */
 #define RARRAY_PTR(ary) RARRAY(ary)->ptr
@@ -403,9 +443,7 @@ RUBY_DLLSPEC VALUE rb_exc_new2(VALUE, const char*);
 RUBY_DLLSPEC VALUE rb_exc_new3(VALUE, VALUE);
 RUBY_DLLSPEC VALUE rb_exc_raise(VALUE);
 
-RUBY_DLLSPEC void rb_secure(int);
-RUBY_DLLSPEC int rb_safe_level(void);
-
+RUBY_DLLSPEC void rb_num_zerodiv(void);
 RUBY_DLLSPEC long rb_num2long(VALUE);
 RUBY_DLLSPEC unsigned long rb_num2ulong(VALUE);
 RUBY_DLLSPEC int rb_num2int(VALUE);
@@ -424,7 +462,8 @@ RUBY_DLLSPEC unsigned long rb_big2ulong(VALUE);
 RUBY_DLLSPEC long long rb_big2ll(VALUE);
 RUBY_DLLSPEC double rb_big2dbl(VALUE);
 RUBY_DLLSPEC VALUE rb_big2str(VALUE, int);
-
+RUBY_DLLSPEC int rb_cmpint(VALUE, VALUE, VALUE);
+RUBY_DLLSPEC void rb_cmperr(VALUE, VALUE);
 
 RUBY_DLLSPEC VALUE rb_int2inum(long);
 RUBY_DLLSPEC VALUE rb_uint2inum(unsigned long);
@@ -581,6 +620,10 @@ ULL2NUM(unsigned long long v)
     return __builtin_expect(POSFIXABLE(v), 1) ? ULONG2FIX(v) : rb_ull2inum(v);
 }
 
+/** Convert time_t to a Ruby Integer. */
+#define TIMET2NUM(x) jruby_timet2num(x)
+RUBY_DLLSPEC VALUE jruby_timet2num(time_t v);
+
 /** Convert a VALUE into a chr */
 #define NUM2CHR(x) rb_num2chr(x)
 /** Convert a VALUE into a long long */
@@ -591,6 +634,7 @@ ULL2NUM(unsigned long long v)
 
 RUBY_DLLSPEC VALUE rb_funcall(VALUE obj, ID meth, int cnt, ...);
 RUBY_DLLSPEC VALUE rb_funcall2(VALUE obj, ID meth, int cnt, VALUE*);
+RUBY_DLLSPEC VALUE jruby_funcall2b(VALUE obj, ID meth, int cnt, VALUE*, VALUE);
 /** Starts the lookup in the superclass to call a method on the current self */
 RUBY_DLLSPEC VALUE rb_call_super(int argc, const VALUE *argv);
 
@@ -608,10 +652,13 @@ RUBY_DLLSPEC VALUE rb_class_name(VALUE class_handle);
 RUBY_DLLSPEC char* rb_class2name(VALUE class_handle);
 /** Convert a path string to a class */
 RUBY_DLLSPEC VALUE rb_path2class(const char* path);
+RUBY_DLLSPEC VALUE rb_path_to_class(VALUE pathname);
 /** Include Module in another Module, just as Ruby's Module#include. */
 RUBY_DLLSPEC void rb_include_module(VALUE self, VALUE module);
 /** Return the object's singleton class */
 RUBY_DLLSPEC VALUE rb_singleton_class(VALUE obj);
+RUBY_DLLSPEC VALUE rb_class_inherited_p(VALUE mod, VALUE arg);
+RUBY_DLLSPEC VALUE rb_class_superclass(VALUE klass);
 
 RUBY_DLLSPEC VALUE rb_define_class(const char*,VALUE);
 RUBY_DLLSPEC VALUE rb_define_module(const char*);
@@ -625,6 +672,9 @@ RUBY_DLLSPEC void rb_define_protected_method(VALUE,const char*,VALUE(*)(ANYARGS)
 RUBY_DLLSPEC void rb_define_module_function(VALUE,const char*,VALUE(*)(ANYARGS),int);
 RUBY_DLLSPEC void rb_define_global_function(const char*,VALUE(*)(ANYARGS),int);
 RUBY_DLLSPEC void rb_define_singleton_method(VALUE object, const char* meth, VALUE(*fn)(ANYARGS), int arity);
+/* Not alias, but alias method */
+RUBY_DLLSPEC void rb_alias(VALUE module, ID id_new, ID id_old);
+
 #define HAVE_RB_DEFINE_ALLOC_FUNC 1
 typedef VALUE (*rb_alloc_func_t)(VALUE);
 RUBY_DLLSPEC void rb_define_alloc_func(VALUE, rb_alloc_func_t);
@@ -632,9 +682,9 @@ RUBY_DLLSPEC void rb_define_alloc_func(VALUE, rb_alloc_func_t);
 RUBY_DLLSPEC void rb_undef_method(VALUE, const char*);
 RUBY_DLLSPEC void rb_undef(VALUE, ID);
 
-#define rb_define_class_variable(klass, name, val) rb_cvar_set(klass, rb_intern(name), val, 0)
-#define rb_cv_get(klass, name) rb_cvar_get(klass, rb_intern(name))
-#define rb_cv_set(klass, name, value) rb_cvar_set(klass, rb_intern(name), value, 0)
+RUBY_DLLSPEC void rb_define_class_variable(VALUE, const char*, VALUE);
+RUBY_DLLSPEC void rb_cv_set(VALUE, const char*, VALUE);
+RUBY_DLLSPEC VALUE rb_cv_get(VALUE, const char*);
 /** Returns a value evaluating true if module has named class var. */
 RUBY_DLLSPEC VALUE rb_cvar_defined(VALUE module_handle, ID name);
 /** Returns class variable by (Symbol) name from module. */
@@ -691,6 +741,10 @@ RUBY_DLLSPEC VALUE rb_ary_includes(VALUE, VALUE);
 RUBY_DLLSPEC VALUE rb_ary_delete(VALUE, VALUE);
 RUBY_DLLSPEC VALUE rb_ary_delete_at(VALUE, long);
 RUBY_DLLSPEC VALUE rb_ary_aref(int, VALUE*, VALUE);
+RUBY_DLLSPEC VALUE rb_ary_to_s(VALUE);
+RUBY_DLLSPEC void rb_mem_clear(VALUE*, int);
+RUBY_DLLSPEC VALUE rb_ary_freeze(VALUE);
+RUBY_DLLSPEC VALUE rb_ary_to_ary(VALUE);
 
 RUBY_DLLSPEC VALUE rb_each(VALUE);
 RUBY_DLLSPEC VALUE rb_iterate(VALUE (*ifunc)(VALUE), VALUE ary, VALUE(*cb)(ANYARGS), VALUE cb_data);
@@ -699,8 +753,11 @@ RUBY_DLLSPEC VALUE rb_iterate(VALUE (*ifunc)(VALUE), VALUE ary, VALUE(*cb)(ANYAR
  * which exposes an MRI-like API to the C code.
  */
 RUBY_DLLSPEC struct RArray* jruby_rarray(VALUE ary);
+/** returns the length of the ruby array */
+RUBY_DLLSPEC long jruby_ary_len(VALUE ary);
 
 /* Hash */
+RUBY_DLLSPEC VALUE rb_hash(VALUE);
 RUBY_DLLSPEC VALUE rb_hash_new(void);
 RUBY_DLLSPEC VALUE rb_hash_aref(VALUE hash, VALUE key);
 #ifndef HAVE_RB_HASH_ASET
@@ -718,10 +775,12 @@ RUBY_DLLSPEC VALUE rb_hash_lookup(VALUE hash, VALUE key);
 /* String */
 RUBY_DLLSPEC VALUE rb_str_new(const char*, long);
 RUBY_DLLSPEC VALUE rb_str_new2(const char*);
+RUBY_DLLSPEC VALUE rb_str_new4(VALUE);
 RUBY_DLLSPEC VALUE rb_str_new_cstr(const char*);
 RUBY_DLLSPEC VALUE rb_tainted_str_new_cstr(const char*);
 RUBY_DLLSPEC VALUE rb_tainted_str_new(const char*, long);
 RUBY_DLLSPEC VALUE rb_str_buf_new(long);
+#define rb_str_buf_new2(str) rb_str_new2(str)
 RUBY_DLLSPEC VALUE rb_str_buf_append(VALUE, VALUE);
 RUBY_DLLSPEC VALUE rb_str_buf_cat(VALUE, const char*, long);
 RUBY_DLLSPEC VALUE rb_str_buf_cat2(VALUE, const char*);
@@ -746,6 +805,7 @@ RUBY_DLLSPEC VALUE rb_str_inspect(VALUE);
 RUBY_DLLSPEC VALUE rb_str_split(VALUE, const char*);
 RUBY_DLLSPEC VALUE rb_str_intern(VALUE);
 RUBY_DLLSPEC VALUE rb_str_length(VALUE);
+#define rb_str_hash(str) rb_hash(str)
 /**
  * Returns a pointer to the String, the length is returned
  * in len parameter, which can be NULL.
@@ -809,7 +869,6 @@ RUBY_DLLSPEC char* jruby_str_cstr_readonly(VALUE v);
 #define rb_str_new2 rb_str_new_cstr
 #define rb_str_new3 rb_str_dup
 #define rb_str_new_shared rb_str_new3
-#define rb_str_new4 rb_str_new_frozen
 #define rb_tainted_str_new2 rb_tainted_str_new_cstr
 
 /** Returns the string associated with a symbol. */
@@ -819,6 +878,9 @@ RUBY_DLLSPEC ID rb_to_id(VALUE);
 
 /** Returns a Struct with the specified fields. */
 RUBY_DLLSPEC VALUE rb_struct_define(const char *name, ...);
+RUBY_DLLSPEC VALUE rb_struct_aref(VALUE struct_handle, VALUE key);
+RUBY_DLLSPEC VALUE rb_struct_aset(VALUE struct_handle, VALUE key, VALUE val);
+RUBY_DLLSPEC VALUE rb_struct_new(VALUE klass, ...);
 
 RUBY_DLLSPEC void* jruby_data(VALUE);
 RUBY_DLLSPEC struct RData* jruby_rdata(VALUE);
@@ -841,7 +903,7 @@ RUBY_DLLSPEC VALUE rb_data_object_alloc(VALUE,void*,RUBY_DATA_FUNC,RUBY_DATA_FUN
     sval = (type*)DATA_PTR(obj);\
 } while (0)
 
-static inline void rb_gc() {}; // We'll let the Java GC decide when to run
+RUBY_DLLSPEC void rb_gc(void);
 RUBY_DLLSPEC void rb_gc_mark_locations(VALUE*, VALUE*);
 RUBY_DLLSPEC void rb_gc_mark(VALUE);
 RUBY_DLLSPEC void rb_gc_mark_maybe(VALUE v);
@@ -854,12 +916,12 @@ RUBY_DLLSPEC void rb_gc_unregister_address(VALUE* address);
 RUBY_DLLSPEC VALUE rb_gv_get(const char* name);
 /** Set named global to given value, returning the value. $ optional. */
 RUBY_DLLSPEC VALUE rb_gv_set(const char* name, VALUE value);
-#define rb_define_variable(name, value) rb_gv_set(name, *value)
+RUBY_DLLSPEC void rb_define_variable(const char *name, VALUE *var);
 RUBY_DLLSPEC void rb_define_readonly_variable(const char* name, VALUE* value);
 /** Sets the $KCODE global variable */
 RUBY_DLLSPEC void rb_set_kcode(const char *code);
 /** Return an array containing the names of all global variables */
-RUBY_DLLSPEC VALUE rb_f_global_variables();
+RUBY_DLLSPEC VALUE rb_f_global_variables(void);
 
 RUBY_DLLSPEC VALUE rb_eval_string(const char* string);
 RUBY_DLLSPEC VALUE rb_obj_instance_eval(int, VALUE*, VALUE);
@@ -869,12 +931,16 @@ RUBY_DLLSPEC void rb_warn(const char *fmt, ...);
 /** Print a warning if $VERBOSE is true. */
 RUBY_DLLSPEC void rb_warning(const char *fmt, ...);
 
+RUBY_DLLSPEC VALUE rb_f_sprintf(int argc, const VALUE* argv);
+
 /** 1 if obj.respond_to? method_name evaluates true, 0 otherwise. */
 RUBY_DLLSPEC int rb_respond_to(VALUE obj_handle, ID method_name);
+RUBY_DLLSPEC int rb_obj_respond_to(VALUE, ID, int);
 /** Returns object returned by invoking method on object if right type, or raises error. */
 RUBY_DLLSPEC VALUE rb_convert_type(VALUE object_handle, int type, const char* type_name, const char* method_name);
 /** Returns object returned by invoking method on object or nil */
 RUBY_DLLSPEC VALUE rb_check_convert_type(VALUE val, int type, const char* type_name, const char* method);
+RUBY_DLLSPEC VALUE rb_check_to_integer(VALUE object_handle, const char *method_name);
 RUBY_DLLSPEC VALUE rb_check_array_type(VALUE val);
 RUBY_DLLSPEC VALUE rb_check_string_type(VALUE val);
 
@@ -912,7 +978,9 @@ RUBY_DLLSPEC double jruby_float_value(VALUE v);
 RUBY_DLLSPEC VALUE rb_Float(VALUE object_handle);
 
 RUBY_DLLSPEC int jruby_big_bytes_used(VALUE obj);
+RUBY_DLLSPEC VALUE jruby_big_sign(VALUE);
 #define RBIGNUM_LEN(obj) jruby_big_bytes_used(obj)
+#define RBIGNUM_SIGN(obj) jruby_big_sign(obj)
 // fake out, used with RBIGNUM_LEN anyway, which provides the full answer
 #define SIZEOF_BDIGITS 1
 
@@ -922,9 +990,9 @@ RUBY_DLLSPEC VALUE rb_yield_splat(VALUE array);
 RUBY_DLLSPEC VALUE rb_yield_values(int n, ...);
 
 /** Return 1 if block given, 0 if not */
-RUBY_DLLSPEC int rb_block_given_p();
+RUBY_DLLSPEC int rb_block_given_p(void);
 /** Return the Proc for the implicit block */
-RUBY_DLLSPEC VALUE rb_block_proc();
+RUBY_DLLSPEC VALUE rb_block_proc(void);
 /** Create a proc with func as body and val as proc argument ({|*args, proc_arg| func }) */
 RUBY_DLLSPEC VALUE rb_proc_new(VALUE (*func)(ANYARGS), VALUE val);
 
@@ -970,6 +1038,7 @@ RUBY_DLLSPEC VALUE rb_exc_new3(VALUE, VALUE);
 })
 
 RUBY_DLLSPEC VALUE rb_io_write(VALUE io, VALUE str);
+RUBY_DLLSPEC VALUE rb_io_close(VALUE io);
 RUBY_DLLSPEC int rb_io_fd(VALUE io);
 RUBY_DLLSPEC void rb_io_check_readable(rb_io_t* io);
 RUBY_DLLSPEC void rb_io_check_writable(rb_io_t* io);
@@ -977,6 +1046,7 @@ RUBY_DLLSPEC void rb_io_check_closed(rb_io_t* io);
 RUBY_DLLSPEC void rb_io_set_nonblock(rb_io_t* io);
 RUBY_DLLSPEC int rb_io_wait_readable(int f);
 RUBY_DLLSPEC int rb_io_wait_writable(int f);
+RUBY_DLLSPEC VALUE rb_file_open(char* filename, char* mode);
 #define HAVE_RB_IO_FD 1
 // Writes the OpenFile struct pointer of val into ptr
 RUBY_DLLSPEC rb_io_t* jruby_io_struct(VALUE io);
@@ -993,10 +1063,12 @@ RUBY_DLLSPEC VALUE rb_marshal_dump(VALUE, VALUE);
 RUBY_DLLSPEC VALUE rb_marshal_load(VALUE);
 
 RUBY_DLLSPEC VALUE rb_reg_nth_match(long, VALUE);
+RUBY_DLLSPEC VALUE rb_reg_match(VALUE re, VALUE str);
 RUBY_DLLSPEC VALUE rb_reg_new(const char*, long, int);
 RUBY_DLLSPEC VALUE rb_reg_source(VALUE);
 RUBY_DLLSPEC int rb_reg_options(VALUE);
 RUBY_DLLSPEC VALUE rb_reg_regcomp(VALUE);
+RUBY_DLLSPEC VALUE rb_backref_get(void);
 
 /* 1.9 provides these, so we will too: */
 #define RUBY_UBF_IO ((rb_unblock_function_t *)-1)
@@ -1010,13 +1082,15 @@ RUBY_DLLSPEC int rb_thread_select(int max, fd_set * read, fd_set * write, fd_set
 RUBY_DLLSPEC void rb_thread_wait_fd_rw(int fd, int read);
 RUBY_DLLSPEC void rb_thread_wait_fd(int f);
 RUBY_DLLSPEC int rb_thread_fd_writable(int f);
+RUBY_DLLSPEC void rb_thread_wait_for(struct timeval time);
+RUBY_DLLSPEC VALUE rb_thread_wakeup(VALUE);
 
 /** The currently executing thread */
 RUBY_DLLSPEC VALUE rb_thread_current(void);
 /** Calls pass on the Ruby thread class */
-RUBY_DLLSPEC void rb_thread_schedule();
+RUBY_DLLSPEC void rb_thread_schedule(void);
 /** Fake placeholder. Always returns 0 */
-RUBY_DLLSPEC int rb_thread_alone();
+RUBY_DLLSPEC int rb_thread_alone(void);
 /** Get and set thread locals */
 RUBY_DLLSPEC VALUE rb_thread_local_aset(VALUE thread, ID id, VALUE value);
 RUBY_DLLSPEC VALUE rb_thread_local_aref(VALUE thread, ID id);
@@ -1024,11 +1098,10 @@ RUBY_DLLSPEC VALUE rb_thread_create(VALUE (*fn)(ANYARGS), void* arg);
 
 RUBY_DLLSPEC VALUE rb_time_new(time_t sec, long usec);
 
-// Fake out
-static inline void rb_thread_stop_timer_thread(void) {}
-static inline void rb_thread_start_timer_thread(void) {}
-static inline void rb_thread_stop_timer(void) {}
-static inline void rb_thread_start_timer(void) {}
+RUBY_DLLSPEC void rb_thread_stop_timer_thread(void);
+RUBY_DLLSPEC void rb_thread_start_timer_thread(void);
+RUBY_DLLSPEC void rb_thread_stop_timer(void);
+RUBY_DLLSPEC void rb_thread_start_timer(void);
 
 /** Global flag which marks the currently executing thread critical. */
 extern RUBY_DLLSPEC VALUE rb_thread_critical;
@@ -1104,22 +1177,25 @@ RUBY_DLLSPEC extern VALUE rb_eNameError;
 RUBY_DLLSPEC extern VALUE rb_eSyntaxError;
 RUBY_DLLSPEC extern VALUE rb_eLoadError;
 
-#define ruby_verbose (rb_gv_get("$VERBOSE"))
-#define ruby_debug (rb_gv_get("$DEBUG"))
+RUBY_DLLSPEC VALUE ruby_verbose(void);
+RUBY_DLLSPEC VALUE ruby_debug(void);
 
 // TODO: get rjb to use a different #ifdef than "RUBINIUS"
 // #define RUBINIUS 1
 #define HAVE_RB_ERRINFO 1
 #define HAVE_RB_SET_ERRINFO 1
-#define rb_errinfo (rb_gv_get("$!"))
-#define rb_set_errinfo(err) (rb_gv_set("$!", err))
+RUBY_DLLSPEC VALUE rb_errinfo(void);
+RUBY_DLLSPEC void rb_set_errinfo(VALUE err);
 
 #define RUBY_METHOD_FUNC(func) ((VALUE (*)(ANYARGS))func)
 
 #define ALLOCA_N(type,n) (type*)alloca(sizeof(type)*(n))
 
-#ifdef	__cplusplus
+#ifdef  __cplusplus
+#if 0
+{ /* satisfy cc-mode */
+#endif
 }
 #endif
 
-#endif	/* JRUBY_RUBY_H */
+#endif  /* JRUBY_RUBY_H */

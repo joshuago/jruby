@@ -50,16 +50,22 @@ module Net # :nodoc:
     def initialize(io)
       @io = io
       @read_timeout = 60
+      @continue_timeout = nil
       @debug_output = nil
       @rbuf = ''
     end
 
     attr_reader :io
     attr_accessor :read_timeout
+    attr_accessor :continue_timeout
     attr_accessor :debug_output
 
     def inspect
       "#<#{self.class} io=#{@io}>"
+    end
+
+    def eof?
+      @io.eof?
     end
 
     def closed?
@@ -131,22 +137,8 @@ module Net # :nodoc:
     BUFSIZE = 1024 * 16
 
     def rbuf_fill
-      begin
-        @rbuf << @io.read_nonblock(BUFSIZE)
-      rescue IO::WaitReadable
-        if IO.select([@io], nil, nil, @read_timeout)
-          retry
-        else
-          raise Timeout::Error
-        end
-      rescue IO::WaitWritable
-        # OpenSSL::Buffering#read_nonblock may fail with IO::WaitWritable.
-        # http://www.openssl.org/support/faq.html#PROG10
-        if IO.select(nil, [@io], nil, @read_timeout)
-          retry
-        else
-          raise Timeout::Error
-        end
+      Timeout.timeout(@read_timeout) do
+        @rbuf << @io.sysread(BUFSIZE)
       end
     end
 
@@ -167,6 +159,8 @@ module Net # :nodoc:
         write0 str
       }
     end
+
+    alias << write
 
     def writeline(str)
       writing {

@@ -187,8 +187,20 @@ public class RubyFileTest {
         JRubyFile file1 = file(filename1);
         JRubyFile file2 = file(filename2);
 
+        if (Platform.IS_WINDOWS) {
+            // posix stat uses inodes to determine indentity, and windows has no inodes
+            // (they are always zero), so we use canonical paths instead. (JRUBY-5726)
+            try {
+                return runtime.newBoolean(file1.exists() && file2.exists() &&
+                                          file1.getCanonicalPath().equals(file2.getCanonicalPath()));
+            } catch (IOException e) {
+                // this is indicative of something really wrong, but for now...
+                return runtime.getFalse();
+            }
+        }
+
         return runtime.newBoolean(file1.exists() && file2.exists() &&
-                runtime.getPosix().stat(file1.getAbsolutePath()).isIdentical(runtime.getPosix().stat(file2.getAbsolutePath())));
+                runtime.getPosix().stat(file1.getAbsolutePath()).isIdentical(runtime.getPosix().stat(file2.getAbsolutePath())));   
     }
 
     @JRubyMethod(name = "owned?", required = 1, module = true)
@@ -555,6 +567,9 @@ public class RubyFileTest {
 
         RubyString pathStr = get_path(runtime.getCurrentContext(), path);
         String pathJStr = pathStr.getUnicodeValue();
+        if (pathJStr.startsWith("jar:")) {
+            pathJStr = pathJStr.substring(4);
+        }
         if (pathJStr.startsWith("file:")) {
             String file = pathJStr.substring(5);
             int bang = file.indexOf('!');
@@ -564,9 +579,7 @@ public class RubyFileTest {
             String jar = file.substring(0, bang);
             String after = file.substring(bang + 2);
             try {
-                JarFile jf = new JarFile(jar);
-                ZipEntry entry = RubyFile.getDirOrFileEntry(jf, after);
-                return entry;
+                return RubyFile.getDirOrFileEntry(jar, after);
             } catch (Exception e) {
             }
         }

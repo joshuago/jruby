@@ -34,6 +34,7 @@ import static com.sun.mirror.util.DeclarationVisitors.*;
  */
 public class AnnotationBinder implements AnnotationProcessorFactory {
 
+    public static final String POPULATOR_SUFFIX = "$POPULATOR";
     private static final Logger LOG = LoggerFactory.getLogger("AnnotationBinder");
 
     // Process any set of annotations
@@ -115,10 +116,10 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     out.println("import java.util.Arrays;");
                     out.println("import java.util.List;");
 
-                    out.println("public class " + qualifiedName + "$Populator extends TypePopulator {");
+                    out.println("public class " + qualifiedName + POPULATOR_SUFFIX + " extends TypePopulator {");
                     out.println("    public void populate(RubyModule cls, Class clazz) {");
                     if (DEBUG) {
-                        out.println("        System.out.println(\"Using pregenerated populator: \" + \"" + cd.getSimpleName() + "Populator\");");
+                        out.println("        System.out.println(\"Using pregenerated populator: \" + \"" + qualifiedName + POPULATOR_SUFFIX + "\");");
                     }
 
                     // scan for meta, compat, etc to reduce findbugs complaints about "dead assignments"
@@ -147,6 +148,8 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     Map<String, List<MethodDeclaration>> staticAnnotatedMethods1_8 = new HashMap<String, List<MethodDeclaration>>();
                     Map<String, List<MethodDeclaration>> annotatedMethods1_9 = new HashMap<String, List<MethodDeclaration>>();
                     Map<String, List<MethodDeclaration>> staticAnnotatedMethods1_9 = new HashMap<String, List<MethodDeclaration>>();
+                    Map<String, List<MethodDeclaration>> annotatedMethods2_0 = new HashMap<String, List<MethodDeclaration>>();
+                    Map<String, List<MethodDeclaration>> staticAnnotatedMethods2_0 = new HashMap<String, List<MethodDeclaration>>();
 
                     Set<String> frameAwareMethods = new HashSet<String>();
                     Set<String> scopeAwareMethods = new HashSet<String>();
@@ -180,6 +183,8 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                                 methodsHash = staticAnnotatedMethods1_8;
                             } else if (anno.compat() == CompatVersion.RUBY1_9) {
                                 methodsHash = staticAnnotatedMethods1_9;
+                            } else if (anno.compat() == CompatVersion.RUBY2_0) {
+                                methodsHash = staticAnnotatedMethods2_0;
                             } else {
                                 methodsHash = staticAnnotatedMethods;
                             }
@@ -188,6 +193,8 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                                 methodsHash = annotatedMethods1_8;
                             } else if (anno.compat() == CompatVersion.RUBY1_9) {
                                 methodsHash = annotatedMethods1_9;
+                            } else if (anno.compat() == CompatVersion.RUBY2_0) {
+                                methodsHash = annotatedMethods2_0;
                             } else {
                                 methodsHash = annotatedMethods;
                             }
@@ -260,9 +267,19 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     }
 
                     if (!staticAnnotatedMethods1_9.isEmpty()) {
-                        out.println("        if (compatVersion == CompatVersion.RUBY1_9 || compatVersion == CompatVersion.BOTH) {");
+                        out.println("        if (compatVersion.is1_9() || compatVersion == CompatVersion.BOTH) {");
                         processMethodDeclarations(staticAnnotatedMethods1_9);
                         for (Map.Entry<String, List<MethodDeclaration>> entry : staticAnnotatedMethods1_9.entrySet()) {
+                            MethodDeclaration decl = entry.getValue().get(0);
+                            if (!decl.getAnnotation(JRubyMethod.class).omit()) addCoreMethodMapping(entry.getKey(), decl, out);
+                        }
+                        out.println("        }");
+                    }
+
+                    if (!staticAnnotatedMethods2_0.isEmpty()) {
+                        out.println("        if (compatVersion.is2_0() || compatVersion == CompatVersion.BOTH) {");
+                        processMethodDeclarations(staticAnnotatedMethods2_0);
+                        for (Map.Entry<String, List<MethodDeclaration>> entry : staticAnnotatedMethods2_0.entrySet()) {
                             MethodDeclaration decl = entry.getValue().get(0);
                             if (!decl.getAnnotation(JRubyMethod.class).omit()) addCoreMethodMapping(entry.getKey(), decl, out);
                         }
@@ -286,9 +303,19 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     }
 
                     if (!annotatedMethods1_9.isEmpty()) {
-                        out.println("        if (compatVersion == CompatVersion.RUBY1_9 || compatVersion == CompatVersion.BOTH) {");
+                        out.println("        if (compatVersion.is1_9() || compatVersion == CompatVersion.BOTH) {");
                         processMethodDeclarations(annotatedMethods1_9);
                         for (Map.Entry<String, List<MethodDeclaration>> entry : annotatedMethods1_9.entrySet()) {
+                            MethodDeclaration decl = entry.getValue().get(0);
+                            if (!decl.getAnnotation(JRubyMethod.class).omit()) addCoreMethodMapping(entry.getKey(), decl, out);
+                        }
+                        out.println("        }");
+                    }
+
+                    if (!annotatedMethods2_0.isEmpty()) {
+                        out.println("        if (compatVersion.is2_0() || compatVersion == CompatVersion.BOTH) {");
+                        processMethodDeclarations(annotatedMethods2_0);
+                        for (Map.Entry<String, List<MethodDeclaration>> entry : annotatedMethods2_0.entrySet()) {
                             MethodDeclaration decl = entry.getValue().get(0);
                             if (!decl.getAnnotation(JRubyMethod.class).omit()) addCoreMethodMapping(entry.getKey(), decl, out);
                         }
@@ -325,7 +352,7 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     out.close();
                     out = null;
 
-                    FileOutputStream fos = new FileOutputStream("src_gen/" + qualifiedName + "$Populator.java");
+                    FileOutputStream fos = new FileOutputStream("src_gen/" + qualifiedName + POPULATOR_SUFFIX + ".java");
                     fos.write(bytes.toByteArray());
                     fos.close();
                 } catch (IOException ioe) {
@@ -404,7 +431,13 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     boolean hasContext = false;
                     boolean hasBlock = false;
 
+                    StringBuffer buffer = new StringBuffer();
+                    boolean first = true;
                     for (ParameterDeclaration pd : md.getParameters()) {
+                        if (!first) buffer.append(", ");
+                        first = false;
+                        buffer.append(pd.getType().toString());
+                        buffer.append(".class");
                         hasContext |= pd.getType().toString().equals("org.jruby.runtime.ThreadContext");
                         hasBlock |= pd.getType().toString().equals("org.jruby.runtime.Block");
                     }
@@ -427,20 +460,24 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                             md.getSimpleName() + "\", " +
                             isStatic + ", " +
                             "CallConfiguration." + getCallConfigNameByAnno(anno) + ", " +
-                            anno.notImplemented() + ");");
+                            anno.notImplemented() + ", "
+                            + md.getDeclaringType().getQualifiedName() + ".class, "
+                            + "\"" + md.getSimpleName() + "\", "
+                            + md.getReturnType().toString() + ".class, "
+                            + "new Class[] {" + buffer.toString() + "});");
                     generateMethodAddCalls(md, anno);
                 }
             }
 
             private void addCoreMethodMapping(String rubyName, MethodDeclaration decl, PrintStream out) {
-                out.println(
-                        "        runtime.addBoundMethod(\""
-                        + decl.getDeclaringType().getQualifiedName()
-                        + "."
-                        + decl.getSimpleName()
-                        + "\", \""
-                        + rubyName
-                        + "\");");
+                out.println(new StringBuilder(50)
+                        .append("        runtime.addBoundMethod(")
+                        .append('"').append(decl.getDeclaringType().getQualifiedName()).append('"')
+                        .append(',')
+                        .append('"').append(decl.getSimpleName()).append('"')
+                        .append(',')
+                        .append('"').append(rubyName).append('"')
+                        .append(");").toString());
             }
 
             private String getActualQualifiedName(TypeDeclaration td) {
@@ -550,10 +587,10 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
         }
     
         public static String getCallConfigNameByAnno(JRubyMethod anno) {
-            return getCallConfigName(anno.frame(), anno.scope(), anno.backtrace());
+            return getCallConfigName(anno.frame(), anno.scope());
         }
 
-        public static String getCallConfigName(boolean frame, boolean scope, boolean backtrace) {
+        public static String getCallConfigName(boolean frame, boolean scope) {
             if (frame) {
                 if (scope) {
                     return "FrameFullScopeFull";
@@ -561,13 +598,7 @@ public class AnnotationBinder implements AnnotationProcessorFactory {
                     return "FrameFullScopeNone";
                 }
             } else if (scope) {
-                if (backtrace) {
-                    return "FrameBacktraceScopeFull";
-                } else {
-                    return "FrameNoneScopeFull";
-                }
-            } else if (backtrace) {
-                return "FrameBacktraceScopeNone";
+                return "FrameNoneScopeFull";
             } else {
                 return "FrameNoneScopeNone";
             }

@@ -9,11 +9,9 @@
 package org.jruby.runtime;
 
 import org.jruby.Ruby;
-import org.jruby.parser.BlockStaticScope;
 import org.jruby.runtime.scope.ManyVarsDynamicScope;
 import org.jruby.runtime.scope.NoVarsDynamicScope;
 import org.jruby.runtime.scope.OneVarDynamicScope;
-import org.jruby.parser.EvalStaticScope;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.scope.DummyDynamicScope;
@@ -92,7 +90,7 @@ public abstract class DynamicScope {
         return newDynamicScope(staticScope, null);
     }
 
-    public final DynamicScope getEvalScope() {
+    public final DynamicScope getEvalScope(Ruby runtime) {
         // We create one extra dynamicScope on a binding so that when we 'eval "b=1", binding' the
         // 'b' will get put into this new dynamic scope.  The original scope does not see the new
         // 'b' and successive evals with this binding will.  I take it having the ability to have
@@ -113,11 +111,11 @@ public abstract class DynamicScope {
             // we are evaling within an eval and in that case we should be sharing the same
             // binding scope.
             DynamicScope parent = getNextCapturedScope();
-            if (parent != null && parent.getEvalScope() == this) {
+            if (parent != null && parent.getEvalScope(runtime) == this) {
                 evalScope = this;
             } else {
                 // bindings scopes must always be ManyVars scopes since evals can grow them
-                evalScope = new ManyVarsDynamicScope(new EvalStaticScope(getStaticScope()), this);
+                evalScope = new ManyVarsDynamicScope(runtime.getStaticScopeFactory().newEvalScope(getStaticScope()), this);
             }
         }
 
@@ -372,7 +370,7 @@ public abstract class DynamicScope {
     // Helper function to give a good view of current dynamic scope with captured scopes
     public String toString(StringBuffer buf, String indent) {
         buf.append(indent).append("Static Type[" + hashCode() + "]: " +
-                (staticScope instanceof BlockStaticScope ? "block" : "local")+" [");
+                (staticScope.isBlockScope() ? "block" : "local")+" [");
         int size = staticScope.getNumberOfVariables();
         IRubyObject[] variableValues = getValues();
 

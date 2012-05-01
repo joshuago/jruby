@@ -27,7 +27,7 @@
  ***** END LICENSE BLOCK *****/
 
 #ifndef JRUBY_H
-#define	JRUBY_H
+#define JRUBY_H
 
 #include <jni.h>
 #include <map>
@@ -100,6 +100,7 @@ namespace jruby {
     extern jmethodID Handle_nativeHandle;
     extern jmethodID RubyObject_getNativeTypeIndex_method;
     extern jmethodID JRuby_callMethod;
+    extern jmethodID JRuby_callMethodB;
     extern jmethodID JRuby_callMethod0;
     extern jmethodID JRuby_callMethod1;
     extern jmethodID JRuby_callMethod2;
@@ -123,11 +124,14 @@ namespace jruby {
     extern jmethodID JRuby_nativeBlockingRegion;
     extern jmethodID JRuby_newThread;
     extern jmethodID JRuby_newProc;
+    extern jmethodID JRuby_getMetaClass;
+
     extern jmethodID RubyArray_toJavaArray_method;
     extern jmethodID RubyClass_newClass_method;
     extern jmethodID Ruby_defineClass_method;
     extern jmethodID Ruby_defineClassUnder_method;
     extern jmethodID RubyClass_setAllocator_method;
+    extern jmethodID RubyModule_undef_method;
     extern jmethodID Ruby_getClassFromPath_method;
     extern jmethodID ObjectAllocator_allocate_method;
     extern jmethodID RubyClass_getAllocator_method;
@@ -174,6 +178,7 @@ namespace jruby {
     VALUE callMethodANonConst(VALUE recv, const char* methodName, int argCount, VALUE* args);
     VALUE callRubyMethod(JNIEnv* env, VALUE recv, jobject obj, int argCount, ...);
     VALUE callRubyMethodA(JNIEnv* env, VALUE recv, jobject obj, int argCount, VALUE* args);
+    VALUE callRubyMethodB(JNIEnv* env, VALUE recv, jobject obj, int argCount, VALUE* args, VALUE block);
     VALUE callRubyMethodV(JNIEnv* env, VALUE recv, jobject obj, int argCount, va_list ap);
 
     jobject getConstMethodNameInstance(const char* methodName);
@@ -196,6 +201,20 @@ namespace jruby {
     (likely(__builtin_constant_p(method)) \
         ? jruby::callMethodA(recv, CONST_METHOD_NAME_CACHE(method), argc, argv) \
         : jruby::callMethodANonConst(recv, method, argc, argv))
+
+#define getCachedMethodID(env, klass, methodName, signature) __extension__({ \
+    static jmethodID mid_; \
+    static jclass klass_; \
+    jmethodID mid; \
+    if (__builtin_constant_p(methodName) && __builtin_constant_p(signature) && (klass_ == NULL || env->IsSameObject(klass_, klass))) { \
+        if (unlikely(mid_ == NULL)) { \
+            mid_ = getMethodID(env, klass, methodName, signature); \
+            if (klass_ == NULL) klass_ = (jclass) env->NewWeakGlobalRef(klass); \
+        } \
+        mid = mid_; \
+    } else mid = getMethodID(env, klass, methodName, signature); \
+    mid; \
+})
 
     VALUE getClass(const char* className);
     VALUE getModule(const char* className);
@@ -254,4 +273,4 @@ namespace jruby {
 #define FL_USER18    (((VALUE)1)<<(FL_USHIFT+18))
 #define FL_USER19    (((VALUE)1)<<(FL_USHIFT+19))
 
-#endif	/* JRUBY_H */
+#endif  /* JRUBY_H */

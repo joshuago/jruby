@@ -101,73 +101,121 @@ public class RubyMatchData extends RubyObject {
     }
 
     @Override
+    public void copySpecialInstanceVariables(IRubyObject clone) {
+        RubyMatchData match = (RubyMatchData)clone;
+        match.regs = regs;
+        match.begin = begin;
+        match.end = end;
+        match.pattern = pattern;
+        match.regexp = regexp;
+        match.charOffsetUpdated = charOffsetUpdated;
+        match.charOffsets = charOffsets;
+    }
+
+    @Override
     public int getNativeTypeIndex() {
         return ClassIndex.MATCHDATA;
     }
 
-    private static final class Pair implements Comparable {
+    private static final class Pair implements Comparable<Pair> {
         int bytePos, charPos;
-        public int compareTo(Object o) {
-            return bytePos - ((Pair)o).bytePos;
+        public int compareTo(Pair pair) {
+            return bytePos - pair.bytePos;
         }
+    }
+
+    private void updatePairs(ByteList value, Encoding encoding, Pair[] pairs) {
+        Arrays.sort(pairs);
+
+        int length = pairs.length;
+        byte[]bytes = value.getUnsafeBytes();
+        int p = value.getBegin();
+        int s = p;
+        int c = 0;
+        
+        for (int i = 0; i < length; i++) {
+            int q = s + pairs[i].bytePos;
+            c += StringSupport.strLength(encoding, bytes, p, q);
+            pairs[i].charPos = c;
+            p = q;
+        }
+    }
+
+    private void updateCharOffsetOnlyOneReg(ByteList value, Encoding encoding) {
+        if (charOffsets == null || charOffsets.numRegs < 1) charOffsets = new Region(1);
+        
+        if (encoding.maxLength() == 1) {
+            charOffsets.beg[0] = begin;
+            charOffsets.end[0] = end;
+            charOffsetUpdated = true;
+            return;
+        }
+
+        Pair[] pairs = new Pair[2];
+        pairs[0] = new Pair();
+        pairs[0].bytePos = begin;
+        pairs[1] = new Pair();
+        pairs[1].bytePos = end;
+
+        updatePairs(value, encoding, pairs);
+
+        Pair key = new Pair();
+        key.bytePos = begin;
+        charOffsets.beg[0] = pairs[Arrays.binarySearch(pairs, key)].charPos;
+        key.bytePos = end;
+        charOffsets.end[0] = pairs[Arrays.binarySearch(pairs, key)].charPos;        
+    }
+
+    private void updateCharOffsetManyRegs(ByteList value, Encoding encoding) {
+        int numRegs = regs.numRegs;
+
+        if (charOffsets == null || charOffsets.numRegs < numRegs) charOffsets = new Region(numRegs);
+        
+        if (encoding.maxLength() == 1) {
+            for (int i = 0; i < numRegs; i++) {
+                charOffsets.beg[i] = regs.beg[i];
+                charOffsets.end[i] = regs.end[i];
+            }
+            return;
+        }
+
+        Pair[] pairs = new Pair[numRegs * 2];
+        for (int i = 0; i < pairs.length; i++) pairs[i] = new Pair();
+
+        int numPos = 0;
+        for (int i = 0; i < numRegs; i++) {
+            if (regs.beg[i] < 0) continue;
+            pairs[numPos++].bytePos = regs.beg[i];
+            pairs[numPos++].bytePos = regs.end[i];
+        }
+
+        updatePairs(value, encoding, pairs);
+
+        Pair key = new Pair();
+        for (int i = 0; i < regs.numRegs; i++) {
+            if (regs.beg[i] < 0) {
+                charOffsets.beg[i] = charOffsets.end[i] = -1;
+                continue;
+            }
+            key.bytePos = regs.beg[i];
+            charOffsets.beg[i] = pairs[Arrays.binarySearch(pairs, key)].charPos;
+            key.bytePos = regs.end[i];
+            charOffsets.end[i] = pairs[Arrays.binarySearch(pairs, key)].charPos;
+        }        
     }
 
     private void updateCharOffset() {
         if (charOffsetUpdated) return;
 
-        int numRegs = regs == null ? 1 : regs.numRegs;
-        if (charOffsets == null || charOffsets.numRegs < numRegs) charOffsets = new Region(numRegs);
-
-        Pair[]pairs = new Pair[numRegs * 2];
-        for (int i = 0; i < pairs.length; i++) pairs[i] = new Pair();
-
-        int numPos = 0;
-        if (regs == null) {
-            pairs[numPos++].bytePos = begin;
-            pairs[numPos++].bytePos = end;
-        } else {
-            for (int i = 0; i < numRegs; i++) {
-                if (regs.beg[i] < 0) continue;
-                pairs[numPos++].bytePos = regs.beg[i];
-                pairs[numPos++].bytePos = regs.end[i];
-            }
-        }
-
-        Arrays.sort(pairs);
-
         ByteList value = str.getByteList();
         Encoding enc = value.getEncoding();
-        byte[]bytes = value.getUnsafeBytes();
-        int p = value.getBegin();
-        int s = p;
 
-        int c = 0;
-        for (int i = 0; i < numPos; i++) {
-            int q = s + pairs[i].bytePos;
-            c += StringSupport.strLength(enc, bytes, p, q);
-            pairs[i].charPos = c;
-            p = q;
-        }
-
-        Pair key = new Pair();
         if (regs == null) {
-            key.bytePos = begin;
-            charOffsets.beg[0] = pairs[Arrays.binarySearch(pairs, key)].charPos;
-            key.bytePos = end;
-            charOffsets.end[0] = pairs[Arrays.binarySearch(pairs, key)].charPos;
+            updateCharOffsetOnlyOneReg(value, enc);
         } else {
-            for (int i = 0; i < numRegs; i++) {
-                if (regs.beg[i] < 0) {
-                    charOffsets.beg[i] = charOffsets.end[i] = -1;
-                    continue;
-                }
-                key.bytePos = regs.beg[i];
-                charOffsets.beg[i] = pairs[Arrays.binarySearch(pairs, key)].charPos;
-                key.bytePos = regs.end[i];
-                charOffsets.end[i] = pairs[Arrays.binarySearch(pairs, key)].charPos;
-            }
-
+            updateCharOffsetManyRegs(value, enc);
         }
+
         charOffsetUpdated = true;
     }
 
@@ -182,7 +230,7 @@ public class RubyMatchData extends RubyObject {
         return (flags & MATCH_BUSY) != 0;
     }
 
-    private void check() {
+    void check() {
         if (str == null) throw getRuntime().newTypeError("uninitialized Match");
     }
 
@@ -288,7 +336,7 @@ public class RubyMatchData extends RubyObject {
             if (v.isNil()) {
                 result.cat("nil".getBytes());
             } else {
-                result.append(((RubyString) v).inspectCommon(runtime.is1_9()));
+                result.append(runtime.is1_9() ? ((RubyString)v).inspect19() : ((RubyString)v).inspect());
             }
         }
 
@@ -318,7 +366,7 @@ public class RubyMatchData extends RubyObject {
         return match_array(getRuntime(), 0);
     }
 
-    @JRubyMethod(name = "values_at", required = 1, rest = true)
+    @JRubyMethod(name = "values_at", rest = true)
     public IRubyObject values_at(IRubyObject[] args) {
         return to_a().values_at(args);
     }
@@ -393,6 +441,7 @@ public class RubyMatchData extends RubyObject {
     */
     @JRubyMethod(name = "[]")
     public IRubyObject op_aref(IRubyObject idx) {
+        check();
         if (!(idx instanceof RubyFixnum) || ((RubyFixnum)idx).getLongValue() < 0) {
             return ((RubyArray)to_a()).aref(idx);
         }
@@ -415,6 +464,7 @@ public class RubyMatchData extends RubyObject {
      */
     @JRubyMethod(name = "[]", compat = CompatVersion.RUBY1_9)
     public IRubyObject op_aref19(IRubyObject idx) {
+        check();
         IRubyObject result = op_arefCommon(idx);
         return result == null ? ((RubyArray)to_a()).aref19(idx) : result;
     }
@@ -593,9 +643,11 @@ public class RubyMatchData extends RubyObject {
     @Override
     public IRubyObject initialize_copy(IRubyObject original) {
         if (this == original) return this;
-        
-        if (!(getMetaClass() == original.getMetaClass())){ // MRI also does a pointer comparison here
-            throw getRuntime().newTypeError("wrong argument class");
+
+        Ruby runtime = getRuntime();
+        ThreadContext context = runtime.getCurrentContext();
+        if ((original instanceof RubyBasicObject) && !((RubyBasicObject)original).instance_of_p(context, getMetaClass()).isTrue()) {
+            throw runtime.newTypeError("wrong argument class");
         }
 
         RubyMatchData origMatchData = (RubyMatchData)original;
@@ -606,6 +658,7 @@ public class RubyMatchData extends RubyObject {
     }
 
     public boolean equals(Object other) {
+        if (this == other) return true;
         if (!(other instanceof RubyMatchData)) return false;
 
         RubyMatchData match = (RubyMatchData)other;
@@ -623,4 +676,12 @@ public class RubyMatchData extends RubyObject {
     public IRubyObject eql_p(IRubyObject obj) {
         return getRuntime().newBoolean(equals(obj));
     }
+
+    @JRubyMethod(name = "hash", compat = RUBY1_9)
+    @Override
+    public RubyFixnum hash() {
+        check();
+        return getRuntime().newFixnum(regexp.hashCode() ^ str.hashCode());
+    }
+
 }

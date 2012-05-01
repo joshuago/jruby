@@ -37,7 +37,6 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-import java.util.regex.Pattern;
 
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
@@ -45,6 +44,7 @@ import org.jruby.RubyFixnum;
 import org.jruby.RubyInteger;
 import org.jruby.RubyNumeric;
 import org.jruby.RubyString;
+import org.jruby.RubyThread;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.runtime.Block;
@@ -53,7 +53,6 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.io.ChannelDescriptor;
-import org.jruby.util.io.InvalidValueException;
 import org.jruby.util.io.ModeFlags;
 
 import org.jruby.util.io.SelectorFactory;
@@ -83,165 +82,139 @@ public class RubyTCPServer extends RubyTCPSocket {
         super(runtime, type);
     }
 
-    private ServerSocketChannel ssc;
-    private InetSocketAddress socket_address;
-
-    @JRubyMethod(name = "initialize", required = 1, optional = 1, visibility = Visibility.PRIVATE, backtrace = true)
+    @JRubyMethod(name = "initialize", required = 1, optional = 1, visibility = Visibility.PRIVATE)
     public IRubyObject initialize(ThreadContext context, IRubyObject[] args) {
-        IRubyObject hostname = args[0];
-        IRubyObject port = args.length > 1 ? args[1] : context.getRuntime().getNil();
+        Ruby runtime = context.runtime;
+        IRubyObject _host = args[0];
+        IRubyObject _port = args.length > 1 ? args[1] : context.nil;
 
-        if(hostname.isNil()
-                || ((hostname instanceof RubyString)
-                        && ((RubyString) hostname).isEmpty())) {
-            hostname = context.getRuntime().newString("0.0.0.0");
-        } else if (hostname instanceof RubyFixnum) {
+        String host;
+        if(_host.isNil()|| ((_host instanceof RubyString) && ((RubyString) _host).isEmpty())) {
+            host = "0.0.0.0";
+        } else if (_host instanceof RubyFixnum) {
             // numeric host, use it for port
-            port = hostname;
-            hostname = context.getRuntime().newString("0.0.0.0");
+            _port = _host;
+            host = "0.0.0.0";
+        } else {
+            host = _host.convertToString().toString();
         }
 
-        String shost = hostname.convertToString().toString();
+        int port = SocketUtils.getPortFrom(context, _port);
+
         try {
-            InetAddress addr = InetAddress.getByName(shost);
+            InetAddress addr = InetAddress.getByName(host);
+
             ssc = ServerSocketChannel.open();
+            socket_address = new InetSocketAddress(addr, port);
 
-            int portInt;
-            if (port instanceof RubyInteger) {
-                portInt = RubyNumeric.fix2int(port);
-            } else {
-                IRubyObject portString = port.convertToString();
-                IRubyObject portInteger = portString.convertToInteger( "to_i");
-                portInt = RubyNumeric.fix2int(portInteger);
-
-                if (portInt <= 0) {
-                    portInt = RubyNumeric.fix2int(RubySocket.getservbyname(
-                            context, context.getRuntime().getObject(), new IRubyObject[] {portString}));
-                }
-            }
-
-            socket_address = new InetSocketAddress(addr, portInt);
             ssc.socket().bind(socket_address);
-            initSocket(context.getRuntime(), new ChannelDescriptor(
-                    ssc, new ModeFlags(ModeFlags.RDWR)));
-        } catch (InvalidValueException ex) {
-            throw context.getRuntime().newErrnoEINVALError();
-        } catch(UnknownHostException e) {
-            throw sockerr(context.getRuntime(), "initialize: name or service not known");
-        } catch(BindException e) {
-            // e.printStackTrace();
-            String msg = e.getMessage();
-            if (msg == null) {
-                msg = "bind";
-            } else {
-                msg = "bind - " + msg;
-            }
 
-            // This is ugly, but what can we do, Java provides the same BindingException
-            // for both EADDRNOTAVAIL and EADDRINUSE, so we differentiate the errors
-            // based on BindException's message.
-            if(ADDR_NOT_AVAIL_PATTERN.matcher(msg).find()) {
-                throw context.getRuntime().newErrnoEADDRNOTAVAILError(msg);
-            } else {
-                throw context.getRuntime().newErrnoEADDRINUSEError(msg);
-            }
+            initSocket(runtime, new ChannelDescriptor(ssc, newModeFlags(runtime, ModeFlags.RDWR)));
+
+        } catch(UnknownHostException e) {
+            throw SocketUtils.sockerr(runtime, "initialize: name or service not known");
+
+        } catch(BindException e) {
+            throw runtime.newErrnoEADDRFromBindException(e);
+
         } catch(SocketException e) {
             String msg = e.getMessage();
+
             if(msg.indexOf("Permission denied") != -1) {
-                throw context.getRuntime().newErrnoEACCESError("bind(2)");
+                throw runtime.newErrnoEACCESError("bind(2)");
             } else {
-                throw sockerr(context.getRuntime(), "initialize: name or service not known");
+                throw SocketUtils.sockerr(runtime, "initialize: name or service not known");
             }
+
         } catch(IOException e) {
-            throw sockerr(context.getRuntime(), "initialize: name or service not known");
+            throw SocketUtils.sockerr(runtime, "initialize: name or service not known");
+
         } catch (IllegalArgumentException iae) {
-            throw sockerr(context.getRuntime(), iae.getMessage());
+            throw SocketUtils.sockerr(runtime, iae.getMessage());
         }
 
         return this;
     }
-    @Deprecated
-    public IRubyObject accept() {
-        return accept(getRuntime().getCurrentContext());
-    }
+
     @JRubyMethod(name = "accept")
     public IRubyObject accept(ThreadContext context) {
-        RubyTCPSocket socket = new RubyTCPSocket(context.getRuntime(), context.getRuntime().getClass("TCPSocket"));
+        Ruby runtime = context.runtime;
+        RubyTCPSocket socket = new RubyTCPSocket(runtime, runtime.getClass("TCPSocket"));
 
         try {
+            RubyThread thread = context.getThread();
+
             while (true) {
-                boolean ready = context.getThread().select(this, SelectionKey.OP_ACCEPT);
+                boolean ready = thread.select(this, SelectionKey.OP_ACCEPT);
+
                 if (!ready) {
                     // we were woken up without being selected...poll for thread events and go back to sleep
                     context.pollThreadEvents();
+
                 } else {
-                    try {
-                        SocketChannel connected = ssc.accept();
-                        connected.finishConnect();
+                    SocketChannel connected = ssc.accept();
+                    if (connected == null) continue;
 
-                        //
-                        // Force the client socket to be blocking
-                        //
-                        synchronized (connected.blockingLock()) {
-                            connected.configureBlocking(false);
-                            connected.configureBlocking(true);
-                        }
+                    connected.finishConnect();
 
-                        // otherwise one key has been selected (ours) so we get the channel and hand it off
-                        socket.initSocket(context.getRuntime(), new ChannelDescriptor(connected, new ModeFlags(ModeFlags.RDWR)));
-                    } catch (InvalidValueException ex) {
-                        throw context.getRuntime().newErrnoEINVALError();
+                    // Force the client socket to be blocking
+                    synchronized (connected.blockingLock()) {
+                        connected.configureBlocking(false);
+                        connected.configureBlocking(true);
                     }
+
+                    // otherwise one key has been selected (ours) so we get the channel and hand it off
+                    socket.initSocket(runtime, new ChannelDescriptor(connected, newModeFlags(runtime, ModeFlags.RDWR)));
+
                     return socket;
                 }
             }
+
         } catch(IOException e) {
-            throw sockerr(context.getRuntime(), "problem when accepting");
+            throw SocketUtils.sockerr(runtime, "problem when accepting");
         }
     }
-    @Deprecated
-    public IRubyObject accept_nonblock() {
-        return accept_nonblock(getRuntime().getCurrentContext());
-    }
+
     @JRubyMethod(name = "accept_nonblock")
     public IRubyObject accept_nonblock(ThreadContext context) {
-        RubyTCPSocket socket = new RubyTCPSocket(context.getRuntime(), context.getRuntime().getClass("TCPSocket"));
+        Ruby runtime = context.runtime;
+        RubyTCPSocket socket = new RubyTCPSocket(runtime, runtime.getClass("TCPSocket"));
         Selector selector = null;
+
         synchronized (ssc.blockingLock()) {
             boolean oldBlocking = ssc.isBlocking();
 
             try {
                 ssc.configureBlocking(false);
-                selector = SelectorFactory.openWithRetryFrom(getRuntime(), SelectorProvider.provider());
+                selector = SelectorFactory.openWithRetryFrom(runtime, SelectorProvider.provider());
 
                 boolean ready = context.getThread().select(this, SelectionKey.OP_ACCEPT, 0);
+
                 if (!ready) {
                     // no connection immediately accepted, let them try again
-                    throw context.getRuntime().newErrnoEAGAINError("Resource temporarily unavailable");
+                    throw runtime.newErrnoEAGAINError("Resource temporarily unavailable");
+
                 } else {
-                    try {
-                        // otherwise one key has been selected (ours) so we get the channel and hand it off
-                        socket.initSocket(context.getRuntime(), new ChannelDescriptor(ssc.accept(), new ModeFlags(ModeFlags.RDWR)));
-                    } catch (InvalidValueException ex) {
-                        throw context.getRuntime().newErrnoEINVALError();
-                    }
+                    // otherwise one key has been selected (ours) so we get the channel and hand it off
+                    socket.initSocket(context.getRuntime(), new ChannelDescriptor(ssc.accept(), newModeFlags(runtime, ModeFlags.RDWR)));
+
                     return socket;
                 }
+
             } catch(IOException e) {
-                throw sockerr(context.getRuntime(), "problem when accepting");
+                throw SocketUtils.sockerr(context.getRuntime(), "problem when accepting");
+
             } finally {
                 try {
                     if (selector != null) selector.close();
                 } catch (Exception e) {
                 }
                 try {ssc.configureBlocking(oldBlocking);} catch (IOException ioe) {}
+
             }
         }
     }
-    @Deprecated
-    public IRubyObject listen(IRubyObject backlog) {
-        return listen(getRuntime().getCurrentContext(), backlog);
-    }
+
     @JRubyMethod(name = "listen", required = 1)
     public IRubyObject listen(ThreadContext context, IRubyObject backlog) {
         return RubyFixnum.zero(context.getRuntime());
@@ -256,10 +229,7 @@ public class RubyTCPServer extends RubyTCPSocket {
     public IRubyObject getpeername(ThreadContext context, IRubyObject[] args) {
         throw context.getRuntime().newNotImplementedError("not supported");
     }
-    @Deprecated
-    public static IRubyObject open(IRubyObject recv, IRubyObject[] args, Block block) {
-        return open(recv.getRuntime().getCurrentContext(), recv, args, block);
-    }
+
     @JRubyMethod(rest = true, meta = true)
     public static IRubyObject open(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
         IRubyObject tcpServer = recv.callMethod(context, "new", args);
@@ -278,5 +248,41 @@ public class RubyTCPServer extends RubyTCPSocket {
         throw context.getRuntime().newErrnoENOTCONNError();
     }
 
-    private final static Pattern ADDR_NOT_AVAIL_PATTERN = Pattern.compile("assign.*address");
+    @Override
+    public IRubyObject gets(ThreadContext context, IRubyObject sep) {
+        throw context.getRuntime().newErrnoENOTCONNError();
+    }
+
+    @Override
+    public IRubyObject gets19(ThreadContext context) {
+        throw context.getRuntime().newErrnoENOTCONNError();
+    }
+
+    @Override
+    public IRubyObject gets19(ThreadContext context, IRubyObject sep) {
+        throw context.getRuntime().newErrnoENOTCONNError();
+    }
+
+    @Override
+    public IRubyObject gets19(ThreadContext context, IRubyObject sep, IRubyObject limit) {
+        throw context.getRuntime().newErrnoENOTCONNError();
+    }
+
+    @Deprecated
+    public IRubyObject accept() {
+        return accept(getRuntime().getCurrentContext());
+    }
+
+    @Deprecated
+    public IRubyObject listen(IRubyObject backlog) {
+        return listen(getRuntime().getCurrentContext(), backlog);
+    }
+
+    @Deprecated
+    public static IRubyObject open(IRubyObject recv, IRubyObject[] args, Block block) {
+        return open(recv.getRuntime().getCurrentContext(), recv, args, block);
+    }
+
+    private ServerSocketChannel ssc;
+    private InetSocketAddress socket_address;
 }

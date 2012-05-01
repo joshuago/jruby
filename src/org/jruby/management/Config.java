@@ -6,6 +6,7 @@ import java.util.Arrays;
 
 import org.jruby.Ruby;
 import org.jruby.RubyInstanceConfig;
+import org.jruby.util.cli.OutputStrings;
 
 public class Config implements ConfigMBean {
     private final SoftReference<Ruby> ruby;
@@ -15,11 +16,11 @@ public class Config implements ConfigMBean {
     }
     
     public String getVersionString() {
-        return ruby.get().getInstanceConfig().getVersionString();
+        return OutputStrings.getVersionString(ruby.get().getInstanceConfig().getCompatVersion());
     }
 
     public String getCopyrightString() {
-        return ruby.get().getInstanceConfig().getCopyrightString();
+        return OutputStrings.getCopyrightString();
     }
 
     public String getCompileMode() {
@@ -83,11 +84,11 @@ public class Config implements ConfigMBean {
     }
 
     public String getRequiredLibraries() {
-        return ruby.get().getInstanceConfig().requiredLibraries().toString();
+        return ruby.get().getInstanceConfig().getRequiredLibraries().toString();
     }
 
     public String getLoadPaths() {
-        return ruby.get().getInstanceConfig().loadPaths().toString();
+        return ruby.get().getInstanceConfig().getLoadPaths().toString();
     }
 
     public String getDisplayedFileName() {

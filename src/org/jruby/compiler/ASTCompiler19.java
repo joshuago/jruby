@@ -29,16 +29,14 @@
 
 package org.jruby.compiler;
 
-import org.joni.ast.BackRefNode;
-import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyMatchData;
 import org.jruby.ast.ArgsCatNode;
 import org.jruby.ast.ArgsNode;
 import org.jruby.ast.ArgsPushNode;
 import org.jruby.ast.ArgumentNode;
 import org.jruby.ast.ArrayNode;
+import org.jruby.ast.DRegexpNode;
 import org.jruby.ast.EncodingNode;
-import org.jruby.ast.FCallNode;
 import org.jruby.ast.IterNode;
 import org.jruby.ast.HashNode;
 import org.jruby.ast.Hash19Node;
@@ -54,6 +52,7 @@ import org.jruby.ast.OptArgNode;
 import org.jruby.ast.SValue19Node;
 import org.jruby.ast.SplatNode;
 import org.jruby.ast.StarNode;
+import org.jruby.ast.Yield19Node;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.BlockBody;
@@ -63,6 +62,11 @@ import org.jruby.runtime.BlockBody;
  * @author headius
  */
 public class ASTCompiler19 extends ASTCompiler {
+    @Override
+    protected boolean is1_9() {
+        return true;
+    }
+    
     @Override
     public void compile(Node node, BodyCompiler context, boolean expr) {
         if (node == null) {
@@ -463,7 +467,7 @@ public class ASTCompiler19 extends ASTCompiler {
             }
         };
 
-        context.match2Capture(value, matchNode.getScopeOffsets());
+        context.match2Capture(value, matchNode.getScopeOffsets(), true);
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -484,6 +488,7 @@ public class ASTCompiler19 extends ASTCompiler {
         context.splatCurrentValue("splatValue19");
     }
 
+    @Override
     public void compileArgsCatArguments(Node node, BodyCompiler context, boolean expr) {
         ArgsCatNode argsCatNode = (ArgsCatNode) node;
 
@@ -498,11 +503,61 @@ public class ASTCompiler19 extends ASTCompiler {
         if (!expr) context.consumeCurrentValue();
     }
 
+    @Override
     public void compileSplatArguments(Node node, BodyCompiler context, boolean expr) {
         SplatNode splatNode = (SplatNode) node;
 
         compile(splatNode.getValue(), context,true);
         context.splatToArguments19();
+        // TODO: don't require pop
+        if (!expr) context.consumeCurrentValue();
+    }
+
+    public void compileDRegexp(Node node, BodyCompiler context, boolean expr) {
+        final DRegexpNode dregexpNode = (DRegexpNode) node;
+
+        ArrayCallback dElementsCallback = new ArrayCallback() {
+            public void nextValue(BodyCompiler context, Object sourceArray, int index) {
+                compile((Node)((Object[])sourceArray)[index], context, true);
+            }
+        };
+
+        if (expr) {
+            context.createDRegexp19(dElementsCallback, dregexpNode.childNodes().toArray(), dregexpNode.getOptions().toEmbeddedOptions());
+        } else {
+            // not an expression, only compile the elements
+            for (Node nextNode : dregexpNode.childNodes()) {
+                compile(nextNode, context, false);
+            }
+        }
+    }
+
+    @Override
+    public void compileYield(Node node, BodyCompiler context, boolean expr) {
+        if (!(node instanceof Yield19Node)) {
+            super.compileYield(node, context, expr);
+            return;
+        }
+        final Yield19Node yieldNode = (Yield19Node) node;
+
+        CompilerCallback argsCallback = new CompilerCallback() {
+            public void call(BodyCompiler context) {
+                compile(yieldNode.getArgsNode(), context,true);
+            }
+        };
+
+        boolean unsplat = false;
+
+        switch (yieldNode.getArgsNode().getNodeType()) {
+            case ARGSPUSHNODE:
+            case ARGSCATNODE:
+            case SPLATNODE:
+                unsplat = true;
+                break;
+        }
+
+        context.getInvocationCompiler().yield19(argsCallback, unsplat);
+
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }

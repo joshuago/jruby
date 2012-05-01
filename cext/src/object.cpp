@@ -19,7 +19,8 @@
  * version 3 along with this work.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
+#include <stdio.h>
+#include <stdlib.h>
 #include "jruby.h"
 #include "ruby.h"
 #include "JLocalEnv.h"
@@ -79,6 +80,12 @@ rb_respond_to(VALUE obj, ID id)
     return ret != JNI_FALSE;
 }
 
+extern "C" int
+rb_obj_respond_to(VALUE obj, ID id, int include_private)
+{
+    return RTEST(callMethod(obj, "respond_to?", 2, ID2SYM(id), include_private ? Qtrue : Qfalse));
+}
+
 extern "C" VALUE
 rb_convert_type(VALUE val, int type, const char* type_name, const char* method)
 {
@@ -106,6 +113,19 @@ rb_check_convert_type(VALUE val, int type, const char* type_name, const char* me
     }
 
     return convert_type(val, type_name, method, 0);
+}
+
+extern "C" VALUE
+rb_check_to_integer(VALUE object_handle, const char *method_name)
+{
+    if(FIXNUM_P(object_handle)) {
+        return object_handle;
+    }
+    VALUE result = rb_check_convert_type(object_handle, 0, "Integer", method_name);
+    if(rb_obj_is_kind_of(result, rb_cInteger)) {
+        return result;
+    }
+    return Qnil;
 }
 
 extern "C" VALUE
@@ -234,9 +254,9 @@ rb_to_integer(VALUE val, const char *method)
     if (TYPE(val) == T_BIGNUM) return val;
     v = convert_type(val, "Integer", method, 1);
     if (!rb_obj_is_kind_of(v, rb_cInteger)) {
-	const char *cname = rb_obj_classname(val);
-	rb_raise(rb_eTypeError, "can't convert %s to Integer (%s#%s gives %s)",
-		 cname, cname, method, rb_obj_classname(v));
+        const char *cname = rb_obj_classname(val);
+        rb_raise(rb_eTypeError, "can't convert %s to Integer (%s#%s gives %s)",
+                 cname, cname, method, rb_obj_classname(v));
     }
     return v;
 }
@@ -251,16 +271,14 @@ extern "C" VALUE
 rb_any_to_s(VALUE obj)
 {
     char* buf;
+    int len = 128, buflen;
 
-    if (asprintf(&buf, "#<%s:%p>", rb_obj_classname(obj), (void *) obj) == -1) {
-        // Could not allocate
-        return rb_str_new("", 0);
-    }
+    do {
+	buf = (char *) alloca(buflen = len);
+        len = snprintf(buf, buflen, "#<%s:%p>", rb_obj_classname(obj), (void *) obj);
+    } while (len >= buflen);
 
-    VALUE result = rb_str_new_cstr(buf);
-    free(buf);
-
-    return result;
+    return rb_str_new_cstr(buf);
 }
 
 extern "C" void
@@ -276,12 +294,28 @@ rb_singleton_class(VALUE obj)
 {
     JLocalEnv env;
 
-    jmethodID IRubyObject_getSingletonClass_method = getMethodID(env, IRubyObject_class, "getSingletonClass",
+    jmethodID IRubyObject_getSingletonClass_method = getCachedMethodID(env, IRubyObject_class, "getSingletonClass",
             "()Lorg/jruby/RubyClass;");
     jobject singleton = env->CallObjectMethod(valueToObject(env, obj), IRubyObject_getSingletonClass_method);
     checkExceptions(env);
 
     return objectToValue(env, singleton);
+}
+
+extern "C" VALUE
+rb_class_inherited_p(VALUE mod, VALUE arg)
+{
+    if (TYPE(arg) != T_MODULE && TYPE(arg) != T_CLASS) {
+        rb_raise(rb_eTypeError, "compared with non class/module");
+    }
+
+    return callMethodA(mod, "<=", 1, &arg);
+}
+
+extern "C" VALUE 
+rb_class_superclass(VALUE klass)
+{
+    return callMethodA(klass, "superclass", 0, NULL);
 }
 
 extern "C" VALUE
@@ -305,7 +339,7 @@ rb_obj_id(VALUE obj)
 extern "C" VALUE
 rb_equal(VALUE obj, VALUE other)
 {
-    return callMethod(obj, "==", 1, other);
+    return RTEST(callMethod(obj, "==", 1, other)) ? Qtrue : Qfalse;
 }
 
 extern "C" void
@@ -313,9 +347,16 @@ jruby_infect(VALUE object1, VALUE object2)
 {
     if (OBJ_TAINTED(object1)) {
         JLocalEnv env;
-        jmethodID mid = getMethodID(env, IRubyObject_class, "infectBy",
+        jmethodID mid = getCachedMethodID(env, IRubyObject_class, "infectBy",
             "(Lorg/jruby/runtime/builtin/IRubyObject;)Lorg/jruby/runtime/builtin/IRubyObject;");
         env->CallObjectMethod(valueToObject(env, object2), mid, object1);
         checkExceptions(env);
     }
+}
+
+extern "C" VALUE
+rb_hash(VALUE obj)
+{
+    VALUE hash = callMethod(obj, "hash", 0);
+    return convert_type(hash, "Fixnum", "to_int", true);
 }

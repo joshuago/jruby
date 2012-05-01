@@ -8,6 +8,7 @@ import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
+import org.jruby.util.StringSupport;
 
 /**
  * Base class for all D (e.g. Dynamic) node types like DStrNode, DSymbolNode, etc...
@@ -44,11 +45,11 @@ public abstract class DNode extends ListNode {
     }
 
     protected RubyString allocateString(Ruby runtime) {
-        ByteList empty = new ByteList();
+        ByteList bytes = new ByteList();
+        
+        if (is19()) bytes.setEncoding(encoding);
 
-        if (is19()) empty.setEncoding(encoding);
-
-        return runtime.newString(empty);
+        return RubyString.newStringShared(runtime, bytes, StringSupport.CR_7BIT);
     }
 
     public void appendToString(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock, RubyString string, Node node) {

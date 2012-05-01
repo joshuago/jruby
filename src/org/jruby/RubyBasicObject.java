@@ -27,13 +27,18 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.security.AccessControlException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings.ID;
@@ -108,7 +113,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     protected int flags;
 
     // variable table, lazily allocated as needed (if needed)
-    private volatile Object[] varTable;
+    private transient volatile Object[] varTable;
 
     /**
      * The error message used when some one tries to modify an
@@ -205,27 +210,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
 
     @JRubyMethod(name = "initialize", visibility = PRIVATE, compat = RUBY1_9)
     public IRubyObject initialize19(ThreadContext context) {
-        return getRuntime().getNil();
-    }
-
-    @JRubyMethod(name = "initialize", visibility = PRIVATE, compat = RUBY1_9)
-    public IRubyObject initialize19(ThreadContext context, IRubyObject arg0) {
-        return getRuntime().getNil();
-    }
-
-    @JRubyMethod(name = "initialize", visibility = PRIVATE, compat = RUBY1_9)
-    public IRubyObject initialize19(ThreadContext context, IRubyObject arg0, IRubyObject arg1) {
-        return getRuntime().getNil();
-    }
-
-    @JRubyMethod(name = "initialize", visibility = PRIVATE, compat = RUBY1_9)
-    public IRubyObject initialize19(ThreadContext context, IRubyObject arg0, IRubyObject arg1, IRubyObject arg2) {
-        return getRuntime().getNil();
-    }
-
-    @JRubyMethod(name = "initialize", visibility = PRIVATE, rest = true, compat = RUBY1_9)
-    public IRubyObject initialize19(ThreadContext context, IRubyObject[] args) {
-        return getRuntime().getNil();
+        return context.nil;
     }
 
     /**
@@ -244,7 +229,14 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * Path for objects that don't taint and don't enter objectspace.
      */
     public RubyBasicObject(RubyClass metaClass) {
+        assert metaClass != null: "NULL Metaclass!!?!?!";
+
         this.metaClass = metaClass;
+    }
+
+    @Deprecated
+    protected RubyBasicObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace, boolean canBeTainted) {
+        this(runtime, metaClass, useObjectSpace);
     }
 
     /**
@@ -252,12 +244,6 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * ObjectSpace even when it is on. (notably used by objects being
      * considered immediate, they'll always pass false here)
      */
-    protected RubyBasicObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace, boolean canBeTainted) {
-        this.metaClass = metaClass;
-
-        if (useObjectSpace) addToObjectSpace(runtime);
-    }
-
     protected RubyBasicObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace) {
         this.metaClass = metaClass;
 
@@ -305,17 +291,17 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      *
      * <ul>
      *  <li>{@link #FALSE_F}</li>
-     *  <li>{@link NIL_F}</li>
-     *  <li>{@link FROZEN_F}</li>
-     *  <li>{@link TAINTED_F}</li>
-     *  <li>{@link USER0_F}</li>
-     *  <li>{@link USER1_F}</li>
-     *  <li>{@link USER2_F}</li>
-     *  <li>{@link USER3_F}</li>
-     *  <li>{@link USER4_F}</li>
-     *  <li>{@link USER5_F}</li>
-     *  <li>{@link USER6_F}</li>
-     *  <li>{@link USER7_F}</li>
+     *  <li>{@link #NIL_F}</li>
+     *  <li>{@link #FROZEN_F}</li>
+     *  <li>{@link #TAINTED_F}</li>
+     *  <li>{@link #USER0_F}</li>
+     *  <li>{@link #USER1_F}</li>
+     *  <li>{@link #USER2_F}</li>
+     *  <li>{@link #USER3_F}</li>
+     *  <li>{@link #USER4_F}</li>
+     *  <li>{@link #USER5_F}</li>
+     *  <li>{@link #USER6_F}</li>
+     *  <li>{@link #USER7_F}</li>
      * </ul>
      *
      * @param flag the actual flag to set or unset.
@@ -335,17 +321,17 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      *
      * <ul>
      *  <li>{@link #FALSE_F}</li>
-     *  <li>{@link NIL_F}</li>
-     *  <li>{@link FROZEN_F}</li>
-     *  <li>{@link TAINTED_F}</li>
-     *  <li>{@link USER0_F}</li>
-     *  <li>{@link USER1_F}</li>
-     *  <li>{@link USER2_F}</li>
-     *  <li>{@link USER3_F}</li>
-     *  <li>{@link USER4_F}</li>
-     *  <li>{@link USER5_F}</li>
-     *  <li>{@link USER6_F}</li>
-     *  <li>{@link USER7_F}</li>
+     *  <li>{@link #NIL_F}</li>
+     *  <li>{@link #FROZEN_F}</li>
+     *  <li>{@link #TAINTED_F}</li>
+     *  <li>{@link #USER0_F}</li>
+     *  <li>{@link #USER1_F}</li>
+     *  <li>{@link #USER2_F}</li>
+     *  <li>{@link #USER3_F}</li>
+     *  <li>{@link #USER4_F}</li>
+     *  <li>{@link #USER5_F}</li>
+     *  <li>{@link #USER6_F}</li>
+     *  <li>{@link #USER7_F}</li>
      * </ul>
      *
      * @param flag the flag to get
@@ -536,10 +522,10 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     }
 
     /**
-     * Sets whether this object is frozen or not. Shortcut for doing
-     * setFlag(FROZEN_F, frozen).
+     * Sets whether this object is untrusted or not. Shortcut for doing
+     * setFlag(UNTRUSTED_F, untrusted).
      *
-     * @param frozen should this object be frozen?
+     * @param untrusted should this object be frozen?
      */
     public void setUntrusted(boolean untrusted) {
         if (untrusted) {
@@ -824,7 +810,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     }
 
     /**
-     * @see IRubyObject.toJava
+     * @see IRubyObject#toJava
      */
     public Object toJava(Class target) {
         // for callers that unconditionally pass null retval type (JRUBY-4737)
@@ -972,7 +958,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
 
 
     /**
-     * @see org.jruby.runtime.builtin.IRubyObject#dataWrapStruct()
+     * @see org.jruby.runtime.builtin.IRubyObject#dataWrapStruct(Object)
      */
     public synchronized void dataWrapStruct(Object obj) {
         if (obj == null) {
@@ -1007,6 +993,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      *
      * Return the internal id of an object.
      */
+    @JRubyMethod(name = {"object_id", "__id__"}, compat = RUBY1_9)
     public IRubyObject id() {
         return getRuntime().newFixnum(getObjectId());
     }
@@ -1017,16 +1004,20 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * in serial, and guaranteed unique for up to 2^63 objects. The special
      * objectId slot is managed separately from the "normal" vars so it
      * does not marshal, clone/dup, or refuse to be initially set when the
+     * object is frozen.
      */
-    protected synchronized long getObjectId() {
-        // object is frozen.
+    protected long getObjectId() {
+        RubyClass realClass = metaClass.getRealClass();
+        RubyClass.VariableAccessor objectIdAccessor = realClass.getObjectIdAccessorForRead();
+        Long id = (Long)objectIdAccessor.get(this);
+        if (id != null) return id;
+        
         synchronized (this) {
-            RubyClass.VariableAccessor objectIdAccessor = getMetaClass().getRealClass().getObjectIdAccessorForWrite();
-            Long id = (Long)objectIdAccessor.get(this);
-            if (id == null) {
-                return initObjectId(objectIdAccessor);
-            }
-            return id.longValue();
+            objectIdAccessor = realClass.getObjectIdAccessorForRead();
+            id = (Long)objectIdAccessor.get(this);
+            if (id != null) return id;
+
+            return initObjectId(realClass.getObjectIdAccessorForWrite());
         }
     }
 
@@ -1122,9 +1113,12 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         ThreadContext context = getRuntime().getCurrentContext();
         String sep = "";
 
-        for (Variable<IRubyObject> ivar : getInstanceVariableList()) {
-            part.append(sep).append(" ").append(ivar.getName()).append("=");
-            part.append(ivar.getValue().callMethod(context, "inspect"));
+        for (Map.Entry<String, RubyClass.VariableAccessor> entry : getMetaClass().getVariableAccessorsForRead().entrySet()) {
+            Object value = entry.getValue().get(this);
+            if (value == null || !(value instanceof IRubyObject) || !IdUtil.isInstanceVariable(entry.getKey())) continue;
+            
+            part.append(sep).append(" ").append(entry.getKey()).append("=");
+            part.append(((IRubyObject)value).callMethod(context, "inspect"));
             sep = ",";
         }
         part.append(">");
@@ -1159,9 +1153,9 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      *
      * The name of this method doesn't follow the convention because hierarchy problems
      */
-    @JRubyMethod(name = "==", required = 1, compat = RUBY1_9)
+    @JRubyMethod(name = "==", compat = RUBY1_9)
     public IRubyObject op_equal_19(ThreadContext context, IRubyObject obj) {
-        return this == obj ? context.getRuntime().getTrue() : context.getRuntime().getFalse();
+        return this == obj ? context.runtime.getTrue() : context.runtime.getFalse();
     }
 
     public IRubyObject op_eqq(ThreadContext context, IRubyObject other) {
@@ -1227,36 +1221,94 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     /**
      * Get variable table for read purposes. May return null if uninitialized.
      */
-    private Object[] getVariableTableForRead() {
+    protected final Object[] getVariableTableForRead() {
         return varTable;
     }
+
+    private static final AtomicReferenceFieldUpdater VARTABLE_UPDATER;
+
+    static {
+        AtomicReferenceFieldUpdater updater = null;
+        try {
+            updater = AtomicReferenceFieldUpdater.newUpdater(RubyBasicObject.class, Object[].class, "varTable");
+        } catch (RuntimeException re) {
+            if (re.getCause() instanceof AccessControlException) {
+                // security prevented creation; fall back on synchronized assignment
+            } else {
+                throw re;
+            }
+        }
+        VARTABLE_UPDATER = updater;
+    }
+
 
     /**
      * Get variable table for write purposes. Initializes if uninitialized, and
      * resizes if necessary.
      */
-    private Object[] getVariableTableForWrite(int index) {
+    protected final Object[] getVariableTableForWrite(int index) {
+        if (VARTABLE_UPDATER == null) {
+            return getVariableTableForWriteSynchronized(index);
+        } else {
+            return getVariableTableForWriteAtomic(index);
+        }
+    }
+
+    /**
+     * Get the variable table for write. If it is not set or not of the right size,
+     * synchronize against the object and prepare it accordingly.
+     *
+     * @param index the index of the value soon to be set
+     * @return the var table, ready for setting
+     */
+    private Object[] getVariableTableForWriteSynchronized(int index) {
         Object[] myVarTable = varTable;
-        if (myVarTable == null) {
+        if (myVarTable == null || myVarTable.length <= index) {
             synchronized (this) {
                 myVarTable = varTable;
+
                 if (myVarTable == null) {
-                    if (DEBUG) LOG.debug("allocating varTable with size {}", getMetaClass().getRealClass().getVariableTableSizeWithObjectId());
-                    varTable = myVarTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithObjectId()];
-                }
-            }
-        } else if (myVarTable.length <= index) {
-            synchronized (this) {
-                myVarTable = varTable;
-                if (myVarTable.length <= index) {
-                    if (DEBUG) LOG.debug("resizing from {} to {}", myVarTable.length, getMetaClass().getRealClass().getVariableTableSizeWithObjectId());
-                    Object[] newTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithObjectId()];
+                    return varTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
+                } else if (myVarTable.length <= index) {
+                    Object[] newTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
                     System.arraycopy(myVarTable, 0, newTable, 0, myVarTable.length);
-                    varTable = myVarTable = newTable;
+                    return varTable = newTable;
+                } else {
+                    return myVarTable;
                 }
             }
         }
-        return myVarTable;
+
+        return varTable;
+    }
+
+
+    /**
+     * Get the variable table for write. If it is not set or not of the right size,
+     * atomically update it with an appropriate value.
+     *
+     * @param index the index of the value soon to be set
+     * @return the var table, ready for setting
+     */
+    private Object[] getVariableTableForWriteAtomic(int index) {
+        while (true) {
+            Object[] myVarTable = varTable;
+            Object[] newTable;
+
+            if (myVarTable == null) {
+                newTable = new Object[metaClass.getRealClass().getVariableTableSizeWithExtras()];
+            } else if (myVarTable.length <= index) {
+                newTable = new Object[metaClass.getRealClass().getVariableTableSizeWithExtras()];
+                System.arraycopy(myVarTable, 0, newTable, 0, myVarTable.length);
+            } else {
+                return myVarTable;
+            }
+
+            // proceed with atomic update of table, or retry
+            if (VARTABLE_UPDATER.compareAndSet(this, myVarTable, newTable)) {
+                return newTable;
+            }
+        }
     }
 
     public Object getVariable(int index) {
@@ -1275,6 +1327,26 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
 
     private void setObjectId(int index, long value) {
         if (index < 0) return;
+        Object[] ivarTable = getVariableTableForWrite(index);
+        ivarTable[index] = value;
+    }
+    
+    public final Object getNativeHandle() {
+        return getMetaClass().getRealClass().getNativeHandleAccessorForRead().get(this);
+    }
+
+    public final void setNativeHandle(Object value) {
+        int index = getMetaClass().getRealClass().getNativeHandleAccessorForWrite().getIndex();
+        Object[] ivarTable = getVariableTableForWrite(index);
+        ivarTable[index] = value;
+    }
+
+    public final Object getFFIHandle() {
+        return getMetaClass().getRealClass().getFFIHandleAccessorForRead().get(this);
+    }
+
+    public final void setFFIHandle(Object value) {
+        int index = getMetaClass().getRealClass().getFFIHandleAccessorForWrite().getIndex();
         Object[] ivarTable = getVariableTableForWrite(index);
         ivarTable[index] = value;
     }
@@ -1401,6 +1473,12 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         synchronized(this) {
             Object value = getMetaClass().getRealClass().getVariableAccessorForRead(name).get(this);
             getMetaClass().getRealClass().getVariableAccessorForWrite(name).set(this, null);
+            
+            // if there's no values set anymore, null out the table
+            for (Object var : varTable) {
+                if (var != null) return value;
+            }
+            varTable = null;
             return value;
         }
     }
@@ -1788,7 +1866,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
                 return setupBlock(block).yieldNonArray(context, valueInYield, this, context.getRubyClass());
             } else {
                 IRubyObject valueInYield = RubyArray.newArrayNoCopy(context.getRuntime(), args);
-                return block.yieldArray(context, valueInYield, this, context.getRubyClass());
+                return setupBlock(block).yieldArray(context, valueInYield, this, context.getRubyClass());
             }
             //TODO: Should next and return also catch here?
         } catch (JumpException.BreakJump bj) {
@@ -2064,7 +2142,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * The actual method that checks frozen with the default frozen message from MRI.
      * If possible, call this instead of {@link #testFrozen}.
      */
-    protected void checkFrozen() {
+    public void checkFrozen() {
         testFrozen();
     }
 
@@ -2797,6 +2875,8 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         return getMetaClass().finvoke(context, this, name, arg1, arg2, block);
     }
     public IRubyObject send(ThreadContext context, IRubyObject[] args, Block block) {
+        if (args.length == 0) return send(context, block);
+        
         String name = args[0].asJavaString();
         int newArgsLength = args.length - 1;
 
@@ -3009,5 +3089,74 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         if (IdUtil.isValidInstanceVariableName(name)) return name;
 
         throw getRuntime().newNameError("`" + name + "' is not allowable as an instance variable name", name);
+    }
+    
+    /**
+     * Serialization of a Ruby (basic) object involves three steps:
+     * 
+     * <ol>
+     * <li>Dump the object itself</li>
+     * <li>Dump a String used to load the appropriate Ruby class</li>
+     * <li>Dump each variable from varTable in turn</li>
+     * </ol>
+     * 
+     * The metaClass field is marked transient since Ruby classes generally will
+     * not be able to serialize (since they hold references to method tables,
+     * other classes, and potentially thread-, runtime-, or jvm-local state.
+     * 
+     * The varTable field is transient because the layout of the same class may
+     * differ across runtimes, since it is determined at runtime based on the
+     * order in which variables get assigned for a given class. We serialize
+     * entries by name to allow other layouts to work properly.
+     */
+    private void writeObject(ObjectOutputStream oos) throws IOException {
+        if (metaClass.isSingleton()) {
+            throw new IOException("can not serialize singleton object");
+        }
+        
+        oos.defaultWriteObject();
+        oos.writeUTF(metaClass.getName());
+        
+        if (varTable != null) {
+            Map<String, RubyClass.VariableAccessor> accessors = metaClass.getVariableAccessorsForRead();
+            oos.writeInt(accessors.size());
+            for (RubyClass.VariableAccessor accessor : accessors.values()) {
+                oos.writeUTF(ERR_INSECURE_SET_INST_VAR);
+                oos.writeObject(accessor.get(this));
+            }
+        } else {
+            oos.writeInt(0);
+        }
+    }
+    
+    /**
+     * Deserialization proceeds as follows:
+     * 
+     * <ol>
+     * <li>Deserialize the object instance. It will have null metaClass and
+     * varTable fields.</li>
+     * <li>Deserialize the name of the object's class, and retrieve class from a
+     * thread-local JRuby instance.</li>
+     * <li>Retrieve each variable in turn, re-assigning them by name.</li>
+     * </ol>
+     * 
+     * @see RubyBasicObject#writeObject(java.io.ObjectOutputStream) 
+     */
+    private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
+        Ruby ruby = Ruby.getThreadLocalRuntime();
+        
+        if (ruby == null) {
+            throw new IOException("No thread-local org.jruby.Ruby available; can't deserialize Ruby object. Set with Ruby#setThreadLocalRuntime.");
+        }
+        
+        ois.defaultReadObject();
+        metaClass = (RubyClass)ruby.getClassFromPath(ois.readUTF());
+        
+        int varCount = ois.readInt();
+        for (int i = 0; i < varCount; i++) {
+            String name = ois.readUTF();
+            Object value = ois.readObject();
+            metaClass.getVariableAccessorForWrite(name).set(this, value);
+        }
     }
 }

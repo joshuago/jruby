@@ -203,7 +203,7 @@ public class Ruby19Parser implements RubyParser {
 %type <RestArgNode> f_rest_arg 
 %type <Node> singleton strings string string1 xstring regexp
 %type <Node> string_contents xstring_contents string_content method_call
-%type <Node> words qwords word literal numeric dsym cpath command_call
+%type <Node> words qwords word literal numeric dsym cpath command_asgn command_call
 %type <Node> compstmt bodystmt stmts stmt expr arg primary command 
 %type <Node> expr_value primary_value opt_else cases if_tail exc_var
    // ENEBO: missing call_args2, open_args
@@ -236,6 +236,7 @@ public class Ruby19Parser implements RubyParser {
    // ENEBO: end all new types
 
 %type <Token> rparen rbracket reswords f_bad_arg
+%type <Node> top_compstmt top_stmts top_stmt
 
 /*
  *    precedence table
@@ -271,7 +272,7 @@ public class Ruby19Parser implements RubyParser {
 program       : {
                   lexer.setState(LexState.EXPR_BEG);
                   support.initTopLocalVariables();
-              } compstmt {
+              } top_compstmt {
   // ENEBO: Removed !compile_for_eval which probably is to reduce warnings
                   if ($2 != null) {
                       /* last expression should not be void */
@@ -282,6 +283,34 @@ program       : {
                       }
                   }
                   support.getResult().setAST(support.addRootNode($2, support.getPosition($2)));
+              }
+
+top_compstmt  : top_stmts opt_terms {
+                  if ($1 instanceof BlockNode) {
+                      support.checkUselessStatements($<BlockNode>1);
+                  }
+                  $$ = $1;
+              }
+
+top_stmts     : none
+              | top_stmt {
+                    $$ = support.newline_node($1, support.getPosition($1));
+              }
+              | top_stmts terms top_stmt {
+                    $$ = support.appendToBlock($1, support.newline_node($3, support.getPosition($3)));
+              }
+              | error top_stmt {
+                    $$ = $2;
+              }
+
+top_stmt      : stmt
+              | klBEGIN {
+                    if (support.isInDef() || support.isInSingle()) {
+                        support.yyerror("BEGIN in method");
+                    }
+              } tLCURLY top_compstmt tRCURLY {
+                    support.getResult().addBeginNode(new PreExe19Node($1.getPosition(), support.getCurrentScope(), $4));
+                    $$ = null;
               }
 
 bodystmt      : compstmt opt_rescue opt_else opt_ensure {
@@ -360,25 +389,13 @@ stmt            : kALIAS fitem {
                     Node body = $3 == null ? NilImplicitNode.NIL : $3;
                     $$ = new RescueNode(support.getPosition($1), $1, new RescueBodyNode(support.getPosition($1), null, body, null), null);
                 }
-                | klBEGIN {
-                    // FIXME: the == here is gross; need a cleaner way to check it
-                    if (support.isInDef() || support.isInSingle() || support.getCurrentScope().getClass() == BlockStaticScope.class) {
-                        support.yyerror("BEGIN in method, singleton, or block");
-                    }
-                } tLCURLY compstmt tRCURLY {
-                    support.getResult().addBeginNode(new PreExe19Node($1.getPosition(), support.getCurrentScope(), $4));
-                    $$ = null;
-                }
                 | klEND tLCURLY compstmt tRCURLY {
                     if (support.isInDef() || support.isInSingle()) {
                         support.warn(ID.END_IN_METHOD, $1.getPosition(), "END in method; use at_exit");
                     }
                     $$ = new PostExeNode($1.getPosition(), $3);
                 }
-                | lhs '=' command_call {
-                    support.checkExpression($3);
-                    $$ = support.node_assign($1, $3);
-                }
+                | command_asgn
                 | mlhs '=' command_call {
                     support.checkExpression($3);
                     $1.setValueNode($3);
@@ -430,6 +447,15 @@ stmt            : kALIAS fitem {
                     $1.setPosition(support.getPosition($1));
                 }
                 | expr
+
+command_asgn    : lhs '=' command_call {
+                    support.checkExpression($3);
+                    $$ = support.node_assign($1, $3);
+                }
+                | lhs '=' command_asgn {
+                    support.checkExpression($3);
+                    $$ = support.node_assign($1, $3);
+                }
 
 // Node:expr *CURRENT* all but arg so far
 expr            : command_call
@@ -873,7 +899,7 @@ arg             : lhs '=' arg {
                   */
                 }
                 | arg tNMATCH arg {
-                    $$ = new NotNode(support.getPosition($1), support.getMatchNode($1, $3));
+                    $$ = support.getOperatorCallNode($1, "!~", $3, lexer.getPosition());
                 }
                 | tBANG arg {
                     $$ = support.getOperatorCallNode(support.getConditionNode($2), "!");
@@ -1348,8 +1374,10 @@ block_param_def : tPIPE opt_bv_decl tPIPE {
                 }
 
 // shadowed block variables....
-opt_bv_decl     : none 
-                | ';' bv_decls {
+opt_bv_decl     : opt_nl {
+                    $$ = null;
+                }
+                | opt_nl ';' bv_decls opt_nl {
                     $$ = null;
                 }
 
@@ -1378,7 +1406,7 @@ lambda          : /* none */  {
                     lexer.setLeftParenBegin($<Integer>1);
                 }
 
-f_larglist      : tLPAREN2 f_args opt_bv_decl rparen {
+f_larglist      : tLPAREN2 f_args opt_bv_decl tRPAREN {
                     $$ = $2;
                     $<ISourcePositionHolder>$.setPosition($1.getPosition());
                 }

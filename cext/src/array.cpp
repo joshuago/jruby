@@ -43,12 +43,24 @@ using namespace jruby;
 
 RubyArray::RubyArray(JNIEnv* env, jobject obj_): Handle(env, obj_, T_ARRAY)
 {
-    rwdata.rarray = NULL;
+    memset(&rwdata, 0, sizeof(rwdata));
 }
 
 RubyArray::~RubyArray()
 {
-    // See Java_org_jruby_cext_Native_freeRArray
+    RArray* rarray = rwdata.rarray;
+    if (rarray != NULL) {
+        free(rarray->ptr);
+        free(rarray);
+    }
+}
+
+void 
+RubyArray::markElements()
+{
+    if (rwdata.rarray != NULL && rwdata.rarray->ptr != NULL) {
+        rb_gc_mark_locations(rwdata.rarray->ptr, &rwdata.rarray->ptr[rwdata.rarray->len]);
+    }
 }
 
 static bool
@@ -72,36 +84,41 @@ RubyArray_clean(JNIEnv* env, DataSync* data)
 struct RArray*
 RubyArray::toRArray(bool readonly)
 {
-    if (rwdata.rarray != NULL) {
+    if (rwdata.rarray != NULL && rwdata.valid) {
         if (readonly || !rwdata.readonly) {
             return rwdata.rarray;
         }
 
         // Switch from readonly to read-write
         rwdata.readonly = false;
-        TAILQ_INSERT_TAIL(&jruby::nsyncq, &rwdata.nsync, syncq);
+	TAILQ_INSERT_TAIL(&jruby::jsyncq, &rwdata.jsync, syncq);
         JLocalEnv env;
         nsync(env);
 
         return rwdata.rarray;
     }
 
-    JLocalEnv env;
     rwdata.jsync.data = this;
     rwdata.jsync.sync = RubyArray_jsync;
     rwdata.nsync.data = this;
     rwdata.nsync.sync = RubyArray_nsync;
     rwdata.clean.data = this;
     rwdata.clean.sync = RubyArray_clean;
-    rwdata.rarray = (RArray *) j2p(env->CallStaticLongMethod(JRuby_class, JRuby_getRArray, obj));
-    checkExceptions(env);
-    rwdata.readonly = readonly;
 
     TAILQ_INSERT_TAIL(&jruby::cleanq, &rwdata.clean, syncq);
-    TAILQ_INSERT_TAIL(&jruby::jsyncq, &rwdata.jsync, syncq);
+    TAILQ_INSERT_TAIL(&jruby::nsyncq, &rwdata.nsync, syncq);
     if (!readonly) {
-        TAILQ_INSERT_TAIL(&jruby::nsyncq, &rwdata.nsync, syncq);
+	TAILQ_INSERT_TAIL(&jruby::jsyncq, &rwdata.jsync, syncq);
     }
+    if (rwdata.rarray == NULL) {
+	rwdata.rarray = (RArray *) calloc(1, sizeof(RArray));
+	if (rwdata.rarray == NULL) {
+	    rb_raise(rb_eNoMemError, "failed to allocate memory for RArray");
+	}
+    }
+    rwdata.readonly = readonly;
+
+    JLocalEnv env;
     nsync(env);
 
     return rwdata.rarray;
@@ -110,31 +127,42 @@ RubyArray::toRArray(bool readonly)
 bool
 RubyArray::clean(JNIEnv* env)
 {
-    // Clear the cached data
-    rwdata.readonly = false;
-    rwdata.rarray = NULL;
-
+    // Invalidate the cached data
+    rwdata.valid = false;
     return false;
 }
 
 bool
 RubyArray::jsync(JNIEnv* env)
 {
-    if (rwdata.readonly && rwdata.rarray != NULL) {
-        // Readonly, just clear the cached data
-        rwdata.rarray = NULL;
-        rwdata.readonly = false;
+    if (rwdata.readonly) {
+        // Readonly, do nothing
         return false;
     }
 
-    if (rwdata.rarray != NULL && rwdata.rarray->ptr != NULL) {
+    if (rwdata.valid && rwdata.rarray != NULL && rwdata.rarray->ptr != NULL) {
         jobjectArray values = (jobjectArray)(env->GetObjectField(obj, RubyArray_values_field));
         checkExceptions(env);
         jint begin = env->GetIntField(obj, RubyArray_begin_field);
         checkExceptions(env);
+        long capa = (long)(env->GetArrayLength(values) - begin);
+        checkExceptions(env);
 
         RArray* rarray = rwdata.rarray;
-        assert((env->GetArrayLength(values) - begin) >= rarray->aux.capa);
+        if (capa < rarray->aux.capa) {
+            // Items were added in native code, grow Java array
+            // We just drop the array, we're copying from C, anyway
+            jint oldLength = env->GetArrayLength(values);
+            env->DeleteLocalRef(values);
+            values = env->NewObjectArray(capa * 2 + begin, IRubyObject_class, NULL);
+            env->NewLocalRef(values);
+            env->SetObjectField(obj, RubyArray_values_field, values);
+            checkExceptions(env);
+            capa = (long)(env->GetArrayLength(values) - begin);
+            checkExceptions(env);
+        }
+
+        assert(capa >= rarray->aux.capa);
 
         long used_length = rarray->len;
         // Copy all values back into the Java array
@@ -176,7 +204,10 @@ RubyArray::nsync(JNIEnv* env)
     // If capacity has grown, reallocate the C array
     if ((capa > rarray->aux.capa) || (rarray->aux.capa == 0)) {
         rarray->aux.capa = capa;
-        rarray->ptr = (VALUE*)realloc(rarray->ptr, sizeof(VALUE) * capa);
+        rarray->ptr = (VALUE*)realloc(rarray->ptr, sizeof(VALUE) * capa * 2);
+	if (rarray->ptr == NULL) {
+	    rb_raise(rb_eNoMemError, "failed to allocate proxy for RArray");
+	}
     }
 
     // If there is content, copy over
@@ -191,8 +222,23 @@ RubyArray::nsync(JNIEnv* env)
     }
 
     env->DeleteLocalRef(values);
+    rwdata.valid = true;
     rarray->len = len;
     return true;
+}
+
+int
+RubyArray::length()
+{
+    if (rwdata.rarray != NULL && rwdata.valid) {
+	return rwdata.rarray->len;
+    }
+
+    JLocalEnv env;
+    int len = env->GetIntField(valueToObject(env, asValue()), RubyArray_length_field);
+    checkExceptions(env);
+
+    return len;
 }
 
 static VALUE
@@ -216,6 +262,17 @@ jruby_rarray(VALUE v)
     Handle* h = Handle::valueOf(v);
     if (h->getType() == T_ARRAY) {
         return ((RubyArray *) h)->toRArray(false);
+    }
+
+    rb_raise(rb_eTypeError, "wrong type (expected Array)");
+}
+
+extern "C" long
+jruby_ary_len(VALUE v)
+{
+    Handle* h = Handle::valueOf(v);
+    if (h->getType() == T_ARRAY) {
+	return dynamic_cast<RubyArray *>(h)->length();
     }
 
     rb_raise(rb_eTypeError, "wrong type (expected Array)");
@@ -395,4 +452,33 @@ rb_iterate(VALUE(*ifunc)(VALUE), VALUE ary, VALUE(*cb)(ANYARGS), VALUE cb_data)
     }
 
     return ary;
+}
+
+extern "C" VALUE
+rb_ary_to_s(VALUE ary)
+{
+    return callMethod(ary, "to_s", 0);
+}
+
+extern "C" void
+rb_mem_clear(VALUE* ary, int len)
+{
+    for(int i = 0; i < len; i++) {
+        ary[i] = Qnil;
+    }
+}
+
+extern "C" VALUE
+rb_ary_freeze(VALUE ary)
+{
+    return rb_obj_freeze(ary);
+}
+
+extern "C" VALUE
+rb_ary_to_ary(VALUE ary)
+{
+    VALUE tmp = rb_check_array_type(ary);
+
+    if (!NIL_P(tmp)) return tmp;
+    return rb_ary_new3(1, ary);
 }

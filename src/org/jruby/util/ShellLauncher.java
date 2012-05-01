@@ -28,7 +28,6 @@
 
 package org.jruby.util;
 
-import com.kenai.jaffl.FFIProvider;
 import static java.lang.System.out;
 
 import java.io.BufferedInputStream;
@@ -48,12 +47,12 @@ import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import jnr.posix.util.ProcessMaker;
 import org.jruby.Main;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
@@ -62,14 +61,14 @@ import org.jruby.RubyIO;
 import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyModule;
 import org.jruby.RubyString;
-import org.jruby.ext.posix.POSIX;
-import org.jruby.ext.posix.util.FieldAccess;
-import org.jruby.ext.posix.util.Platform;
+import jnr.posix.POSIX;
+import jnr.posix.util.FieldAccess;
+import jnr.posix.util.Platform;
 import org.jruby.javasupport.util.RuntimeHelpers;
-import org.jruby.libraries.RbConfigLibrary;
+import org.jruby.ext.rbconfig.RbConfigLibrary;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
-import org.jruby.util.io.ModeFlags;
+import org.jruby.util.io.IOOptions;
 
 /**
  * This mess of a class is what happens when all Java gives you is
@@ -303,19 +302,10 @@ public class ShellLauncher {
                 }
             }
         } else {
-            File pathFile = tryFile(runtime, fdir, fname);
-            if (pathFile != null) {
-                if (isExec) {
-                    if (!pathFile.isDirectory()) {
-                        String pathFileStr = pathFile.getAbsolutePath();
-                        POSIX posix = runtime.getPosix();
-                        if (posix.stat(pathFileStr).isExecutable()) {
-                            validFile = pathFile;
-                        }
-                    }
-                } else {
-                    validFile = pathFile;
-                }
+            validFile = tryFile(runtime, fdir, fname);
+            if (validFile != null && isExec &&
+                (validFile.isDirectory() || !runtime.getPosix().stat(validFile.getAbsolutePath()).isExecutable())) {
+                throw runtime.newErrnoEACCESError(validFile.getAbsolutePath());
             }
         }
         return validFile;
@@ -391,11 +381,11 @@ public class ShellLauncher {
                     // execute command with sh -c
                     // this does shell expansion of wildcards
                     cfg.verifyExecutableForShell();
-                    aProcess = Runtime.getRuntime().exec(cfg.getExecArgs(), getCurrentEnv(runtime, mergeEnv), pwd);
+                    aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime, mergeEnv), pwd);
                 } else {
                     log(runtime, "Launching directly (no shell)");
                     cfg.verifyExecutableForDirect();
-                    aProcess = Runtime.getRuntime().exec(cfg.getExecArgs(), getCurrentEnv(runtime, mergeEnv), pwd);
+                    aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime, mergeEnv), pwd);
                 }
             } catch (SecurityException se) {
                 throw runtime.newSecurityError(se.getLocalizedMessage());
@@ -435,11 +425,11 @@ public class ShellLauncher {
                     // execute command with sh -c
                     // this does shell expansion of wildcards
                     cfg.verifyExecutableForShell();
-                    aProcess = Runtime.getRuntime().exec(cfg.getExecArgs(), getCurrentEnv(runtime, (Map)env), pwd);
+                    aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime, (Map)env), pwd);
                 } else {
                     log(runtime, "Launching directly (no shell)");
                     cfg.verifyExecutableForDirect();
-                    aProcess = Runtime.getRuntime().exec(cfg.getExecArgs(), getCurrentEnv(runtime, (Map)env), pwd);
+                    aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime, (Map)env), pwd);
                 }
             } catch (SecurityException se) {
                 throw runtime.newSecurityError(se.getLocalizedMessage());
@@ -459,6 +449,13 @@ public class ShellLauncher {
         } catch (IOException e) {
             throw runtime.newIOErrorFromException(e);
         }
+    }
+
+    public static Process buildProcess(Ruby runtime, String[] args, String[] env, File pwd) throws IOException {
+        return runtime.getPosix().newProcessMaker(args)
+                .environment(env)
+                .directory(pwd)
+                .start();
     }
 
     public static long runExternalWithoutWait(Ruby runtime, IRubyObject[] rawArgs) {
@@ -597,8 +594,7 @@ public class ShellLauncher {
                                 return (Integer)UNIXProcess_pid.get(process);
                             } else if (ProcessImpl.isInstance(process)) {
                                 Long hproc = (Long) ProcessImpl_handle.get(process);
-                                return WindowsFFI.getKernel32(FFIProvider.getProvider())
-                                    .GetProcessId(new com.kenai.jaffl.NativeLong(hproc));
+                                return WindowsFFI.getKernel32().GetProcessId(hproc.intValue());
                             }
                         } catch (Exception e) {
                             // ignore and use hashcode
@@ -628,8 +624,7 @@ public class ShellLauncher {
                     try {
                         if (ProcessImpl.isInstance(process)) {
                             Long hproc = (Long) ProcessImpl_handle.get(process);
-                            return WindowsFFI.getKernel32(FFIProvider.getProvider())
-                                .GetProcessId(new com.kenai.jaffl.NativeLong(hproc));
+                            return WindowsFFI.getKernel32().GetProcessId(hproc.intValue());
                         }
 
                     } catch (Exception e) {
@@ -657,11 +652,11 @@ public class ShellLauncher {
         return run(runtime, new IRubyObject[] {string}, false);
     }
 
-    public static POpenProcess popen(Ruby runtime, IRubyObject string, ModeFlags modes) throws IOException {
+    public static POpenProcess popen(Ruby runtime, IRubyObject string, IOOptions modes) throws IOException {
         return new POpenProcess(popenShared(runtime, new IRubyObject[] {string}), runtime, modes);
     }
 
-    public static POpenProcess popen(Ruby runtime, IRubyObject[] strings, Map env, ModeFlags modes) throws IOException {
+    public static POpenProcess popen(Ruby runtime, IRubyObject[] strings, Map env, IOOptions modes) throws IOException {
         return new POpenProcess(popenShared(runtime, strings, env), runtime, modes);
     }
 
@@ -699,9 +694,9 @@ public class ShellLauncher {
                     argArray[0] = shell;
                     argArray[1] = shell.endsWith("sh") ? "-c" : "/c";
                     argArray[2] = strings[0].asJavaString();
-                    childProcess = Runtime.getRuntime().exec(argArray, getCurrentEnv(runtime, env), pwd);
+                    childProcess = buildProcess(runtime, argArray, getCurrentEnv(runtime, env), pwd);
                 } else {
-                    childProcess = Runtime.getRuntime().exec(args, getCurrentEnv(runtime, env), pwd);
+                    childProcess = buildProcess(runtime, args, getCurrentEnv(runtime, env), pwd);
                 }
             } else {
                 if (useShell) {
@@ -709,10 +704,10 @@ public class ShellLauncher {
                     argArray[0] = shell;
                     argArray[1] = shell.endsWith("sh") ? "-c" : "/c";
                     System.arraycopy(args, 0, argArray, 2, args.length);
-                    childProcess = Runtime.getRuntime().exec(argArray, getCurrentEnv(runtime, env), pwd);
+                    childProcess = buildProcess(runtime, argArray, getCurrentEnv(runtime, env), pwd);
                 } else {
                     // direct invocation of the command
-                    childProcess = Runtime.getRuntime().exec(args, getCurrentEnv(runtime, env), pwd);
+                    childProcess = buildProcess(runtime, args, getCurrentEnv(runtime, env), pwd);
                 }
             }
         } catch (SecurityException se) {
@@ -768,6 +763,7 @@ public class ShellLauncher {
 
     public static class POpenProcess extends Process {
         private final Process child;
+        private final boolean waitForChild;
 
         // real stream references, to keep them from being GCed prematurely
         private InputStream realInput;
@@ -782,21 +778,22 @@ public class ShellLauncher {
         private FileChannel inerrChannel;
         private Pumper inputPumper;
         private Pumper inerrPumper;
-        private Pumper outputPumper;
 
-        public POpenProcess(Process child, Ruby runtime, ModeFlags modes) {
+        public POpenProcess(Process child, Ruby runtime, IOOptions modes) {
             this.child = child;
 
-            if (modes.isWritable()) {
+            if (modes.getModeFlags().isWritable()) {
+                this.waitForChild = true;
                 prepareOutput(child);
             } else {
+                this.waitForChild = false;
                 // close process output
                 // See JRUBY-3405; hooking up to parent process stdin caused
                 // problems for IRB etc using stdin.
                 try {child.getOutputStream().close();} catch (IOException ioe) {}
             }
 
-            if (modes.isReadable()) {
+            if (modes.getModeFlags().isReadable()) {
                 prepareInput(child);
             } else {
                 pumpInput(child, runtime);
@@ -807,6 +804,7 @@ public class ShellLauncher {
 
         public POpenProcess(Process child) {
             this.child = child;
+            this.waitForChild = false;
 
             prepareOutput(child);
             prepareInput(child);
@@ -850,19 +848,7 @@ public class ShellLauncher {
 
         @Override
         public int waitFor() throws InterruptedException {
-            if (outputPumper == null) {
-                try {
-                    if (output != null) output.close();
-                } catch (IOException ioe) {
-                    // ignore, we're on the way out
-                }
-            } else {
-                outputPumper.quit();
-            }
-
-            int result = child.waitFor();
-
-            return result;
+            return child.waitFor();
         }
 
         @Override
@@ -873,23 +859,28 @@ public class ShellLauncher {
         @Override
         public void destroy() {
             try {
-                if (input != null) input.close();
-                if (inerr != null) inerr.close();
-                if (output != null) output.close();
-                if (inputChannel != null) inputChannel.close();
-                if (inerrChannel != null) inerrChannel.close();
-                if (outputChannel != null) outputChannel.close();
+                // We try to safely close all streams and channels to the greatest
+                // extent possible.
+                try {if (input != null) input.close();} catch (Exception e) {}
+                try {if (inerr != null) inerr.close();} catch (Exception e) {}
+                try {if (output != null) output.close();} catch (Exception e) {}
+                try {if (inputChannel != null) inputChannel.close();} catch (Exception e) {}
+                try {if (inerrChannel != null) inerrChannel.close();} catch (Exception e) {}
+                try {if (outputChannel != null) outputChannel.close();} catch (Exception e) {}
 
                 // processes seem to have some peculiar locking sequences, so we
                 // need to ensure nobody is trying to close/destroy while we are
                 synchronized (this) {
-                    RubyIO.obliterateProcess(child);
                     if (inputPumper != null) synchronized(inputPumper) {inputPumper.quit();}
                     if (inerrPumper != null) synchronized(inerrPumper) {inerrPumper.quit();}
-                    if (outputPumper != null) synchronized(outputPumper) {outputPumper.quit();}
+                    if (waitForChild) {
+                        waitFor();
+                    } else {
+                        RubyIO.obliterateProcess(child);
+                    }
                 }
-            } catch (IOException ioe) {
-                throw new RuntimeException(ioe);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
             }
         }
 
@@ -926,7 +917,6 @@ public class ShellLauncher {
             } else {
                 outputChannel = null;
             }
-            outputPumper = null;
         }
 
         private void pumpInput(Process child, Ruby runtime) {
@@ -1276,11 +1266,11 @@ public class ShellLauncher {
                 // execute command with sh -c
                 // this does shell expansion of wildcards
                 cfg.verifyExecutableForShell();
-                aProcess = Runtime.getRuntime().exec(cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
+                aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
             } else {
                 log(runtime, "Launching directly (no shell)");
                 cfg.verifyExecutableForDirect();
-                aProcess = Runtime.getRuntime().exec(cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
+                aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
             }
         } catch (SecurityException se) {
             throw runtime.newSecurityError(se.getLocalizedMessage());

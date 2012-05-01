@@ -1,23 +1,23 @@
 package org.jruby.ext.ffi.jffi;
 
 import com.kenai.jffi.CallingConvention;
-import org.jruby.RubyFixnum;
-import org.jruby.RubyHash;
-import org.jruby.RubyInteger;
-import org.jruby.RubyProc;
-import org.jruby.RubySymbol;
-import org.jruby.ext.ffi.CallbackInfo;
-import org.jruby.ext.ffi.MappedType;
-import org.jruby.ext.ffi.NativeType;
-import org.jruby.ext.ffi.Pointer;
-import org.jruby.ext.ffi.Type;
+import org.jruby.*;
+import org.jruby.ext.ffi.*;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.WeakIdentityHashMap;
+
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
+
 
 /**
  *
  */
 public class DataConverters {
+    @SuppressWarnings("unchecked")
+    private static final Map<RubyHash, NativeDataConverter> enumConverters = Collections.synchronizedMap(new WeakIdentityHashMap());
 
     static boolean isEnumConversionRequired(Type type, RubyHash enums) {
         if (type instanceof Type.Builtin && enums != null && !enums.isEmpty()) {
@@ -57,27 +57,38 @@ public class DataConverters {
         
         return null;
     }
-    
-     
-    static NativeDataConverter getParameterConverter(Type type, RubyHash enums) {
-        if (type instanceof Type.Builtin && isEnumConversionRequired(type, enums)) {
-            return new IntOrEnumConverter(type.getNativeType(), enums);
-        
-        } else if (type instanceof MappedType) {
+
+
+    static NativeDataConverter getParameterConverter(Type type) {
+        if (type instanceof MappedType) {
             MappedType mappedType = (MappedType) type;
             return !mappedType.isPostInvokeRequired() && !mappedType.isReferenceRequired()
                     ? new MappedDataConverter(mappedType) : null;
-        
+
         } else if (type instanceof CallbackInfo) {
             return new CallbackDataConverter((CallbackInfo) type);
         }
-        
+
         return null;
+    }
+    static NativeDataConverter getParameterConverter(Type type, RubyHash enums) {
+        if (isEnumConversionRequired(type, enums)) {
+            NativeDataConverter converter = enumConverters.get(enums);
+            if (converter != null) {
+                return converter;
+            }
+            enumConverters.put(enums, converter = new IntOrEnumConverter(NativeType.INT, enums));
+            return converter;
+        
+        } else {
+            return getParameterConverter(type);
+        }
     }
     
     public static final class IntOrEnumConverter extends NativeDataConverter {
         private final NativeType nativeType;
         private final RubyHash enums;
+        private volatile IdentityHashMap<RubySymbol, RubyInteger> symbolToValue = new IdentityHashMap<RubySymbol, RubyInteger>();
 
         public IntOrEnumConverter(NativeType nativeType, RubyHash enums) {
             this.nativeType = nativeType;
@@ -100,22 +111,35 @@ public class DataConverters {
             if (obj instanceof RubyFixnum) {
                 return obj;
             }
-            
-            return lookupOrConvert(context, obj);
+
+            return lookupOrConvert(obj);
         }
-        
-        private IRubyObject lookupOrConvert(ThreadContext context, IRubyObject obj) {
+
+        IRubyObject lookupOrConvert(IRubyObject obj) {
             if (obj instanceof RubySymbol) {
-                IRubyObject value = enums.fastARef(obj);
-                if (value.isNil() || !(value instanceof RubyInteger)) {
-                    throw context.getRuntime().newArgumentError("invalid enum value, " + obj.inspect());
+                IRubyObject value;
+                if ((value = symbolToValue.get(obj)) != null) {
+                    return value;
                 }
-                
-                return value;
-            
+
+                return lookupAndCacheValue(obj);
+
             } else {
                 return obj.convertToInteger();
             }
+        }
+
+        private synchronized IRubyObject lookupAndCacheValue(IRubyObject obj) {
+            IRubyObject value = enums.fastARef(obj);
+            if (value.isNil() || !(value instanceof RubyInteger)) {
+                throw obj.getRuntime().newArgumentError("invalid enum value, " + obj.inspect());
+            }
+
+            IdentityHashMap<RubySymbol, RubyInteger> s2v = new IdentityHashMap<RubySymbol, RubyInteger>(symbolToValue);
+            s2v.put((RubySymbol) obj, (RubyInteger) value);
+            this.symbolToValue = new IdentityHashMap<RubySymbol, RubyInteger>(s2v);
+
+            return value;
         }
     }
     
@@ -140,11 +164,11 @@ public class DataConverters {
     }
     
     public static final class CallbackDataConverter extends NativeDataConverter {
+        private final NativeCallbackFactory callbackFactory;
         private final NativeFunctionInfo functionInfo;
-        private final CallbackInfo cbInfo;
 
         public CallbackDataConverter(CallbackInfo cbInfo) {
-            this.cbInfo = cbInfo;
+            this.callbackFactory = CallbackManager.getInstance().getCallbackFactory(cbInfo.getRuntime(), cbInfo);
             this.functionInfo = new NativeFunctionInfo(cbInfo.getRuntime(),
                     cbInfo.getReturnType(), cbInfo.getParameterTypes(),
                     cbInfo.isStdcall() ? CallingConvention.STDCALL : CallingConvention.DEFAULT);
@@ -171,10 +195,9 @@ public class DataConverters {
             if (obj instanceof Pointer || obj.isNil()) {
                 return obj;
             
-            } else if (obj instanceof RubyProc || obj.respondsTo("call")) {
-                return CallbackManager.getInstance().getCallback(context.getRuntime(), 
-                    cbInfo, obj);
-                
+            } else if (obj instanceof RubyObject) {
+                return callbackFactory.getCallback((RubyObject) obj);
+
             } else {
                 throw context.getRuntime().newTypeError("wrong argument type.  Expected callable object");
             }

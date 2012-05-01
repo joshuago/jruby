@@ -5,6 +5,8 @@
 
 package org.jruby.util;
 
+import org.jruby.platform.Platform;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.regex.Pattern;
@@ -171,6 +173,8 @@ public class JavaNameMangler {
                 case '.':
                     cleanBuffer.append("dot_");
                     continue;
+                case '@':
+                    cleanBuffer.append("at_");
                 default:
                     cleanBuffer.append(Integer.toHexString(characters[i])).append("_");
                 }
@@ -223,9 +227,17 @@ public class JavaNameMangler {
 
         return builder.toString();
     }
+    
+    public static boolean willMethodMangleOk(String name) {
+        if (Platform.IS_IBM) {
+            // IBM's JVM is much less forgiving, so we disallow anythign with non-alphanumeric, _, and $
+            for (char c : name.toCharArray()) {
+                if (!Character.isJavaIdentifierPart(c)) return false;
+            }
+        }
 
-    public static String unmangleMethodName(String name) {
-        return name.replaceAll("\\", "/");
+        // other JVMs will accept our mangling algorithm
+        return true;
     }
 
     private static int escapeChar(char character) {

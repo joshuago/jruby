@@ -52,8 +52,6 @@ public class ParserConfiguration {
     private boolean isEvalParse = true;
     // Should positions added extra IDE-friendly information and leave in all newline nodes
     private boolean extraPositionInformation = false;
-    // Will parser parse Duby grammar Extensions
-    private boolean isDubyExtensionsEnabled = SafePropertyAccessor.getBoolean("jruby.duby.enabled", false);
     // Should we display extra debug information while parsing?
     private boolean isDebug = false;
     // whether we should save the end-of-file data as DATA
@@ -191,7 +189,7 @@ public class ParserConfiguration {
         // will always happen because of $~ and $_).
         // FIXME: Because we end up adjusting this after-the-fact, we can't use
         // any of the specific-size scopes.
-        return new ManyVarsDynamicScope(new LocalStaticScope(null), existingScope);
+        return new ManyVarsDynamicScope(runtime.getStaticScopeFactory().newLocalScope(null), existingScope);
     }
 
     /**
@@ -216,8 +214,4 @@ public class ParserConfiguration {
     public boolean isInlineSource() {
         return inlineSource;
     }
-    
-    public boolean isDubyExtensionsEnabled() {
-        return isDubyExtensionsEnabled;
-}
 }

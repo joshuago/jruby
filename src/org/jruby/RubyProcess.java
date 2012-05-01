@@ -30,11 +30,12 @@
 package org.jruby;
 
 import jnr.constants.platform.Signal;
-import java.util.EnumSet;
+import jnr.constants.platform.Sysconf;
+import jnr.posix.Times;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyModule;
-import org.jruby.ext.posix.POSIX;
+import jnr.posix.POSIX;
 import org.jruby.platform.Platform;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
@@ -44,9 +45,7 @@ import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
-import org.jruby.util.ByteList;
 import org.jruby.util.ShellLauncher;
-import org.jruby.util.TypeConverter;
 import static org.jruby.CompatVersion.*;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
@@ -109,7 +108,7 @@ public class RubyProcess {
         }
         
         // Bunch of methods still not implemented
-        @JRubyMethod(name = {"to_int", "stopped?", "stopsig", "signaled?", "termsig?", "exited?", "coredump?"}, frame = true)
+        @JRubyMethod(name = {"to_int", "stopped?", "stopsig", "signaled?", "termsig?", "exited?"}, frame = true)
         public IRubyObject not_implemented() {
             String error = "Process::Status#" + getRuntime().getCurrentContext().getFrameName() + " not implemented";
             throw getRuntime().newNotImplementedError(error);
@@ -184,6 +183,13 @@ public class RubyProcess {
         @JRubyMethod(name = "success?")
         public IRubyObject success_p(ThreadContext context) {
             return context.getRuntime().newBoolean(status == EXIT_SUCCESS);
+        }
+
+        @JRubyMethod(name = "coredump?")
+        public IRubyObject coredump_p(ThreadContext context) {
+            // Temporarily return false until a backend can be implemented
+            // to copy the CRuby behavior (checking WCOREDUMP)
+            return context.getRuntime().getFalse();
         }
         
         @JRubyMethod
@@ -927,12 +933,25 @@ public class RubyProcess {
     public static IRubyObject times(ThreadContext context, IRubyObject recv, Block unusedBlock) {
         return times(context.getRuntime());
     }
+
     public static IRubyObject times(Ruby runtime) {
-        double currentTime = System.currentTimeMillis() / 1000.0;
-        double startTime = runtime.getStartTime() / 1000.0;
-        RubyFloat zero = runtime.newFloat(0.0);
-        return RubyStruct.newStruct(runtime.getTmsStruct(), 
-                new IRubyObject[] { runtime.newFloat(currentTime - startTime), zero, zero, zero }, 
+        Times tms = runtime.getPosix().times();
+        if (tms == null) {
+            throw runtime.newErrnoFromLastPOSIXErrno();
+        }
+
+        long hz = runtime.getPosix().sysconf(Sysconf._SC_CLK_TCK);
+        if (hz == -1) {
+            throw runtime.newErrnoFromLastPOSIXErrno();
+        }
+
+        return RubyStruct.newStruct(runtime.getTmsStruct(),
+                new IRubyObject[] {
+                        runtime.newFloat((double) tms.utime() / (double) hz),
+                        runtime.newFloat((double) tms.stime() / (double) hz),
+                        runtime.newFloat((double) tms.cutime() / (double) hz),
+                        runtime.newFloat((double) tms.cstime() / (double) hz)
+                },
                 Block.NULL_BLOCK);
     }
 
@@ -958,11 +977,19 @@ public class RubyProcess {
         return RubyKernel.fork(context, recv, block);
     }
 
-    // See Process#spawn in src/builtin/prelude.rb
+    // See Process#spawn in src/jruby/kernel19/process.rb
     @JRubyMethod(required = 4, module = true, compat = CompatVersion.RUBY1_9, visibility = PRIVATE)
     public static RubyFixnum _spawn_internal(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         Ruby runtime = context.getRuntime();
-        long pid = ShellLauncher.runExternalWithoutWait(runtime, args[0], args[1], args[2], args[3]);
+
+        IRubyObject env = args[0];
+        IRubyObject prog = args[1];
+        IRubyObject options = args[2];
+        IRubyObject arguments = args[3];
+
+        RubyIO.checkSpawnOptions(options);
+        
+        long pid = ShellLauncher.runExternalWithoutWait(runtime, env, prog, options, arguments);
         return RubyFixnum.newFixnum(runtime, pid);
     }
     

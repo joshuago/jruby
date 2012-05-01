@@ -53,12 +53,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.compiler.impl.SkinnyMethodAdapter;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.internal.runtime.methods.DynamicMethod;
-import org.jruby.internal.runtime.methods.JavaMethod;
 import org.jruby.java.codegen.RealClassGenerator;
 import org.jruby.java.codegen.Reified;
 import org.jruby.javasupport.Java;
@@ -71,14 +71,15 @@ import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ObjectMarshal;
 import org.jruby.runtime.ThreadContext;
-import org.jruby.runtime.Visibility;
 import static org.jruby.runtime.Visibility.*;
 import static org.jruby.CompatVersion.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.callsite.CacheEntry;
 import org.jruby.runtime.marshal.MarshalStream;
 import org.jruby.runtime.marshal.UnmarshalStream;
+import org.jruby.runtime.opto.Invalidator;
 import org.jruby.util.ClassCache.OneShotClassLoader;
+import org.jruby.util.ClassDefiningClassLoader;
 import org.jruby.util.CodegenUtils;
 import org.jruby.util.JavaNameMangler;
 import org.jruby.util.collections.WeakHashSet;
@@ -236,8 +237,8 @@ public class RubyClass extends RubyModule {
     }
 
     public static class VariableAccessor {
-        private String name;
-        private int index;
+        private final String name;
+        private final int index;
         private final int classId;
         public VariableAccessor(String name, int index, int classId) {
             this.index = index;
@@ -267,21 +268,31 @@ public class RubyClass extends RubyModule {
     }
     
     private volatile VariableAccessor objectIdAccessor = VariableAccessor.DUMMY_ACCESSOR;
+    
+    private volatile VariableAccessor cextHandleAccessor = VariableAccessor.DUMMY_ACCESSOR;
+
+    private volatile VariableAccessor ffiHandleAccessor = VariableAccessor.DUMMY_ACCESSOR;
 
     private synchronized final VariableAccessor allocateVariableAccessor(String name) {
         String[] myVariableNames = variableNames;
+
         int newIndex = myVariableNames.length;
         String[] newVariableNames = new String[newIndex + 1];
+
         VariableAccessor newVariableAccessor = new VariableAccessor(name, newIndex, this.id);
+
         System.arraycopy(myVariableNames, 0, newVariableNames, 0, newIndex);
+
         newVariableNames[newIndex] = name;
         variableNames = newVariableNames;
+
         return newVariableAccessor;
     }
 
     public VariableAccessor getVariableAccessorForWrite(String name) {
         VariableAccessor ivarAccessor = variableAccessors.get(name);
         if (ivarAccessor == null) {
+
             synchronized (this) {
                 Map<String, VariableAccessor> myVariableAccessors = variableAccessors;
                 ivarAccessor = myVariableAccessors.get(name);
@@ -290,8 +301,10 @@ public class RubyClass extends RubyModule {
                     // allocate a new accessor and populate a new table
                     ivarAccessor = allocateVariableAccessor(name);
                     Map<String, VariableAccessor> newVariableAccessors = new HashMap<String, VariableAccessor>(myVariableAccessors.size() + 1);
+
                     newVariableAccessors.putAll(myVariableAccessors);
                     newVariableAccessors.put(name, ivarAccessor);
+
                     variableAccessors = newVariableAccessors;
                 }
             }
@@ -299,27 +312,70 @@ public class RubyClass extends RubyModule {
         return ivarAccessor;
     }
 
+    private synchronized VariableAccessor allocateIdAccessor() {
+        if (objectIdAccessor == VariableAccessor.DUMMY_ACCESSOR) {
+            objectIdAccessor = allocateVariableAccessor("object_id");
+        }
+
+        return objectIdAccessor;
+    }
+
+    private synchronized VariableAccessor allocateCExtHandleAccessor() {
+        if (cextHandleAccessor == VariableAccessor.DUMMY_ACCESSOR) {
+            cextHandleAccessor = allocateVariableAccessor("cext");
+        }
+
+        return cextHandleAccessor;
+    }
+
+    private synchronized VariableAccessor allocateFFIHandleAccessor() {
+        if (ffiHandleAccessor == VariableAccessor.DUMMY_ACCESSOR) {
+            ffiHandleAccessor = allocateVariableAccessor("ffi");
+        }
+
+        return ffiHandleAccessor;
+    }
+
+
     public VariableAccessor getVariableAccessorForRead(String name) {
         VariableAccessor accessor = getVariableAccessorsForRead().get(name);
         if (accessor == null) accessor = VariableAccessor.DUMMY_ACCESSOR;
         return accessor;
     }
 
-    public synchronized VariableAccessor getObjectIdAccessorForWrite() {
-        if (objectIdAccessor == VariableAccessor.DUMMY_ACCESSOR) objectIdAccessor = allocateVariableAccessor("object_id");
-        return objectIdAccessor;
+    public VariableAccessor getObjectIdAccessorForWrite() {
+        VariableAccessor accessor = objectIdAccessor;
+        return accessor != VariableAccessor.DUMMY_ACCESSOR ? accessor : allocateIdAccessor();
     }
 
     public VariableAccessor getObjectIdAccessorForRead() {
         return objectIdAccessor;
     }
 
+    public VariableAccessor getNativeHandleAccessorForWrite() {
+        VariableAccessor accessor = cextHandleAccessor;
+        return accessor != VariableAccessor.DUMMY_ACCESSOR ? accessor : allocateCExtHandleAccessor();
+    }
+
+    public VariableAccessor getNativeHandleAccessorForRead() {
+        return cextHandleAccessor;
+    }
+
+    public VariableAccessor getFFIHandleAccessorForWrite() {
+        VariableAccessor accessor = ffiHandleAccessor;
+        return accessor != VariableAccessor.DUMMY_ACCESSOR ? accessor : allocateFFIHandleAccessor();
+    }
+
+    public VariableAccessor getFFIHandleAccessorForRead() {
+        return ffiHandleAccessor;
+    }
+
     public int getVariableTableSize() {
         return variableAccessors.size();
     }
 
-    public int getVariableTableSizeWithObjectId() {
-        return variableAccessors.size() + (objectIdAccessor == VariableAccessor.DUMMY_ACCESSOR ? 0 : 1);
+    public int getVariableTableSizeWithExtras() {
+        return variableNames.length;
     }
 
     public Map<String, VariableAccessor> getVariableTableCopy() {
@@ -988,11 +1044,30 @@ public class RubyClass extends RubyModule {
     @Override
     public void invalidateCacheDescendants() {
         super.invalidateCacheDescendants();
-        // update all subclasses
+
         synchronized (runtime.getHierarchyLock()) {
             Set<RubyClass> mySubclasses = subclasses;
             if (mySubclasses != null) for (RubyClass subclass : mySubclasses) {
                 subclass.invalidateCacheDescendants();
+            }
+        }
+    }
+    
+    public void addInvalidatorsAndFlush(List<Invalidator> invalidators) {
+        // add this class's invalidators to the aggregate
+        invalidators.add(methodInvalidator);
+        
+        // if we're not at boot time, don't bother fully clearing caches
+        if (!runtime.isBooting()) cachedMethods.clear();
+
+        // no subclasses, don't bother with lock and iteration
+        if (subclasses == null || subclasses.isEmpty()) return;
+        
+        // cascade into subclasses
+        synchronized (runtime.getHierarchyLock()) {
+            Set<RubyClass> mySubclasses = subclasses;
+            if (mySubclasses != null) for (RubyClass subclass : mySubclasses) {
+                subclass.addInvalidatorsAndFlush(invalidators);
             }
         }
     }
@@ -1136,21 +1211,17 @@ public class RubyClass extends RubyModule {
             return realSuper.isReifiable();
         }
     }
-
-    /**
-     * Reify this class, first reifying all its ancestors. This causes the
-     * reified class and all ancestors' reified classes to come into existence,
-     * so any future changes will not be reflected.
-     */
+    
     public void reifyWithAncestors() {
-        if (isReifiable()) {
-            RubyClass realSuper = getSuperClass().getRealClass();
-
-            if (realSuper.reifiedClass == null) realSuper.reifyWithAncestors();
-            reify();
-        }
+        reifyWithAncestors(null, true);
     }
-
+    public void reifyWithAncestors(String classDumpDir) {
+        reifyWithAncestors(classDumpDir, true);
+    }
+    public void reifyWithAncestors(boolean useChildLoader) {
+        reifyWithAncestors(null, useChildLoader);
+    }
+    
     /**
      * Reify this class, first reifying all its ancestors. This causes the
      * reified class and all ancestors' reified classes to come into existence,
@@ -1160,40 +1231,47 @@ public class RubyClass extends RubyModule {
      * the intermediate reified class bytes.
      *
      * @param classDumpDir the path in which to dump reified class bytes
+     * @param useChildLoader whether to load the class into its own child classloader
      */
-    public void reifyWithAncestors(String classDumpDir) {
+    public void reifyWithAncestors(String classDumpDir, boolean useChildLoader) {
         if (isReifiable()) {
             RubyClass realSuper = getSuperClass().getRealClass();
 
-            if (realSuper.reifiedClass == null) realSuper.reifyWithAncestors(classDumpDir);
-            reify(classDumpDir);
+            if (realSuper.reifiedClass == null) realSuper.reifyWithAncestors(classDumpDir, useChildLoader);
+            reify(classDumpDir, useChildLoader);
         }
     }
 
-    public synchronized void reify() {
-        reify(null);
-    }
-
     private static final boolean DEBUG_REIFY = false;
+
+    public synchronized void reify() {
+        reify(null, true);
+    }
+    public synchronized void reify(String classDumpDir) {
+        reify(classDumpDir, true);
+    }
+    public synchronized void reify(boolean useChildLoader) {
+        reify(null, useChildLoader);
+    }
 
     /**
      * Stand up a real Java class for the backing store of this object
      * @param classDumpDir Directory to save reified java class
      */
-    public synchronized void reify(String classDumpDir) {
+    public synchronized void reify(String classDumpDir, boolean useChildLoader) {
         Class reifiedParent = RubyObject.class;
 
         // calculate an appropriate name, using "Anonymous####" if none is present
         String name;
         if (getBaseName() == null) {
-            name = "AnonymousRubyClass#" + id;
+            name = "AnonymousRubyClass__" + id;
         } else {
             name = getName();
         }
         
         String javaName = "rubyobj." + name.replaceAll("::", ".");
         String javaPath = "rubyobj/" + name.replaceAll("::", "/");
-        OneShotClassLoader parentCL;
+        ClassDefiningClassLoader parentCL;
         Class parentReified = superClass.getRealClass().getReifiedClass();
         if (parentReified == null) {
             throw getClassRuntime().newTypeError("class " + getName() + " parent class is not yet reified");
@@ -1202,7 +1280,11 @@ public class RubyClass extends RubyModule {
         if (parentReified.getClassLoader() instanceof OneShotClassLoader) {
             parentCL = (OneShotClassLoader)superClass.getRealClass().getReifiedClass().getClassLoader();
         } else {
-            parentCL = new OneShotClassLoader(runtime.getJRubyClassLoader());
+            if (useChildLoader) {
+                parentCL = new OneShotClassLoader(runtime.getJRubyClassLoader());
+            } else {
+                parentCL = runtime.getJRubyClassLoader();
+            }
         }
 
         if (superClass.reifiedClass != null) {
@@ -1273,7 +1355,11 @@ public class RubyClass extends RubyModule {
         // define instance methods
         for (Map.Entry<String,DynamicMethod> methodEntry : getMethods().entrySet()) {
             String methodName = methodEntry.getKey();
-            String javaMethodName = JavaNameMangler.mangleStringForCleanJavaIdentifier(methodName);
+
+            if (!JavaNameMangler.willMethodMangleOk(methodName)) continue;
+
+            String javaMethodName = JavaNameMangler.mangleMethodName(methodName);
+
             Map<Class,Map<String,Object>> methodAnnos = getMethodAnnotations().get(methodName);
             List<Map<Class,Map<String,Object>>> parameterAnnos = getParameterAnnotations().get(methodName);
             Class[] methodSignature = getMethodSignatures().get(methodName);
@@ -1343,7 +1429,11 @@ public class RubyClass extends RubyModule {
         // define class/static methods
         for (Map.Entry<String,DynamicMethod> methodEntry : getMetaClass().getMethods().entrySet()) {
             String methodName = methodEntry.getKey();
-            String javaMethodName = JavaNameMangler.mangleStringForCleanJavaIdentifier(methodName);
+
+            if (!JavaNameMangler.willMethodMangleOk(methodName)) continue;
+
+            String javaMethodName = JavaNameMangler.mangleMethodName(methodName);
+
             Map<Class,Map<String,Object>> methodAnnos = getMetaClass().getMethodAnnotations().get(methodName);
             List<Map<Class,Map<String,Object>>> parameterAnnos = getMetaClass().getParameterAnnotations().get(methodName);
             Class[] methodSignature = getMetaClass().getMethodSignatures().get(methodName);

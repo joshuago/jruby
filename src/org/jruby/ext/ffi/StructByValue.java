@@ -35,7 +35,7 @@ public final class StructByValue extends Type {
             throw context.getRuntime().newTypeError("wrong argument type " 
                     + structClass.getMetaClass().getName() + " (expected Class)");
         }
-        if (!((RubyClass) structClass).isKindOfModule(context.getRuntime().getModule("FFI").getClass("Struct"))) {
+        if (!((RubyClass) structClass).isKindOfModule(context.getRuntime().getFFI().structClass)) {
             throw context.getRuntime().newTypeError("wrong argument type " 
                     + structClass.getMetaClass().getName() + " (expected subclass of FFI::Struct)");
         }
@@ -78,17 +78,5 @@ public final class StructByValue extends Type {
 
     public final RubyClass getStructClass() {
         return structClass;
-    }
-
-    /**
-     * Creates a new Ruby FFI::Struct for the class and layout
-     *
-     * @param runtime The runtime to create the new struct instance in.
-     * @param data A byte array containing the data for the struct.
-     * @param offset The offset within the array at which the data starts.
-     * @return
-     */
-    public final Struct newStruct(Ruby runtime, byte[] data, int offset) {
-        return new Struct(runtime, structClass, structLayout, new Buffer(runtime, data, offset, structLayout.getSize()));
     }
 }

@@ -25,11 +25,14 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
+import java.lang.ref.SoftReference;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CodingErrorAction;
+
 import org.jcodings.Encoding;
 import org.jcodings.EncodingDB.Entry;
 import org.jcodings.specific.ASCIIEncoding;
@@ -51,6 +54,7 @@ import static org.jruby.CompatVersion.*;
 @JRubyClass(name="Encoding")
 public class RubyEncoding extends RubyObject {
     public static final Charset UTF8 = Charset.forName("UTF-8");
+    public static final Charset ISO = Charset.forName("ISO-8859-1");
     public static final ByteList LOCALE = ByteList.create("locale");
     public static final ByteList EXTERNAL = ByteList.create("external");
 
@@ -163,11 +167,11 @@ public class RubyEncoding extends RubyObject {
     }
 
     public static byte[] encodeUTF8(CharSequence cs) {
-        return UTF8_CODER.get().encode(cs);
+        return getUTF8Coder().encode(cs);
     }
 
     public static byte[] encodeUTF8(String str) {
-        return UTF8_CODER.get().encode(str);
+        return getUTF8Coder().encode(str);
     }
 
     public static byte[] encode(CharSequence cs, Charset charset) {
@@ -185,11 +189,11 @@ public class RubyEncoding extends RubyObject {
     }
 
     public static String decodeUTF8(byte[] bytes, int start, int length) {
-        return UTF8_CODER.get().decode(bytes, start, length);
+        return getUTF8Coder().decode(bytes, start, length);
     }
 
     public static String decodeUTF8(byte[] bytes) {
-        return UTF8_CODER.get().decode(bytes);
+        return getUTF8Coder().decode(bytes);
     }
 
     public static String decode(byte[] bytes, int start, int length, Charset charset) {
@@ -203,12 +207,22 @@ public class RubyEncoding extends RubyObject {
     private static class UTF8Coder {
         private final CharsetEncoder encoder = UTF8.newEncoder();
         private final CharsetDecoder decoder = UTF8.newDecoder();
-        private final ByteBuffer byteBuffer = ByteBuffer.allocate(4096);
-        private final CharBuffer charBuffer = CharBuffer.allocate(1024);
-        
+        /** The maximum number of characters we can encode/decode in our cached buffers */
+        private static final int CHAR_THRESHOLD = 1024;
+        /** The resulting encode/decode buffer sized by the max number of
+         * characters (using 4 bytes per char possible for utf-8) */
+        private static final int BUF_SIZE = CHAR_THRESHOLD * 4;
+        private final ByteBuffer byteBuffer = ByteBuffer.allocate(BUF_SIZE);
+        private final CharBuffer charBuffer = CharBuffer.allocate(BUF_SIZE);
+
+        public UTF8Coder() {
+            decoder.onMalformedInput(CodingErrorAction.REPLACE);
+            decoder.onUnmappableCharacter(CodingErrorAction.REPLACE);
+        }
+
         public byte[] encode(CharSequence cs) {
             ByteBuffer buffer;
-            if (cs.length() > 1024) {
+            if (cs.length() > CHAR_THRESHOLD) {
                 buffer = UTF8.encode(cs.toString());
             } else {
                 buffer = byteBuffer;
@@ -228,7 +242,7 @@ public class RubyEncoding extends RubyObject {
         
         public String decode(byte[] bytes, int start, int length) {
             CharBuffer cbuffer;
-            if (length > 4096) {
+            if (length > CHAR_THRESHOLD) {
                 cbuffer = UTF8.decode(ByteBuffer.wrap(bytes, start, length));
             } else {
                 cbuffer = charBuffer;
@@ -248,13 +262,25 @@ public class RubyEncoding extends RubyObject {
             return decode(bytes, 0, bytes.length);
         }
     }
-    
-    private static final ThreadLocal<UTF8Coder> UTF8_CODER = new ThreadLocal<UTF8Coder>() {
-        @Override
-        protected UTF8Coder initialValue() {
-            return new UTF8Coder();
+
+    /**
+     * UTF8Coder wrapped in a SoftReference to avoid possible ClassLoader leak.
+     * See JRUBY-6522
+     */
+    private static final ThreadLocal<SoftReference<UTF8Coder>> UTF8_CODER =
+        new ThreadLocal<SoftReference<UTF8Coder>>();
+
+    private static UTF8Coder getUTF8Coder() {
+        UTF8Coder coder;
+        SoftReference<UTF8Coder> ref = UTF8_CODER.get();
+        if (ref == null || (coder = ref.get()) == null) {
+            coder = new UTF8Coder();
+            ref = new SoftReference<UTF8Coder>(coder);
+            UTF8_CODER.set(ref);
         }
-    };
+        
+        return coder;
+    }
 
     @JRubyMethod(name = "list", meta = true)
     public static IRubyObject list(ThreadContext context, IRubyObject recv) {
@@ -328,6 +354,9 @@ public class RubyEncoding extends RubyObject {
     @JRubyMethod(name = "find", meta = true)
     public static IRubyObject find(ThreadContext context, IRubyObject recv, IRubyObject str) {
         Ruby runtime = context.getRuntime();
+
+        // Wacky but true...return arg if it is an encoding looking for itself
+        if (str instanceof RubyEncoding) return str;
 
         return runtime.getEncodingService().rubyEncodingFromObject(str);
     }
@@ -413,13 +442,14 @@ public class RubyEncoding extends RubyObject {
     }
 
     @JRubyMethod(name = "default_external=", meta = true, compat = RUBY1_9)
-    public static void setDefaultExternal(IRubyObject recv, IRubyObject encoding) {
+    public static IRubyObject setDefaultExternal(IRubyObject recv, IRubyObject encoding) {
         Ruby runtime = recv.getRuntime();
         EncodingService service = runtime.getEncodingService();
         if (encoding.isNil()) {
             throw recv.getRuntime().newArgumentError("default_external can not be nil");
         }
         runtime.setDefaultExternalEncoding(service.getEncodingFromObject(encoding));
+        return encoding;
     }
 
     @JRubyMethod(name = "default_internal", meta = true, compat = RUBY1_9)
@@ -428,13 +458,14 @@ public class RubyEncoding extends RubyObject {
     }
 
     @JRubyMethod(name = "default_internal=", required = 1, meta = true, compat = RUBY1_9)
-    public static void setDefaultInternal(IRubyObject recv, IRubyObject encoding) {
+    public static IRubyObject setDefaultInternal(IRubyObject recv, IRubyObject encoding) {
         Ruby runtime = recv.getRuntime();
         EncodingService service = runtime.getEncodingService();
         if (encoding.isNil()) {
             recv.getRuntime().newArgumentError("default_internal can not be nil");
         }
         recv.getRuntime().setDefaultInternalEncoding(service.getEncodingFromObject(encoding));
+        return encoding;
     }
 
     @Deprecated
@@ -456,4 +487,4 @@ public class RubyEncoding extends RubyObject {
     public static Encoding getEncodingFromObject(Ruby runtime, IRubyObject arg) {
         return runtime.getEncodingService().getEncodingFromObject(arg);
     }
-    }
+}

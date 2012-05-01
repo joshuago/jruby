@@ -46,10 +46,10 @@ public class TestNativeException extends TestRubyBase {
 
     public void testCauseIsProxied() throws Exception {
         String result = eval("require 'java'\n" +
-                "include_class('java.io.File') { 'JFile' }\n" +
+                "java_import('java.io.File') { 'JFile' }\n" +
                 "begin\n" +
                 "  JFile.new(nil)\n" +
-                "rescue Exception => e\n" +
+                "rescue NativeException => e\n" +
                 "end\n" +
                 "p e.cause.respond_to?(:print_stack_trace)");
         assertEquals("Bug: [ JRUBY-106 ]", "true", result);

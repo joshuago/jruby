@@ -200,10 +200,9 @@ public class ReaderInputStreamTest {
         }
         instance.close();
         String[] paths = {
-            basedir + "/lib/ruby/1.8",
-            basedir + "/lib/ruby/1.8/rdoc",
-            basedir + "/lib/ruby/site_ruby/1.8",
-            basedir + "/lib/ruby/site_ruby/shared",
+            basedir + "/lib/ruby/1.9",
+            basedir + "/lib/ruby/1.9/rdoc",
+            basedir + "/lib/ruby/shared",
             basedir + "/test",
             basedir + "/build/classes/test",
             basedir

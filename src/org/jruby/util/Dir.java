@@ -38,7 +38,7 @@ import java.util.zip.ZipEntry;
 import org.jruby.RubyEncoding;
 import org.jruby.RubyFile;
 
-import org.jruby.ext.posix.JavaSecuredFile;
+import jnr.posix.JavaSecuredFile;
 import org.jruby.platform.Platform;
 
 /**
@@ -68,7 +68,7 @@ public class Dir {
     public final static byte[] DOUBLE_STAR = new byte[]{'*','*'};
 
     private static boolean isdirsep(byte c) {
-        return DOSISH ? (c == '\\' || c == '/') : c == '/';
+        return c == '/' || DOSISH && c == '\\';
     }
 
     private static int rb_path_next(byte[] _s, int s, int send) {
@@ -517,13 +517,19 @@ public class Dir {
         
         return extract_path(bytes, begin, elementEnd);
     }
+    
+    // Win drive letter X:/
+    private static boolean beginsWithDriveLetter(byte[] path, int begin, int end) {
+        return DOSISH && begin + 2 < end && path[begin + 1] == ':' && isdirsep(path[begin + 2]); 
+    }
 
-    private static boolean BASE(byte[] base) {
+    // Is this nothing or literally root directory for the OS.
+    private static boolean isRoot(byte[] base) {
         int length = base.length;
-        return DOSISH ? 
-            (length > 0 && !((isdirsep(base[0]) && length < 2) ||
-            (length > 2 && base[1] == ':' && isdirsep(base[2]) && length < 4))) :
-            (length > 0 && !(isdirsep(base[0]) && length < 2));
+        
+        return length == 0 ||  // empty
+               length == 1 && isdirsep(base[0]) || // Just '/'
+               length == 3 && beginsWithDriveLetter(base, 0, length); // Just X:/ 
     }
     
     private static boolean isJarFilePath(byte[] bytes, int begin, int end) {
@@ -532,8 +538,7 @@ public class Dir {
     }
     
     private static boolean isAbsolutePath(byte[] path, int begin, int length) {
-        return path[begin] == '/' || (DOSISH &&
-                begin+2 < length && path[begin+1] == ':' && isdirsep(path[begin+2]));
+        return isdirsep(path[begin]) || beginsWithDriveLetter(path, begin, length);
     }
 
     private static String[] files(File directory) {
@@ -561,23 +566,41 @@ public class Dir {
         }
     }
 
+    private static boolean isSpecialFile(String name) {
+        int length = name.length();
+        
+        if (length < 1 || length > 3 || name.charAt(0) != '.') return false;
+        if (length == 1) return true;
+        char c = name.charAt(1);
+        if (length == 2 && (c == '.' || c == '/')) return true;
+        return c == '.' && name.charAt(2) == '/';
+    }
+
     private static int addToResultIfExists(String cwd, byte[] bytes, int begin, int end, int flags, GlobFunc func, GlobArgs arg) {
         String fileName = newStringFromUTF8(bytes, begin, end - begin);
         JavaSecuredFile file = cwd != null ? new JavaSecuredFile(cwd, fileName) :
             new JavaSecuredFile(fileName);
 
         if (file.exists()) {
+            boolean trailingSlash = bytes[end - 1] == '/';
+
             // On case-insenstive file systems any case string will 'exists',
             // but what does it display as if you ls/dir it?
-            if ((flags & FNM_CASEFOLD) != 0) {
+            if ((flags & FNM_CASEFOLD) != 0 && !isSpecialFile(fileName)) {
                 try {
                     String realName = file.getCanonicalFile().getName();
+
                     // TODO: This is only being done to the name of the file,
                     // but it should do for all parent directories too...
-                    int newEnd = fileName.lastIndexOf('/');
+                    // TODO: OMGZ is this ugly
+                    int fileNameLength = fileName.length();
+                    int newEnd = fileNameLength <= 1 ? -1 : fileName.lastIndexOf('/', fileNameLength - 2);
                     if (newEnd != -1) {
                         realName = fileName.substring(0, newEnd + 1) + realName;
                     }
+                    // It came in with a trailing slash preserve that in new name.
+                    if (trailingSlash) realName = realName + "/";
+
                     bytes = realName.getBytes();
                     begin = 0;
                     end = bytes.length;
@@ -598,15 +621,13 @@ public class Dir {
                 break;
             }
         }
+        if (ix == end) return null;
 
-        File file = new JavaSecuredFile(newStringFromUTF8(bytes, begin + 5, ix - 5));
+        String fileName = newStringFromUTF8(bytes, begin + 5, ix - 5);
+        String entryName = newStringFromUTF8(bytes, begin + ix + 1, end - (ix + 1));
+        if (entryName.startsWith("/")) entryName = entryName.substring(1);
         try {
-            String jar = newStringFromUTF8(bytes, begin + ix + 1, end - (ix + 1));
-            JarFile jf = new JarFile(file);
-
-            if (jar.startsWith("/")) jar = jar.substring(1);
-
-            return RubyFile.getDirOrFileEntry(jf, jar);
+            return RubyFile.getDirOrFileEntry(fileName, entryName);
         } catch (Exception e) {}
         
         return null;
@@ -720,7 +741,7 @@ public class Dir {
                                 }
                                 buf.length(0);
                                 buf.append(base);
-                                buf.append( BASE(base) ? SLASH : EMPTY );
+                                buf.append(isRoot(base) ? EMPTY : SLASH );
                                 buf.append(getBytesInUTF8(dirp[i]));
                                 if (isAbsolutePath(buf.getUnsafeBytes(), buf.getBegin(), buf.getRealSize())) {
                                     st = new JavaSecuredFile(newStringFromUTF8(buf.getUnsafeBytes(), buf.getBegin(), buf.getRealSize()));
@@ -743,7 +764,7 @@ public class Dir {
                             if(fnmatch(magic,0,magic.length,bs,0, bs.length,flags) == 0) {
                                 buf.length(0);
                                 buf.append(base);
-                                buf.append( BASE(base) ? SLASH : EMPTY );
+                                buf.append(isRoot(base) ? EMPTY : SLASH );
                                 buf.append(getBytesInUTF8(dirp[i]));
                                 if(m == -1) {
                                     status = func.call(buf.getUnsafeBytes(),0, buf.getRealSize(),arg);
@@ -787,7 +808,7 @@ public class Dir {
                                     }
                                     buf.length(0);
                                     buf.append(base, 0, base.length - jar.length());
-                                    buf.append( BASE(base) ? SLASH : EMPTY );
+                                    buf.append(isRoot(base) ? EMPTY : SLASH);
                                     buf.append(absoluteName, 0, absoluteLen);
 
                                     if(je.isDirectory()) {
@@ -809,7 +830,7 @@ public class Dir {
                                 if(fnmatch(magic,0,magic.length,bs,0,len,flags) == 0) {
                                     buf.length(0);
                                     buf.append(base, 0, base.length - jar.length());
-                                    buf.append( BASE(base) ? SLASH : EMPTY );
+                                    buf.append(isRoot(base) ? EMPTY : SLASH);
                                     buf.append(absoluteName, 0, absoluteLen);
 
                                     buf = fixBytesForJarInUTF8(buf.getUnsafeBytes(), 0, buf.getRealSize());

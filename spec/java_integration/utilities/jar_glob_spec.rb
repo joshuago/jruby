@@ -83,7 +83,7 @@ end
 describe 'Dir globs (Dir.glob and Dir.[]) +' do
   it "doesn't break when given incorrect URIs" do
     require 'rbconfig'
-    prefix = Config::CONFIG['host_os'] =~ /^mswin/i ? 'file:/' : 'file:'
+    prefix = RbConfig::CONFIG['host_os'] =~ /^mswin/i ? 'file:/' : 'file:'
     # file:/ in front when not looking a jar produces the error
 #    java.lang.Runtime.getRuntime.add_shutdown_hook Thread.new do
 #
@@ -127,8 +127,8 @@ CODE
 
   it "expands the path relative to the jar" do
     jar_path = File.expand_path("file:/Users/foo/dev/ruby/jruby/lib/jruby-complete.jar")
-    current = "#{jar_path}!/META-INF/jruby.home/lib/ruby/site_ruby/1.8"
-    expected = "#{jar_path}!/META-INF/jruby.home/lib/ruby/site_ruby"
+    current = "#{jar_path}!/META-INF/jruby.home/lib/ruby/1.8"
+    expected = "#{jar_path}!/META-INF/jruby.home/lib/ruby"
     File.expand_path(File.join(current, "..")).should == expected
     File.expand_path("..", current).should == expected
   end
@@ -155,7 +155,7 @@ describe "Dir.glob and Dir[] with multiple magic modifiers" do
     FileUtils.rm_rf("jruby-4396")
   end
 
-  it "returns directories when the magic modifier is an star" do
+  it "returns directories when the magic modifier is a star" do
     FileUtils.cd('jruby-4396') do
       Dir["file:#{File.expand_path(Dir.pwd)}/top.jar!top/builtin/*/"].size.should == 3
     end

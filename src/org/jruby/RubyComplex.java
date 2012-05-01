@@ -695,6 +695,9 @@ public class RubyComplex extends RubyNumeric {
         if (other instanceof RubyNumeric && f_real_p(context, other).isTrue()) {
             return context.getRuntime().newArray(newComplexBang(context, getMetaClass(), other), this);
         }
+        if (other instanceof RubyComplex) {
+            return context.getRuntime().newArray(other, this);
+        }
         throw context.getRuntime().newTypeError(other.getMetaClass().getName() + " can't be coerced into " + getMetaClass().getName());
     }
 
@@ -951,7 +954,10 @@ public class RubyComplex extends RubyNumeric {
      */
     @JRubyMethod(name = "rationalize", optional = 1, compat = CompatVersion.RUBY1_9)
     public IRubyObject rationalize(ThreadContext context, IRubyObject[] args) {
-        return to_r(context);
+        if (k_inexact_p(image) || !f_zero_p(context, image)) {
+            throw context.getRuntime().newRangeError("can't convert " + f_to_s(context, this).convertToString() + " into Rational");            
+        }
+        return real.callMethod(context, "rationalize", args);
     }
     
     static RubyArray str_to_c_internal(ThreadContext context, IRubyObject recv) {

@@ -73,6 +73,6 @@ class ThreadScalability
 
 end
 
-5.times {
-  ThreadScalability.new.run(ARGV[0].to_i)
+(ARGV[1] || 5).to_i.times {
+  ThreadScalability.new.run((ARGV[0] || 1).to_i)
 }

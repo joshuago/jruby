@@ -37,11 +37,13 @@ using namespace jruby;
 RubyFloat::RubyFloat(double value): registered_(false)
 {
     setType(T_FLOAT);
+    memset(&rfloat_, 0, sizeof(rfloat_));
     rfloat_.value = value;
 }
 
 RubyFloat::RubyFloat(JNIEnv* env, jobject obj_, jdouble value_): Handle(env, obj_, T_FLOAT)
 {
+    memset(&rfloat_, 0, sizeof(rfloat_));
     rfloat_.value = value_;
 }
 
@@ -130,7 +132,7 @@ rb_float_new(double value)
     jobject rubyFloat = env->CallStaticObjectMethodA(JRuby_class, JRuby_newFloat, params);
     f->obj = env->NewGlobalRef(rubyFloat);
 
-    return (VALUE) f;
+    return f->asValue();
 }
 
 extern "C" double

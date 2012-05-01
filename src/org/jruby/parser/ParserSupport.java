@@ -37,6 +37,10 @@ package org.jruby.parser;
 
 import java.math.BigInteger;
 import org.jcodings.Encoding;
+import org.jcodings.specific.EUCJPEncoding;
+import org.jcodings.specific.SJISEncoding;
+import org.jcodings.specific.USASCIIEncoding;
+import org.jcodings.specific.UTF8Encoding;
 import org.jruby.CompatVersion;
 import org.jruby.RubyBignum;
 import org.jruby.RubyRegexp;
@@ -177,6 +181,7 @@ import org.jruby.runtime.DynamicScope;
 import org.jruby.util.ByteList;
 import org.jruby.util.IdUtil;
 import org.jruby.util.RegexpOptions;
+import org.jruby.util.StringSupport;
 
 /** 
  *
@@ -204,10 +209,8 @@ public class ParserSupport {
     }
     
     public void allowDubyExtension(ISourcePosition position) {
-        if (!configuration.isDubyExtensionsEnabled()) {
-            throw new SyntaxException(PID.DUBY_EXTENSIONS_OFF, position,
-                    lexer.getCurrentLine(), "Duby extensions not configured");
-        }
+        throw new SyntaxException(PID.DUBY_EXTENSIONS_OFF, position,
+                lexer.getCurrentLine(), "Duby extensions not configured");
     }
     
     public StaticScope getCurrentScope() {
@@ -223,11 +226,11 @@ public class ParserSupport {
     }
     
     public void pushBlockScope() {
-        currentScope = new BlockStaticScope(currentScope);
+        currentScope = configuration.getRuntime().getStaticScopeFactory().newBlockScope(currentScope);
     }
     
     public void pushLocalScope() {
-        currentScope = new LocalStaticScope(currentScope);
+        currentScope = configuration.getRuntime().getStaticScopeFactory().newLocalScope(currentScope);
     }
     
     public Node arg_concat(ISourcePosition position, Node node1, Node node2) {
@@ -906,7 +909,7 @@ public class ParserSupport {
     public WhenNode newWhenNode(ISourcePosition position, Node expressionNodes, Node bodyNode, Node nextCase) {
         if (bodyNode == null) bodyNode = NilImplicitNode.NIL;
 
-        if (expressionNodes instanceof SplatNode || expressionNodes instanceof ArgsCatNode) {
+        if (expressionNodes instanceof SplatNode || expressionNodes instanceof ArgsCatNode || expressionNodes instanceof ArgsPushNode) {
             return new WhenNode(position, expressionNodes, bodyNode, nextCase);
         }
 
@@ -1534,7 +1537,7 @@ public class ParserSupport {
         if (name == "_") return identifier;
 
         StaticScope current = getCurrentScope();
-        if (current instanceof BlockStaticScope) {
+        if (current.isBlockScope()) {
             if (current.exists(name) >= 0) yyerror("duplicated argument name");
 
             if (warnings.isVerbose() && current.isDefined(name) >= 0) {
@@ -1619,17 +1622,59 @@ public class ParserSupport {
             return new RegexpNode(contents.getPosition(), meat, options.withoutOnce());
         } else if (contents instanceof DStrNode) {
             DStrNode dStrNode = (DStrNode) contents;
-
+            
             for (Node fragment: dStrNode.childNodes()) {
                 if (fragment instanceof StrNode) {
-                    regexpFragmentCheck(end, ((StrNode) fragment).getValue());
+                    ByteList frag = ((StrNode) fragment).getValue();
+                    regexpFragmentCheck(end, frag);
+//                    if (!lexer.isOneEight()) encoding = frag.getEncoding();
                 }
             }
+            
+            dStrNode.prepend(new StrNode(contents.getPosition(), createMaster(options)));
 
-            return new DRegexpNode(position, options, encoding).addAll((DStrNode) contents);
+            return new DRegexpNode(position, options, encoding).addAll(dStrNode);
         }
 
-        // EvStrNode: #{val}: no fragment check stuff for this
-        return new DRegexpNode(position, options, encoding).add(contents);
+        // EvStrNode: #{val}: no fragment check, but at least set encoding
+        ByteList master = createMaster(options);
+        regexpFragmentCheck(end, master);
+        if (!lexer.isOneEight()) encoding = master.getEncoding();
+        DRegexpNode node = new DRegexpNode(position, options, encoding);
+        node.add(new StrNode(contents.getPosition(), master));
+        node.add(contents);
+        return node;
     }
+    
+    // Create the magical empty 'master' string which will be encoded with
+    // regexp options encoding so dregexps can end up starting with the
+    // right encoding.
+    private ByteList createMaster(RegexpOptions options) {
+        if (lexer.isOneEight()) {
+            return ByteList.create("");
+        } else {
+            Encoding encoding = options.setup19(configuration.getRuntime());
+            
+            return new ByteList(new byte[] {}, encoding);
+        }
+        
+    }
+    
+    // FIXME:  This logic is used by many methods in MRI, but we are only using it in lexer
+    // currently.  Consolidate this when we tackle a big encoding refactoring
+    public static int associateEncoding(ByteList buffer, Encoding newEncoding, int codeRange) {
+        Encoding bufferEncoding = buffer.getEncoding();
+                
+        if (newEncoding == bufferEncoding) return codeRange;
+        
+        // TODO: Special const error
+        
+        buffer.setEncoding(newEncoding);
+        
+        if (codeRange != StringSupport.CR_7BIT || !newEncoding.isAsciiCompatible()) {
+            return StringSupport.CR_UNKNOWN;
+        }
+        
+        return codeRange;
+    }    
 }

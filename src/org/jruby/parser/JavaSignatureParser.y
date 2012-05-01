@@ -22,14 +22,22 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.jruby.ast.java_signature.Annotation;
+import org.jruby.ast.java_signature.AnnotationExpression;
+import org.jruby.ast.java_signature.AnnotationParameter;
+import org.jruby.ast.java_signature.ArrayAnnotationExpression;
 import org.jruby.ast.java_signature.ArrayTypeNode;
+import org.jruby.ast.java_signature.CharacterLiteral;
 import org.jruby.ast.java_signature.ConstructorSignatureNode;
+import org.jruby.ast.java_signature.DefaultAnnotationParameter;
 import org.jruby.ast.java_signature.MethodSignatureNode;
+import org.jruby.ast.java_signature.Literal;
 import org.jruby.ast.java_signature.Modifier;
 import org.jruby.ast.java_signature.ParameterNode;
 import org.jruby.ast.java_signature.PrimitiveTypeNode;
 import org.jruby.ast.java_signature.ReferenceTypeNode;
 import org.jruby.ast.java_signature.SignatureNode;
+import org.jruby.ast.java_signature.StringLiteral;
 import org.jruby.ast.java_signature.TypeNode;
 import org.jruby.lexer.JavaSignatureLexer;
 
@@ -67,9 +75,13 @@ public class JavaSignatureParser {
 %token <String> IDENTIFIER
 // syntax markers
 %token <String> AND    // '&'
+%token <String> AT     // '@'
 %token <String> DOT    // '.'
 %token <String> COMMA  // ','
 %token <String> ELLIPSIS // '...' or \u2026
+%token <String> EQUAL  // '='
+%token <String> LCURLY // '{'
+%token <String> RCURLY // '}'
 %token <String> LPAREN // '('
 %token <String> RPAREN // ')'
 %token <String> LBRACK // '['
@@ -83,11 +95,16 @@ public class JavaSignatureParser {
 %token <String> SUPER // 'super'
 %token <String> RSHIFT // '>>'
 %token <String> URSHIFT // '>>>'
+%token <String> QQ // '"'
+%token <String> Q // "'"
+%token <String> CHARACTER_LITERAL
+%token <String> STRING_LITERAL
 
 %type <MethodSignatureNode> method_declarator, method_header
 %type <ConstructorSignatureNode> constructor_declarator, constructor_declaration
 %type <List> formal_parameter_list_opt, formal_parameter_list // <ParameterNode>
 %type <List> modifiers_opt, modifiers, modifiers_none, throws, class_type_list
+%type <List> annotation_params_opt, annotation_params, annotation_params_none
 %type <ParameterNode> formal_parameter
 %type <TypeNode> primitive_type, type
 %type <ReferenceTypeNode> class_or_interface, class_or_interface_type, array_type
@@ -102,10 +119,16 @@ public class JavaSignatureParser {
 %type <String> type_parameter, type_parameter_1
 %type <String> type_parameter_list, type_parameter_list_1, 
 %type <String> type_bound_opt, type_bound, additional_bound_list, additional_bound_list_opt
-%type <Modifier> modifier
+%type <String> annotation_name
+%type <Object> modifier  // Can be either modifier enum or Annotation instance
 %type <ArrayTypeNode> dims
 %type <Object> none
 %type <SignatureNode> program
+%type <Annotation> annotation
+%type <AnnotationParameter> annotation_param
+%type <AnnotationExpression> annotation_value
+%type <List> annotation_array_values
+%type <Literal> literal
 
 %%
 
@@ -296,22 +319,22 @@ type_argument_2 : reference_type_2 | wildcard_2
 // String
 type_argument_3 : reference_type_3 | wildcard_3
 
-// List<Modifier>
+// List<Object>
 modifiers_opt : modifiers | modifiers_none
 
-// List<Modifier>
+// List<Object>
 modifiers : modifier {
-    $$ = new ArrayList<Modifier>();
+    $$ = new ArrayList<Object>();
     $<List>$.add($1);
  }
  | modifiers modifier {
     $1.add($2);
  }
 
-// List<Modifier> -- This is just so we don't deal with null's.
-modifiers_none : { $$ = new ArrayList<Modifier>(); }
+// List<Object> -- This is just so we don't deal with null's.
+modifiers_none : { $$ = new ArrayList<Object>(); }
 
-// Modifier
+// Object
 modifier : PUBLIC { $$ = Modifier.PUBLIC; }
  | PROTECTED { $$ = Modifier.PROTECTED; }
  | PRIVATE { $$ = Modifier.PRIVATE; }
@@ -323,6 +346,7 @@ modifier : PUBLIC { $$ = Modifier.PUBLIC; }
  | TRANSIENT { $$ = Modifier.TRANSIENT; }
  | VOLATILE { $$ = Modifier.VOLATILE; }
  | STRICTFP { $$ = Modifier.STRICTFP; }
+ | annotation { $$ = $1; }
 
 // String
 name : IDENTIFIER { $$ = $1; }                  // Foo (or foo)
@@ -512,6 +536,73 @@ method_header : modifiers_opt type method_declarator throws {
                   $<MethodSignatureNode>$.setReturnType(PrimitiveTypeNode.VOID);
                   $<MethodSignatureNode>$.setThrows($6);
               }
+
+// Annotation
+annotation : annotation_name {
+               $$ = new Annotation($1, new ArrayList<AnnotationParameter>());
+           }
+           | annotation_name LPAREN annotation_params_opt RPAREN {
+               $$ = new Annotation($1, $3);
+           }
+
+// String
+annotation_name : AT name { $$ = $1 + $2; }
+
+// AnnotationParam
+annotation_param : type_variable EQUAL annotation_value {
+                     $$ = new AnnotationParameter($1, $3);
+                 }
+                 | annotation_value {
+                     $$ = new DefaultAnnotationParameter($1);
+                 }
+
+// List<AnnotationParameter>
+annotation_params : annotation_param {
+                      $$ = new ArrayList<AnnotationParameter>();
+                      $<List>$.add($1);
+                  }
+                  | annotation_params COMMA annotation_param {
+                      $1.add($3);
+                  }
+
+// AnnotationExpression
+annotation_value : annotation {
+                     $$ = $<AnnotationExpression>1;
+                 }
+                 | type {
+                     $$ = $<AnnotationExpression>1;
+                 }
+                 | literal {
+                     $$ = $<AnnotationExpression>1;
+                 }
+                 | LCURLY annotation_array_values RCURLY {
+                     $$ = new ArrayAnnotationExpression($2);
+                 }
+                 | LCURLY RCURLY {
+                     $$ = new ArrayAnnotationExpression(new ArrayList<AnnotationExpression>());
+                 }
+
+// List<AnnotationExpression>
+annotation_array_values : annotation_value {
+                            $$ = new ArrayList<AnnotationExpression>();
+                            $<List>$.add($1);
+                        }
+                        | annotation_array_values COMMA annotation_value {
+                            $1.add($3);
+                        }
+
+// List<AnnotationParameter> -- This is just so we don't deal with null's.
+annotation_params_none : { $$ = new ArrayList<AnnotationParameter>(); }
+
+// List<AnnotationParameter>
+annotation_params_opt : annotation_params | annotation_params_none
+
+literal : STRING_LITERAL {
+           $$ = new StringLiteral($1);
+        }
+        | CHARACTER_LITERAL {
+           $$ = new CharacterLiteral($1);
+        }
 
 %%
 

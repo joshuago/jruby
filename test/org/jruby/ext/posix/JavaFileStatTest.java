@@ -7,7 +7,8 @@ package org.jruby.ext.posix;
 
 import junit.framework.TestCase;
 
-import org.jruby.ext.posix.util.Platform;
+import jnr.posix.JavaFileStat;
+import jnr.posix.util.Platform;
 
 /**
  *

@@ -46,9 +46,6 @@ DataSyncQueue jruby::nsyncq = TAILQ_HEAD_INITIALIZER(nsyncq);
 DataSyncQueue jruby::jsyncq = TAILQ_HEAD_INITIALIZER(jsyncq);
 DataSyncQueue jruby::cleanq = TAILQ_HEAD_INITIALIZER(cleanq);
 
-static int allocCount;
-static const int GC_THRESHOLD = 10000;
-
 Handle::Handle()
 {
     obj = NULL;
@@ -59,9 +56,6 @@ Handle::Handle(JNIEnv* env, jobject obj_, int type_)
 {
     Init();
     setType(type_);
-    if (type_ == T_CLASS || type_ == T_MODULE) {
-        this->flags |= FL_CONST;
-    }
     this->obj = env->NewGlobalRef(obj_);
 }
 
@@ -75,12 +69,6 @@ Handle::Init()
     flags = 0;
     setType(T_NONE);
     TAILQ_INSERT_TAIL(&liveHandles, this, all);
-
-    if (++allocCount > GC_THRESHOLD) {
-        allocCount = 0;
-        JLocalEnv env;
-        env->CallStaticVoidMethod(GC_class, GC_trigger);
-    }
 }
 
 Handle*
@@ -98,11 +86,30 @@ Handle::specialHandle(VALUE v)
 void
 Handle::makeStrong_(JNIEnv* env)
 {
-    flags |= FL_WEAK;
-    jobject tmp = env->NewGlobalRef(obj);
-    env->DeleteWeakGlobalRef(obj);
-    obj = tmp;
+    if (isWeak()) {
+        jobject tmp = env->NewLocalRef(obj);
+        if (unlikely(env->IsSameObject(tmp, NULL))) {
+            rb_raise(rb_eRuntimeError, "weak handle is null");
+        }
+        env->DeleteWeakGlobalRef(obj);
+        obj = env->NewGlobalRef(tmp);
+        env->DeleteLocalRef(tmp);
+        flags &= ~FL_WEAK;
+    }
 }
+
+void
+Handle::makeWeak_(JNIEnv* env)
+{
+    if (!isWeak()) {
+        jobject tmp = env->NewLocalRef(obj);
+        env->DeleteGlobalRef(obj);
+        obj = env->NewWeakGlobalRef(tmp);
+        env->DeleteLocalRef(tmp);
+        flags |= FL_WEAK;
+    }
+}
+
 
 RubyFixnum::RubyFixnum(JNIEnv* env, jobject obj_, jlong value_): Handle(env, obj_, T_FIXNUM)
 {
@@ -194,7 +201,7 @@ JNICALL Java_org_jruby_cext_Native_freeHandle(JNIEnv* env, jclass self, jlong ad
 
     TAILQ_REMOVE(&liveHandles, h, all);
 
-    if ((h->flags & FL_WEAK) != 0) {
+    if (h->isWeak()) {
         env->DeleteWeakGlobalRef(h->obj);
     } else {
         env->DeleteGlobalRef(h->obj);
@@ -237,6 +244,7 @@ jruby::objectToValue(JNIEnv* env, jobject obj)
     }
 
     VALUE v = (VALUE) env->CallStaticLongMethod(Handle_class, Handle_nativeHandle, obj);
+    makeStrongRef(env, v);
     checkExceptions(env);
 
     return v;
@@ -257,61 +265,3 @@ jruby::runSyncQueue(JNIEnv *env, DataSyncQueue* q)
         d = next;
     }
 }
-
-/*
- * Class:     org_jruby_cext_Native
- * Method:    newRString
- * Signature: ()J
- */
-extern "C" JNIEXPORT jlong JNICALL
-Java_org_jruby_cext_Native_newRString(JNIEnv* env, jclass self)
-{
-    return p2j(calloc(1, sizeof(struct RString)));
-}
-
-/*
- * Class:     org_jruby_cext_Native
- * Method:    freeRString
- * Signature: (J)V
- */
-extern "C" JNIEXPORT void JNICALL
-Java_org_jruby_cext_Native_freeRString(JNIEnv* env, jclass self, jlong address)
-{
-    RString* rstring = (RString *) j2p(address);
-    if (rstring != NULL) {
-        if (rstring->ptr != NULL) {
-            free(rstring->ptr);
-        }
-
-        free(rstring);
-    }
-}
-
-/*
- * Class:     org_jruby_cext_Native
- * Method:    newRArray
- * Signature: ()J
- */
-extern "C" JNIEXPORT jlong JNICALL
-Java_org_jruby_cext_Native_newRArray(JNIEnv* env, jclass self)
-{
-    return p2j(calloc(1, sizeof(struct RArray)));
-}
-
-/*
- * Class:     org_jruby_cext_Native
- * Method:    freeRArray
- * Signature: (J)V
- */
-extern "C" JNIEXPORT void JNICALL
-Java_org_jruby_cext_Native_freeRArray(JNIEnv* env, jclass self, jlong address)
-{
-    RArray* rarray = (RArray *) j2p(address);
-    if (rarray != NULL) {
-        if (rarray->ptr != NULL) {
-            free(rarray->ptr);
-        }
-        free(rarray);
-    }
-}
-

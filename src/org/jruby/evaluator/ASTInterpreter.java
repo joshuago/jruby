@@ -45,7 +45,6 @@ import org.jruby.ast.util.ArgsUtil;
 import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.JumpException;
 import org.jruby.javasupport.util.RuntimeHelpers;
-import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.DynamicScope;
@@ -56,6 +55,8 @@ import org.jruby.runtime.Binding;
 import org.jruby.runtime.Frame;
 import org.jruby.runtime.InterpretedBlock;
 import org.jruby.util.ByteList;
+import org.jruby.RubyInstanceConfig.CompileMode;
+import org.jruby.ir.interpreter.Interpreter;
 
 public class ASTInterpreter {
     public static IRubyObject INTERPRET_METHOD(
@@ -69,8 +70,7 @@ public class ASTInterpreter {
             Block block,
             boolean isTraceable) {
         try {
-            String className = implClass.getName();
-            ThreadContext.pushBacktrace(context, className, name, file, line);
+            ThreadContext.pushBacktrace(context, name, file, line);
             if (isTraceable) methodPreTrace(runtime, context, name, implClass);
             return node.interpret(runtime, context, self, block);
         } finally {
@@ -84,7 +84,7 @@ public class ASTInterpreter {
     }
     public static IRubyObject INTERPRET_EVAL(Ruby runtime, ThreadContext context, Node node, String name, IRubyObject self, Block block) {
         try {
-            ThreadContext.pushBacktrace(context, self.getMetaClass().getName(), name, node.getPosition());
+            ThreadContext.pushBacktrace(context, name, node.getPosition());
             return node.interpret(runtime, context, self, block);
         } finally {
             ThreadContext.popBacktrace(context);
@@ -92,7 +92,7 @@ public class ASTInterpreter {
     }
     public static IRubyObject INTERPRET_EVAL(Ruby runtime, ThreadContext context, String file, int line, Node node, String name, IRubyObject self, Block block) {
         try {
-            ThreadContext.pushBacktrace(context, self.getMetaClass().getName(), name, file, line);
+            ThreadContext.pushBacktrace(context, name, file, line);
             return node.interpret(runtime, context, self, block);
         } finally {
             ThreadContext.popBacktrace(context);
@@ -100,7 +100,7 @@ public class ASTInterpreter {
     }
     public static IRubyObject INTERPRET_CLASS(Ruby runtime, ThreadContext context, Node node, String name, IRubyObject self, Block block) {
         try {
-            ThreadContext.pushBacktrace(context, self.getMetaClass().getName(), name, node.getPosition());
+            ThreadContext.pushBacktrace(context, name, node.getPosition());
             return node.interpret(runtime, context, self, block);
         } finally {
             ThreadContext.popBacktrace(context);
@@ -108,7 +108,7 @@ public class ASTInterpreter {
     }
     public static IRubyObject INTERPRET_BLOCK(Ruby runtime, ThreadContext context, String file, int line, Node node, String name, IRubyObject self, Block block) {
         try {
-            ThreadContext.pushBacktrace(context, self.getMetaClass().getName(), name, file, line);
+            ThreadContext.pushBacktrace(context, name, file, line);
             return node.interpret(runtime, context, self, block);
         } finally {
             ThreadContext.popBacktrace(context);
@@ -116,7 +116,7 @@ public class ASTInterpreter {
     }
     public static IRubyObject INTERPRET_ROOT(Ruby runtime, ThreadContext context, Node node, IRubyObject self, Block block) {
         try {
-            ThreadContext.pushBacktrace(context, self.getMetaClass().getName(), "(root)", node.getPosition());
+            ThreadContext.pushBacktrace(context, "(root)", node.getPosition());
             return node.interpret(runtime, context, self, block);
         } finally {
             ThreadContext.popBacktrace(context);
@@ -147,8 +147,8 @@ public class ASTInterpreter {
      */
     public static IRubyObject evalWithBinding(ThreadContext context, IRubyObject self, IRubyObject src, Binding binding) {
         Ruby runtime = src.getRuntime();
-        DynamicScope evalScope = binding.getDynamicScope().getEvalScope();
-        
+        DynamicScope evalScope = binding.getDynamicScope().getEvalScope(runtime);
+
         // FIXME:  This determine module is in a strange location and should somehow be in block
         evalScope.getStaticScope().determineModule();
 
@@ -157,8 +157,15 @@ public class ASTInterpreter {
             // Binding provided for scope, use it
             RubyString source = src.convertToString();
             Node node = runtime.parseEval(source.getByteList(), binding.getFile(), evalScope, binding.getLine());
+            Block block = binding.getFrame().getBlock();
 
-            return INTERPRET_EVAL(runtime, context, binding.getFile(), binding.getLine(), node, binding.getMethod(), self, binding.getFrame().getBlock());
+            if (runtime.getInstanceConfig().getCompileMode() == CompileMode.OFFIR) {
+                // SSS FIXME: AST interpreter passed both a runtime (which comes from the source string)
+                // and the thread-context rather than fetch one from the other.  Why is that?
+                return Interpreter.interpretBindingEval(runtime, binding.getFile(), binding.getLine(), binding.getMethod(), node, self, block);
+            } else {
+                return INTERPRET_EVAL(runtime, context, binding.getFile(), binding.getLine(), node, binding.getMethod(), self, block);
+            }
         } catch (JumpException.BreakJump bj) {
             throw runtime.newLocalJumpError(RubyLocalJumpError.Reason.BREAK, (IRubyObject)bj.getValue(), "unexpected break");
         } catch (JumpException.RedoJump rj) {
@@ -172,8 +179,9 @@ public class ASTInterpreter {
 
     /**
      * Evaluate the given string.
-     * @param context TODO
-     * @param evalString The string containing the text to be evaluated
+     * @param context the current thread's context
+     * @param self the self to evaluate under
+     * @param src The string containing the text to be evaluated
      * @param file The filename to use when reporting errors during the evaluation
      * @param lineNumber that the eval supposedly starts from
      * @return An IRubyObject result from the evaluation
@@ -183,27 +191,27 @@ public class ASTInterpreter {
         assert file != null;
 
         Ruby runtime = src.getRuntime();
-        String savedFile = context.getFile();
-        int savedLine = context.getLine();
 
         // no binding, just eval in "current" frame (caller's frame)
         RubyString source = src.convertToString();
         
-        DynamicScope evalScope = context.getCurrentScope().getEvalScope();
+        DynamicScope evalScope = context.getCurrentScope().getEvalScope(runtime);
         evalScope.getStaticScope().determineModule();
         
         try {
             Node node = runtime.parseEval(source.getByteList(), file, evalScope, lineNumber);
 
-            return INTERPRET_EVAL(runtime, context, file, lineNumber, node, "(eval)", self, Block.NULL_BLOCK);
+            if (runtime.getInstanceConfig().getCompileMode() == CompileMode.OFFIR) {
+                // SSS FIXME: AST interpreter passed both a runtime (which comes from the source string)
+                // and the thread-context rather than fetch one from the other.  Why is that?
+                return Interpreter.interpretSimpleEval(runtime, file, lineNumber, "(eval)", node, self);
+            } else {
+                return INTERPRET_EVAL(runtime, context, file, lineNumber, node, "(eval)", self, Block.NULL_BLOCK);
+            }
         } catch (JumpException.BreakJump bj) {
             throw runtime.newLocalJumpError(RubyLocalJumpError.Reason.BREAK, (IRubyObject)bj.getValue(), "unexpected break");
         } catch (StackOverflowError soe) {
             throw runtime.newSystemStackError("stack level too deep", soe);
-        } finally {
-            // restore position
-            context.setFile(savedFile);
-            context.setLine(savedLine);
         }
     }
 
@@ -349,8 +357,7 @@ public class ASTInterpreter {
                 argsArray[i] = argsArrayNode.get(i).interpret(runtime, context, self, aBlock);
             }
 
-            context.setFile(savedFile);
-            context.setLine(savedLine);
+            context.setFileAndLine(savedFile, savedLine);
 
             return argsArray;
         }

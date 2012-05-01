@@ -36,7 +36,9 @@ import org.jruby.RubyRegexp;
 import org.jruby.RubyString;
 import org.jruby.RubySymbol;
 import org.jruby.ast.NodeType;
+import org.jruby.ast.executable.AbstractScript;
 import org.jruby.compiler.ASTInspector;
+import org.jruby.compiler.CompilerCallback;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.BlockBody;
@@ -115,9 +117,9 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
      * @param encoding the encoding for this script
      */
     @Override
-    public void cacheEncoding(BaseBodyCompiler method, Encoding encoding) {
+    public void cacheRubyEncoding(BaseBodyCompiler method, Encoding encoding) {
         if (!RubyInstanceConfig.INVOKEDYNAMIC_LITERALS) {
-            super.cacheEncoding(method, encoding);
+            super.cacheRubyEncoding(method, encoding);
             return;
         }
         
@@ -262,16 +264,33 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
      * @param scope the original scope to base the new one on
      */
     @Override
-    public void cacheStaticScope(BaseBodyCompiler method, StaticScope scope) {
+    public int cacheStaticScope(BaseBodyCompiler method, StaticScope scope) {
         String scopeString = RuntimeHelpers.encodeScope(scope);
         
+        int index = scopeCount;
+        scopeCount++;
+        
+        method.loadThis();
         method.loadThreadContext();
         
         method.method.invokedynamic(
                 "getStaticScope",
-                sig(StaticScope.class, ThreadContext.class),
+                sig(StaticScope.class, AbstractScript.class, ThreadContext.class),
                 InvokeDynamicSupport.getStaticScopeHandle(),
-                scopeString);
+                scopeString,
+                index);
+        
+        return index;
+    }
+    
+    public void loadStaticScope(BaseBodyCompiler method, int index) {
+        method.loadThis();
+        
+        method.method.invokedynamic(
+                "getStaticScope",
+                sig(StaticScope.class, AbstractScript.class),
+                InvokeDynamicSupport.getLoadStaticScopeHandle(),
+                index);
     }
     
     /**
@@ -379,5 +398,34 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
                 sig(RubySymbol.class, ThreadContext.class),
                 InvokeDynamicSupport.getSymbolHandle(),
                 symbol);
+    }
+
+    public void cachedGetVariable(BaseBodyCompiler method, String name) {
+        if (!RubyInstanceConfig.INVOKEDYNAMIC_IVARS) {
+            super.cachedGetVariable(method, name);
+            return;
+        }
+        
+        method.loadSelf();
+        
+        method.method.invokedynamic(
+                "get:" + name,
+                sig(IRubyObject.class, IRubyObject.class),
+                InvokeDynamicSupport.getVariableHandle());
+    }
+
+    public void cachedSetVariable(BaseBodyCompiler method, String name, CompilerCallback valueCallback) {
+        if (!RubyInstanceConfig.INVOKEDYNAMIC_IVARS) {
+            super.cachedSetVariable(method, name, valueCallback);
+            return;
+        }
+        
+        method.loadSelf();
+        valueCallback.call(method);
+        
+        method.method.invokedynamic(
+                "set:" + name,
+                sig(IRubyObject.class, IRubyObject.class, IRubyObject.class),
+                InvokeDynamicSupport.getVariableHandle());
     }
 }

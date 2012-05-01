@@ -151,8 +151,8 @@ public class JRubyEngine extends BSFEngineImpl {
         container = new ScriptingContainer(scope, behavior);
         SystemPropertyCatcher.setConfiguration(container);
         //container.getProvider().setLoadPaths(getClassPath(manager));
-        if (SystemPropertyCatcher.isRuby19(language)) {
-            container.getProvider().getRubyInstanceConfig().setCompatVersion(CompatVersion.RUBY1_9);
+        if (!SystemPropertyCatcher.isRuby19(language)) {
+            container.getProvider().getRubyInstanceConfig().setCompatVersion(CompatVersion.RUBY1_8);
         }
         Ruby runtime = container.getProvider().getRuntime();
 
@@ -229,8 +229,8 @@ public class JRubyEngine extends BSFEngineImpl {
     }
 
     private static class FunctionsGlobalVariable implements IAccessor {
-        private Ruby runtime;
-        private BSFFunctions functions;
+        private final Ruby runtime;
+        private final BSFFunctions functions;
 
         public FunctionsGlobalVariable(Ruby runtime, BSFFunctions functions) {
             this.runtime = runtime;

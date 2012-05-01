@@ -81,10 +81,41 @@ public final class ArgsUtil {
             return RubyArray.newArrayLight(runtime, value);
         }
         
-        // empirically it appears that to_ary coersions always return array or nil, so this
-        // should always be an array by now.
+        // must be array by now, or error
+        if (!(newValue instanceof RubyArray)) {
+            throw runtime.newTypeError(newValue.getMetaClass() + "#" + "to_ary" + " should return Array");
+        }
+        
         return (RubyArray)newValue;
     }
+    
+    public static RubyArray convertToRubyArray19(Ruby runtime, IRubyObject value, boolean coerce) {
+        if (value == null) {
+            return RubyArray.newEmptyArray(runtime);
+        }
+        
+        if (coerce) return convertToRubyArrayWithCoerce19(runtime, value);
+
+        // don't attempt to coerce to array, just wrap and return
+        return RubyArray.newArrayLight(runtime, value);
+    }
+    
+    public static RubyArray convertToRubyArrayWithCoerce19(Ruby runtime, IRubyObject value) {
+        if (value instanceof RubyArray) return ((RubyArray)value);
+        
+        IRubyObject newValue = TypeConverter.convertToType19(value, runtime.getArray(), "to_ary", false);
+
+        if (newValue.isNil()) {
+            return RubyArray.newArrayLight(runtime, value);
+        }
+        
+        // must be array by now, or error
+        if (!(newValue instanceof RubyArray)) {
+            throw runtime.newTypeError(newValue.getMetaClass() + "#" + "to_ary" + " should return Array");
+        }
+        
+        return (RubyArray)newValue;
+    }    
     
     /**
      * Remove first element from array

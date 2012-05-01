@@ -173,7 +173,7 @@ else
         fi
     done
 
-    if $cygwin; then
+    if [ "$CP" != "" ] && $cygwin; then
         CP=`cygpath -p -w "$CP"`
     fi
 fi
@@ -299,9 +299,6 @@ if [[ $darwin && -z "$JAVA_ENCODING" ]]; then
   java_args=("${java_args[@]}" "-Dfile.encoding=UTF-8")
 fi
 
-# Add a property to report memory max
-JAVA_OPTS="$JAVA_OPTS $JAVA_VM -Djruby.memory.max=${JAVA_MEM:4} -Djruby.stack.max=${JAVA_STACK:4}"
-
 # Append the rest of the arguments
 ruby_args=("${ruby_args[@]}" "$@")
 
@@ -343,7 +340,7 @@ fi
 
 if [ "$nailgun_client" != "" ]; then
   if [ -f $JRUBY_HOME/tool/nailgun/ng ]; then
-    exec $JRUBY_HOME/tool/nailgun/ng org.jruby.util.NailMain "$@"
+    exec $JRUBY_HOME/tool/nailgun/ng org.jruby.util.NailMain $mode "$@"
   else
     echo "error: ng executable not found; run 'make' in ${JRUBY_HOME}/tool/nailgun"
     exit 1

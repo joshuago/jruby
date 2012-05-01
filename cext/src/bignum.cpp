@@ -30,6 +30,7 @@
 #include "jruby.h"
 #include "ruby.h"
 #include "JLocalEnv.h"
+#include <math.h>
 
 using namespace jruby;
 
@@ -37,6 +38,12 @@ extern "C" int
 jruby_big_bytes_used(VALUE obj)
 {
     return NUM2INT(callMethod(obj, "size", 0));
+}
+
+extern "C" VALUE
+jruby_big_sign(VALUE obj)
+{
+    return callMethod(obj, ">", 1, INT2NUM(0));
 }
 
 extern "C" long long
@@ -81,7 +88,11 @@ rb_big2dbl(VALUE obj)
     jdouble result = env->CallStaticDoubleMethodA(RubyBignum_class, RubyBignum_big2dbl_method, params);
     checkExceptions(env);
 
-    return result;
+    if (unlikely(isnan(result))) {
+	return (signbit(result)) ? -INFINITY : INFINITY;
+    } else {
+	return result;
+    }
 }
 
 extern "C" VALUE

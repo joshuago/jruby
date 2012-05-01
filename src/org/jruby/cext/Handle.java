@@ -43,7 +43,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 /**
  * A {@link Handle} represents an object made available to native code tied to it's runtime.
  */
-public final class Handle {
+public final class Handle extends Cleaner {
     private static final long FIXNUM_MAX = Integer.getInteger("sun.arch.data.model") == 64
             ? (Long.MAX_VALUE >> 1) : ((long) Integer.MAX_VALUE >> 1);
     private static final long FIXNUM_MIN = Integer.getInteger("sun.arch.data.model") == 64
@@ -62,10 +62,11 @@ public final class Handle {
     private final long address;
     
     static Handle newHandle(Ruby runtime, Object rubyObject, long nativeHandle) {
-        return new Handle(runtime, nativeHandle);
+        return new Handle(runtime, rubyObject, nativeHandle);
     }
     
-    private Handle(Ruby runtime, long address) {
+    private Handle(Ruby runtime, Object obj, long address) {
+        super(obj);
         this.runtime = runtime;
         this.address = address;
     }
@@ -96,6 +97,11 @@ public final class Handle {
     @Override
     public String toString() {
         return "Native ruby object " + Long.toString(address);
+    }
+
+    @Override
+    void dispose() {
+        Native.freeHandle(address);
     }
 
     /**

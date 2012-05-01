@@ -1,66 +1,107 @@
 package org.jruby.internal.runtime.methods;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.jruby.RubyModule;
-import org.jruby.compiler.ir.IRMethod;
-import org.jruby.compiler.ir.representations.CFG;
-import org.jruby.interpreter.Interpreter;
-import org.jruby.interpreter.InterpreterContext;
-import org.jruby.interpreter.NaiveInterpreterContext;
+import org.jruby.ir.IRMethod;
+import org.jruby.ir.IRScope;
+import org.jruby.ir.representations.CFG;
+import org.jruby.ir.operands.Operand;
+import org.jruby.ir.operands.Splat;
+import org.jruby.ir.operands.Variable;
+import org.jruby.ir.interpreter.Interpreter;
+import org.jruby.parser.StaticScope;
+import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
+import org.jruby.runtime.DynamicScope;
+import org.jruby.runtime.PositionAware;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.log.Logger;
+import org.jruby.util.log.LoggerFactory;
 
-public class InterpretedIRMethod extends DynamicMethod {
-    public final IRMethod method;
-    private final int temporaryVariableSize;
+public class InterpretedIRMethod extends DynamicMethod implements IRMethodArgs, PositionAware {
+    private static final Logger LOG = LoggerFactory.getLogger("InterpretedIRMethod");
+
+    private final IRScope method;
+    private Arity arity;
     boolean displayedCFG = false; // FIXME: Remove when we find nicer way of logging CFG
-
-    // We can probably use IRMethod callArgs for something (at least arity)
-    public InterpretedIRMethod(IRMethod method, RubyModule implementationClass) {
-        super(implementationClass, Visibility.PRIVATE, CallConfiguration.FrameNoneScopeNone);
-        this.temporaryVariableSize = method.getTemporaryVariableSize();
+    
+    public InterpretedIRMethod(IRScope method, Visibility visibility, RubyModule implementationClass) {
+        super(implementationClass, visibility, CallConfiguration.FrameNoneScopeNone);
         this.method = method;
+        this.method.getStaticScope().determineModule();
+        this.arity = calculateArity();
     }
 
     // We can probably use IRMethod callArgs for something (at least arity)
-    public InterpretedIRMethod(IRMethod method, Visibility visibility, RubyModule implementationClass) {
-        super(implementationClass, visibility, CallConfiguration.FrameNoneScopeNone);
-        this.temporaryVariableSize = method.getTemporaryVariableSize();
-        this.method = method;
+    public InterpretedIRMethod(IRScope method, RubyModule implementationClass) {
+        this(method, Visibility.PRIVATE, implementationClass);
+    }
+    
+    public IRScope getIRMethod() {
+        return method;
+    }
+
+    public List<String[]> getParameterList() {
+        return (method instanceof IRMethod) ? ((IRMethod)method).getArgDesc() : new ArrayList<String[]>();
+    }
+
+    private Arity calculateArity() {
+        StaticScope s = method.getStaticScope();
+        if (s.getOptionalArgs() > 0 || s.getRestArg() >= 0) return Arity.required(s.getRequiredArgs());
+
+        return Arity.createArity(s.getRequiredArgs());
+    }
+
+    @Override
+    public Arity getArity() {
+        return this.arity;
     }
 
     @Override
     public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
-        InterpreterContext interp = new NaiveInterpreterContext(context, getImplementationClass(), self, name, method.getLocalVariablesCount(),
-                temporaryVariableSize, args, block, null);
-//        Arity.checkArgumentCount(context.getRuntime(), args.length, requiredArgsCount, method.get???);
         if (Interpreter.isDebug()) {
             // FIXME: name should probably not be "" ever.
             String realName = name == null || "".equals(name) ? method.getName() : name;
-            System.out.println("Executing '" + realName + "'");
+            LOG.info("Executing '" + realName + "'");
         }
 
-        CFG c = method.getCFG();
-        if (c == null) {
-            // The base IR may not have been processed yet because the method is added dynamically.
-            method.prepareForInterpretation();
-            c = method.getCFG();
-        }
-		  // Do this *after* the method has been prepared!
-		  interp.allocateSharedBindingScope(method);
+        // The base IR may not have been processed yet
+        if (method.getInstrsForInterpretation() == null) method.prepareForInterpretation();
+
         if (Interpreter.isDebug() && displayedCFG == false) {
-            System.out.println("CFG:\n" + c.getGraph());
-            System.out.println("\nInstructions:\n" + c.toStringInstrs());
+            CFG cfg = method.getCFG();
+            LOG.info("Graph:\n" + cfg.toStringGraph());
+            LOG.info("CFG:\n" + cfg.toStringInstrs());
             displayedCFG = true;
         }
 
-        context.getCurrentScope().getStaticScope().setModule(clazz);
-        return Interpreter.INTERPRET_METHOD(context, c, interp, self, name, getImplementationClass(), false);
+        try {
+            // update call stacks (push: frame, class, scope, etc.)
+            RubyModule implementationClass = getImplementationClass();
+            context.preMethodFrameAndScope(implementationClass, name, self, block, method.getStaticScope());
+            context.setCurrentVisibility(getVisibility());
+            return Interpreter.INTERPRET_METHOD(context, method, self, name, implementationClass, args, block, null, false);
+        } finally {
+            // update call stacks (pop: ..)
+            context.popFrame();
+            context.postMethodScopeOnly();
+        }
     }
 
     @Override
     public DynamicMethod dup() {
         return new InterpretedIRMethod(method, visibility, implementationClass);
     }
+
+    public String getFile() {
+        return method.getFileName();
+    }
+
+    public int getLine() {
+        return method.getLineNumber();
+	}
 }

@@ -52,7 +52,7 @@ import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 
-import com.kenai.jaffl.LastError;
+import jnr.ffi.LastError;
 
 /**
  *
@@ -62,6 +62,13 @@ public class JRuby {
     public static long callRubyMethod(IRubyObject recv, Object methodName, IRubyObject[] args) {
         IRubyObject retval = recv.callMethod(recv.getRuntime().getCurrentContext(),
                 methodName.toString(), args);
+
+        return Handle.nativeHandle(retval);
+    }
+
+    public static long callRubyMethodB(IRubyObject recv, Object methodName, IRubyObject[] args, IRubyObject blockProc) {
+        IRubyObject retval = recv.callMethod(recv.getRuntime().getCurrentContext(),
+                methodName.toString(), args, ((RubyProc)blockProc).getBlock());
 
         return Handle.nativeHandle(retval);
     }
@@ -97,7 +104,7 @@ public class JRuby {
 
     public static long callSuperMethod(Ruby runtime, IRubyObject[] args) {
         ThreadContext currentContext = runtime.getCurrentContext();
-        IRubyObject retval = RuntimeHelpers.invokeSuper(currentContext, 
+        IRubyObject retval = RuntimeHelpers.invokeSuper(currentContext,
                 runtime.getCurrentContext().getFrameSelf(), args, Block.NULL_BLOCK);
 
         return Handle.nativeHandle(retval);
@@ -161,14 +168,6 @@ public class JRuby {
                 new NativeProcMethod(recv.getMetaClass(), fn), recv);
         IRubyObject proc = method.to_proc(runtime.getCurrentContext(), Block.NULL_BLOCK);
         return proc;
-    }
-
-    public static long getRString(RubyString str) {
-        return RString.valueOf(str).address();
-    }
-
-    public static long getRArray(RubyArray ary) {
-        return RArray.valueOf(ary).address();
     }
 
     /** rb_yield */
@@ -246,7 +245,7 @@ public class JRuby {
 
     /** rb_sys_fail */
     public static void sysFail(Ruby runtime, String message) {
-        final int n = LastError.getLastError();
+        final int n = LastError.getLastError(jnr.ffi.Runtime.getSystemRuntime());
         sysFail(runtime, message, n);
     }
 
@@ -268,6 +267,11 @@ public class JRuby {
         } catch (InterruptedException e) {
             // Thread wakeup, do nothing
         }
+    }
+    
+    public static long getMetaClass(IRubyObject object) {
+        RubyClass metaClass = object.getMetaClass();
+        return Handle.nativeHandle(metaClass);
     }
 
     public static final class NativeFunctionTask implements BlockingTask {
@@ -299,11 +303,18 @@ public class JRuby {
         RubyThread thread = runtime.getCurrentContext().getThread();
         NativeFunctionTask task = new NativeFunctionTask(Native.getInstance(runtime), blocking_func,
                 blocking_data, unblocking_func, unblocking_data);
+
+        GC.disable();
         int lockCount = GIL.releaseAllLocks();
         try {
             thread.executeBlockingTask(task);
-        } catch (InterruptedException e) {}
-        GIL.acquire(lockCount);
+        } catch (InterruptedException e) {
+            // ignore
+        } finally  {
+            GIL.acquire(lockCount);
+            GC.enable();
+        }
+
         return task.retval;
     }
 }

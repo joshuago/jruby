@@ -63,7 +63,8 @@ rb_class_new_instance(int argc, VALUE* argv, VALUE klass)
 extern "C" VALUE
 rb_class_of(VALUE obj)
 {
-    return callMethodA(obj, "class", 0, NULL);
+    JLocalEnv env;
+    return (VALUE) env->CallStaticLongMethod(JRuby_class, JRuby_getMetaClass, valueToObject(env, obj));
 }
 
 extern "C" VALUE
@@ -75,7 +76,7 @@ rb_class_name(VALUE klass)
 extern "C" char*
 rb_class2name(VALUE class_handle)
 {
-    return (char *) RSTRING_PTR(rb_class_name(class_handle));
+    return rb_str_ptr_readonly(rb_class_name(class_handle));
 }
 
 extern "C" VALUE
@@ -116,6 +117,19 @@ rb_cvar_set(VALUE klass, ID name, VALUE value)
     return callMethod(klass, "class_variable_set", 2, rb_str_new_cstr(target), value);
 }
 
+extern "C" void 
+rb_cv_set(VALUE klass, const char* name, VALUE value)
+{
+    rb_cvar_set(klass, rb_intern(name), value);
+}
+
+extern "C" VALUE 
+rb_cv_get(VALUE klass, const char* name)
+{
+    return rb_cvar_get(klass, rb_intern(name));
+}
+
+
 extern "C" VALUE
 rb_define_class(const char* name, VALUE parent)
 {
@@ -149,11 +163,21 @@ rb_define_alloc_func(VALUE klass, VALUE (*fn)(VALUE))
     JLocalEnv env;
 
     jobject allocator = env->NewObject(NativeObjectAllocator_class,
-            getMethodID(env, NativeObjectAllocator_class, "<init>", "(J)V"),
+            getCachedMethodID(env, NativeObjectAllocator_class, "<init>", "(J)V"),
             p2j((void *) fn));
     checkExceptions(env);
 
     env->CallVoidMethod(valueToObject(env, klass), RubyClass_setAllocator_method, allocator);
+}
+
+extern "C" VALUE 
+rb_path_to_class(VALUE pathname)
+{
+    JLocalEnv env;
+    jobject klass = env->CallObjectMethod(getRuntime(), Ruby_getClassFromPath_method, env->NewStringUTF(rb_str_ptr_readonly(pathname)));
+    checkExceptions(env);
+
+    return objectToValue(env, klass);
 }
 
 extern "C" VALUE
@@ -182,6 +206,12 @@ extern "C" void
 rb_include_module(VALUE self, VALUE module)
 {
     callMethod(self, "include", 1, module);
+}
+
+extern "C" void 
+rb_define_class_variable(VALUE klass, const char* name, VALUE val)
+{
+    rb_cv_set(klass, name, val);
 }
 
 static void

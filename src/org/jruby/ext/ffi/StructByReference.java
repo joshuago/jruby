@@ -39,7 +39,7 @@ public final class StructByReference extends RubyObject {
                     + structClass.getMetaClass().getName() + " (expected Class)");
         }
 
-        if (!((RubyClass) structClass).isKindOfModule(context.getRuntime().getModule("FFI").getClass("Struct"))) {
+        if (!((RubyClass) structClass).isKindOfModule(context.getRuntime().getFFI().structClass)) {
             throw context.getRuntime().newTypeError("wrong argument type " 
                     + structClass.getMetaClass().getName() + " (expected subclass of FFI::Struct)");
         }
@@ -71,7 +71,7 @@ public final class StructByReference extends RubyObject {
 
     @JRubyMethod(name = "native_type")
     public IRubyObject native_type(ThreadContext context) {
-        return context.getRuntime().getModule("FFI").getClass("Type").getConstant("POINTER");
+        return context.getRuntime().getFFI().typeClass.getConstant("POINTER");
     }
 
 
@@ -84,23 +84,20 @@ public final class StructByReference extends RubyObject {
             return Pointer.getNull(context.getRuntime());
 
         } else {
-            throw context.getRuntime().newTypeError(value, context.getRuntime().getModule("FFI").getClass("Struct"));
+            throw context.getRuntime().newTypeError(value, context.getRuntime().getFFI().structClass);
         }
     }
 
     @JRubyMethod(name = "from_native")
     public IRubyObject from_native(ThreadContext context, IRubyObject value, IRubyObject ctx) {
         if (value instanceof AbstractMemory) {
-            return getStructClass().newInstance(context,
-                        new IRubyObject[] { (AbstractMemory) value },
-                        Block.NULL_BLOCK);
+            return getStructClass().newInstance(context, value, Block.NULL_BLOCK);
 
         } else if (value.isNil()) {
-            return getStructClass().newInstance(context,
-                        new IRubyObject[] { Pointer.getNull(context.getRuntime()) },
-                        Block.NULL_BLOCK);
+            return getStructClass().newInstance(context, Pointer.getNull(context.getRuntime()), Block.NULL_BLOCK);
+
         } else {
-            throw context.getRuntime().newTypeError(value, context.getRuntime().getModule("FFI").getClass("Pointer"));
+            throw context.getRuntime().newTypeError(value, context.getRuntime().getFFI().pointerClass);
         }
     }
 

@@ -532,7 +532,7 @@ public class RubyYaccLexer {
                 // Do nothing like MRI
             } else if (getEncoding() == RubyYaccLexer.USASCII_ENCODING &&
                     bufferEncoding != RubyYaccLexer.UTF8_ENCODING) {
-                buffer.setEncoding(RubyYaccLexer.ASCII8BIT_ENCODING);
+                codeRange = ParserSupport.associateEncoding(buffer, RubyYaccLexer.ASCII8BIT_ENCODING, codeRange);
             }
         }
 
@@ -792,7 +792,7 @@ public class RubyYaccLexer {
         // 1.9 - first line comment handling
         ByteList commentLine;
         boolean handledMagicComment = false;
-        if (!isOneEight() && getPosition().getLine() == 0) { //
+        if (!isOneEight() && src.getLine() == 0 && token == 0) {
             // Skip first line if it is a shebang line?
             // (not the same as MRI:parser_prepare/comment_at_top)
             if (src.peek('!')) {
@@ -1630,7 +1630,7 @@ public class RubyYaccLexer {
                     int c2 = src.read();
 
                     if (c2 != '~' && c2 != '>' &&
-                            (c2 != '=' || (c2 == '\n' && src.peek('>')))) {
+                            (c2 != '=' || src.peek('>'))) {
                         result = Tokens.tIDENTIFIER;
                         tokenBuffer.append((char) c);
                         src.unread(c2);
@@ -2533,7 +2533,7 @@ public class RubyYaccLexer {
                 if ((c = src.read()) == '\\') {
                     c = readEscape();
                 } else if (c == '?') {
-                    return '\u0177';
+                    return '\177';
                 } else if (c == EOF) {
                     throw new SyntaxException(PID.INVALID_ESCAPE_SYNTAX, getPosition(),
                             getCurrentLine(), "Invalid escape character syntax");

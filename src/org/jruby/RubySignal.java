@@ -27,6 +27,7 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
+import jnr.constants.platform.Signal;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyModule;
 import org.jruby.internal.runtime.ThreadService;
@@ -41,6 +42,8 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.SignalFacade;
 import org.jruby.util.NoFunctionalitySignalFacade;
 
+import java.util.Arrays;
+
 @JRubyModule(name="Signal")
 public class RubySignal {
     private final static SignalFacade SIGNALS = getSignalFacade();
@@ -53,13 +56,6 @@ public class RubySignal {
             return new NoFunctionalitySignalFacade();
         }
     }
-
-    // NOTE: The indicies here match exactly the signal values; do not reorder
-    public static final String[] NAMES = {
-            "EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "EMT",
-            "FPE", "KILL", "BUS", "SEGV", "SYS", "PIPE", "ALRM", "TERM", "URG",
-            "STOP", "TSTP", "CONT", "CHLD", "TTIN", "TTOU", "IO", "XCPU",
-            "XFSZ", "VTALRM", "PROF", "WINCH", "INFO", "USR1", "USR2"};
     
     public static void createSignal(Ruby runtime) {
         RubyModule mSignal = runtime.defineModule("Signal");
@@ -67,25 +63,24 @@ public class RubySignal {
         mSignal.defineAnnotatedMethods(RubySignal.class);
         //registerThreadDumpSignalHandler(runtime);
     }
-
-    @JRubyMethod(required = 1, optional = 1, module = true)
-    public static IRubyObject trap(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = recv.getRuntime();
-        runtime.getLoadService().require("jsignal_internal");
-        return RuntimeHelpers.invoke(context, runtime.getKernel(), "__jtrap", args, block);
-    }
     
     @JRubyMethod(module = true)
     public static IRubyObject list(ThreadContext context, IRubyObject recv) {
         Ruby runtime = recv.getRuntime();
         RubyHash names = RubyHash.newHash(runtime);
-        for (int i = 0; i < NAMES.length; i++) {
-            names.op_aset(context, runtime.newString(NAMES[i]), runtime.newFixnum(i));
+        for (Signal s : Signal.values()) {
+            if (!s.description().startsWith("SIG")) continue;
+
+            // replace CLD with CHLD value
+            long longValue = s.longValue();
+            if (s == Signal.SIGCLD) longValue = Signal.SIGCHLD.longValue();
+
+            // omit unsupported signals
+            if (longValue >= 20000) continue;
+
+            names.op_aset(context, runtime.newString(s.description().substring("SIG".length())), runtime.newFixnum(longValue));
         }
-        // IOT is also 6
-        names.op_aset(context, runtime.newString("IOT"), runtime.newFixnum(6));
-        // CLD is also 20
-        names.op_aset(context, runtime.newString("CLD"), runtime.newFixnum(20));
+        names.op_aset(context, runtime.newString("EXIT"), runtime.newFixnum(0));
         return names;
     }
 
@@ -94,28 +89,18 @@ public class RubySignal {
         return SIGNALS.trap(recv, block, sig);
     }
 
-    private static void registerThreadDumpSignalHandler(final Ruby runtime) {
-        final String threadDumpSignal = runtime.getInstanceConfig().getThreadDumpSignal();
-        if (threadDumpSignal != null && threadDumpSignal.length() > 0) {
-            SIGNALS.trap(runtime, new BlockCallback() {
-                public IRubyObject call(ThreadContext context, IRubyObject[] args, Block block) {
-                    System.err.println("Ruby Thread Dump");
-                    final ThreadService threadService = runtime.getThreadService();
-                    RubyThread[] thrs = threadService.getActiveRubyThreads();
-                    for (RubyThread th : thrs) {
-                        System.err.println("\n" + th);
-                        RubyException exc = new RubyException(runtime, runtime.getRuntimeError(), "");
-                        ThreadContext tc = threadService.getThreadContextForThread(th);
-                        if (tc != null) {
-                            exc.setBacktraceData(new BacktraceData(th.javaBacktrace(), tc.createBacktrace2(0, false), false, false, Gather.NORMAL));
-                            exc.printBacktrace(System.err);
-                        } else {
-                            System.err.println("    [no longer alive]");
-                        }
-                    }
-                    return runtime.getNil();
-                }
-            }, threadDumpSignal);
-        }
+    @JRubyMethod(name = "__jtrap_platform_kernel", required = 1, module = true)
+    public static IRubyObject __jtrap_platform_kernel(final IRubyObject recv, IRubyObject sig) {
+        return SIGNALS.restorePlatformDefault(recv, sig);
+    }
+
+    @JRubyMethod(name = "__jtrap_osdefault_kernel", required = 1, module = true)
+    public static IRubyObject __jtrap_osdefault_kernel(final IRubyObject recv, IRubyObject sig) {
+        return SIGNALS.restoreOSDefault(recv, sig);
+    }
+
+    @JRubyMethod(name = "__jtrap_ignore_kernel", required = 1, module = true)
+    public static IRubyObject __jtrap_restore_kernel(final IRubyObject recv, IRubyObject sig) {
+        return SIGNALS.ignore(recv, sig);
     }
 }// RubySignal

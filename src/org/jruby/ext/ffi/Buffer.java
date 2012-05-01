@@ -10,8 +10,9 @@ import org.jruby.RubyModule;
 import org.jruby.RubyString;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
-import org.jruby.runtime.ObjectAllocator;
-import org.jruby.runtime.ThreadContext;
+import org.jruby.internal.runtime.methods.CallConfiguration;
+import org.jruby.internal.runtime.methods.DynamicMethod;
+import org.jruby.runtime.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import static org.jruby.runtime.Visibility.*;
 
@@ -32,6 +33,7 @@ public final class Buffer extends AbstractMemory {
                 BufferAllocator.INSTANCE);
         result.defineAnnotatedMethods(Buffer.class);
         result.defineAnnotatedConstants(Buffer.class);
+//        result.getSingletonClass().addMethod("new", new NewInstanceMethod(result.getRealClass()));
 
         return result;
     }
@@ -44,9 +46,89 @@ public final class Buffer extends AbstractMemory {
         }
     }
 
+    private static final class NewInstanceMethod extends DynamicMethod {
+        private final NativeCall new1, new2, new3;
+        private NewInstanceMethod(RubyModule implementationClass) {
+            super(implementationClass, Visibility.PUBLIC, CallConfiguration.FrameNoneScopeNone);
+
+            new1 = new NativeCall(Buffer.class, "newInstance", IRubyObject.class,
+                    new Class[] { ThreadContext.class, IRubyObject.class, IRubyObject.class }, true, false);
+            new2 = new NativeCall(Buffer.class, "newInstance", IRubyObject.class,
+                    new Class[] { ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class }, true, false);
+            new3 = new NativeCall(Buffer.class, "newInstance", IRubyObject.class,
+                    new Class[] { ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class }, true, false);
+        }
+
+        @Override
+        public DynamicMethod dup() {
+            return this;
+        }
+
+        @Override
+        public Arity getArity() {
+            return Arity.fixed(1);
+        }
+
+        @Override
+        public NativeCall getNativeCall() {
+            System.out.println("default native call requested");
+            return new1;
+        }
+
+        @Override
+        public void setHandle(Object handle) {}
+
+        @Override
+        public NativeCall getNativeCall(int args, boolean block) {
+            System.out.println("native call requested for args=" + args);
+            switch (args) {
+                case 1:
+                    return new1;
+                case 2:
+                    return new2;
+                case 3:
+                    return new3;
+            }
+            return super.getNativeCall(args, block);    //To change body of overridden methods use File | Settings | File Templates.
+        }
+
+        @Override
+        public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
+            switch (args.length) {
+                case 1:
+                    return call(context, self, clazz, name, args[0]);
+
+                case 2:
+                case 3:
+                    return call(context, self, clazz, name, args[0], args[1]);
+
+                default:
+                    return ((RubyClass) self).newInstance(context, args, block);
+            }
+        }
+
+
+        @Override
+        public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule klazz, String name,
+                                IRubyObject arg0) {
+            return Buffer.newInstance(context, self, arg0);
+        }
+
+        @Override
+        public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule klazz, String name,
+                                IRubyObject arg0, IRubyObject arg1) {
+            return Buffer.newInstance(context, self, arg0, arg1);
+        }
+
+        @Override
+        public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule klazz, String name,
+                                IRubyObject arg0, IRubyObject arg1, IRubyObject arg2) {
+            return Buffer.newInstance(context, self, arg0, arg1);
+        }
+    }
 
     public Buffer(Ruby runtime, RubyClass klass) {
-        super(runtime, klass, new ArrayMemoryIO(runtime, 0), 0, 0);
+        super(runtime, klass, runtime.getFFI().getNullMemoryIO(), 0, 0);
         this.inout = IN | OUT;
     }
     
@@ -55,13 +137,8 @@ public final class Buffer extends AbstractMemory {
     }
     
     public Buffer(Ruby runtime, int size, int flags) {
-        this(runtime, runtime.getModule("FFI").getClass("Buffer"),
-            new ArrayMemoryIO(runtime, size), size, 1, flags);
-    }
-    
-    public Buffer(Ruby runtime, byte[] data, int offset, int size) {
-        this(runtime, runtime.getModule("FFI").getClass("Buffer"),
-            new ArrayMemoryIO(runtime, data, offset, size), size, 1, IN | OUT);
+        this(runtime, runtime.getFFI().bufferClass,
+            allocateMemoryIO(runtime, size), size, 1, flags);
     }
 
     private Buffer(Ruby runtime, IRubyObject klass, MemoryIO io, long size, int typeSize, int inout) {
@@ -77,18 +154,70 @@ public final class Buffer extends AbstractMemory {
             IRubyObject sizeArg, int count, int flags) {
         final int typeSize = calculateTypeSize(context, sizeArg);
         final int total = typeSize * count;
-        return new Buffer(context.getRuntime(), recv, 
-                new ArrayMemoryIO(context.getRuntime(), total), total, typeSize, flags);
+        return new Buffer(context.getRuntime(), recv,
+                allocateMemoryIO(context.getRuntime(), total), total, typeSize, flags);
     }
 
     private IRubyObject init(ThreadContext context, IRubyObject rbTypeSize, int count, int flags) {
         this.typeSize = calculateTypeSize(context, rbTypeSize);
         this.size = this.typeSize * count;
         this.inout = flags;
-        setMemoryIO(new ArrayMemoryIO(context.getRuntime(), (int) this.size));
+        setMemoryIO(allocateMemoryIO(context.getRuntime(), (int) this.size));
 
         return this;
     }
+
+    @JRubyMethod(name = "new", meta = true)
+    public static IRubyObject newInstance(ThreadContext context, IRubyObject klass, IRubyObject sizeArg) {
+        if (klass == context.runtime.getFFI().bufferClass) {
+            return allocate(context, klass, sizeArg, 1, IN | OUT);
+
+        } else {
+            return ((RubyClass) klass).newInstance(context, sizeArg, Block.NULL_BLOCK);
+        }
+    }
+
+    @JRubyMethod(name = "new", meta = true)
+    public static IRubyObject newInstance(ThreadContext context, IRubyObject klass, IRubyObject sizeArg,
+                                          IRubyObject countArg) {
+
+        if (klass == context.runtime.getFFI().bufferClass) {
+            return allocate(context, klass, sizeArg, RubyFixnum.fix2int(countArg), IN | OUT);
+
+        } else {
+            return ((RubyClass) klass).newInstance(context, sizeArg, countArg, Block.NULL_BLOCK);
+        }
+    }
+
+    @JRubyMethod(name = "new", meta = true)
+    public static IRubyObject newInstance(ThreadContext context, IRubyObject klass, IRubyObject sizeArg,
+                                          IRubyObject countArg, IRubyObject clear) {
+        if (klass == context.runtime.getFFI().bufferClass) {
+            return allocate(context, klass, sizeArg, RubyFixnum.fix2int(countArg), IN | OUT);
+
+        } else {
+            return ((RubyClass) klass).newInstance(context, sizeArg, countArg, clear, Block.NULL_BLOCK);
+        }
+    }
+
+    @JRubyMethod(name = "new", meta = true, rest = true)
+    public static IRubyObject newInstance(ThreadContext context, IRubyObject klass, IRubyObject[] args) {
+        if (klass == context.runtime.getFFI().bufferClass) {
+            switch (args.length) {
+                case 1:
+                    return newInstance(context, klass, args[0]);
+                case 2:
+                case 3:
+                    return newInstance(context, klass, args[0], args[1]);
+
+                default:
+                    return ((RubyClass) klass).newInstance(context, args, Block.NULL_BLOCK);
+            }
+        } else {
+            return ((RubyClass) klass).newInstance(context, args, Block.NULL_BLOCK);
+        }
+    }
+
 
     @JRubyMethod(name = "initialize", visibility = PRIVATE)
     public IRubyObject initialize(ThreadContext context, IRubyObject sizeArg) {
@@ -187,10 +316,7 @@ public final class Buffer extends AbstractMemory {
                 order.equals(getMemoryIO().order()) ? getMemoryIO() : new SwappedMemoryIO(runtime, getMemoryIO()),
                 size, typeSize, inout);
     }
-    
-    ArrayMemoryIO getArrayMemoryIO() {
-        return (ArrayMemoryIO) getMemoryIO();
-    }
+
     protected AbstractMemory slice(Ruby runtime, long offset) {
         return new Buffer(runtime, getMetaClass(), this.io.slice(offset), this.size - offset, this.typeSize, this.inout);
     }
@@ -200,9 +326,13 @@ public final class Buffer extends AbstractMemory {
     }
 
     protected Pointer getPointer(Ruby runtime, long offset) {
-        return new Pointer(runtime, (DirectMemoryIO) getMemoryIO().getMemoryIO(offset));
+        return new Pointer(runtime, getMemoryIO().getMemoryIO(offset));
     }
     public int getInOutFlags() {
         return inout;
+    }
+    
+    private static MemoryIO allocateMemoryIO(Ruby runtime, int size) {
+        return Factory.getInstance().allocateTransientDirectMemory(runtime, size, 8, true);
     }
 }

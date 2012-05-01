@@ -236,6 +236,15 @@ public interface BodyCompiler {
     public void performBooleanBranch(BranchCallback trueBranch, BranchCallback falseBranch);
     
     /**
+     * Perform a boolean branch operation based on the boolean top value
+     * on the stack. If true, invoke the true branch callback. Otherwise, invoke the false branch callback.
+     * 
+     * @param trueBranch The callback for generating code for the "true" condition
+     * @param falseBranch The callback for generating code for the "false" condition
+     */
+    public void performBooleanBranch2(BranchCallback trueBranch, BranchCallback falseBranch);
+    
+    /**
      * Perform a logical short-circuited Ruby "and" operation, using Ruby notions of true and false.
      * If the value on top of the stack is false, it remains and the branch is not executed. If it is true,
      * the top of the stack is replaced with the result of the branch.
@@ -491,16 +500,17 @@ public interface BodyCompiler {
 
     public void nthRef(int match);
 
-    public void match();
+    public void match(boolean is19);
 
-    public void match2(CompilerCallback value);
+    public void match2(CompilerCallback value, boolean is19);
 
-    public void match2Capture(CompilerCallback value, int[] scopeOffsets);
+    public void match2Capture(CompilerCallback value, int[] scopeOffsets, boolean is19);
 
-    public void match3();
+    public void match3(boolean is19);
 
     public void createNewRegexp(ByteList value, int options);
     public void createNewRegexp(CompilerCallback createStringCallback, int options);
+    public void createDRegexp19(ArrayCallback arrayCallback, Object[] sourceArray, int options);
     
     public void pollThreadEvents();
 
@@ -598,7 +608,17 @@ public interface BodyCompiler {
     public void literalSwitch(int[] caseInts, Object[] caseBodies, ArrayCallback casesCallback, CompilerCallback defaultCallback);
     public void typeCheckBranch(Class type, BranchCallback trueCallback, BranchCallback falseCallback);
     public void loadFilename();
+
+    /**
+     * Store the current live exception object in the $! thread-global.
+     */
     public void storeExceptionInErrorInfo();
+
+    /**
+     * Store the current exception in $!, wrapping in NativeException if necessary.
+     */
+    public void storeNativeExceptionInErrorInfo();
+
     public void clearErrorInfo();
 
     public void compileSequencedConditional(
@@ -655,4 +675,10 @@ public interface BodyCompiler {
      * @stack: String defined for contained expression
      */
     public void definedNot();
+    
+    /**
+     * Convert the top IRubyObject value on the stack to a primitive boolean
+     * using IRubyObject.isTrue();
+     */
+    public void isTrue();
 }

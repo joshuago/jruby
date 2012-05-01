@@ -22,6 +22,7 @@ import org.jruby.javasupport.JavaUtilities;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
+import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -42,7 +43,7 @@ public class JavaInterfaceTemplate {
     // OLD TODO from Ruby code:
     // This should be implemented in JavaClass.java, where we can
     // check for reserved Ruby names, conflicting methods, etc.
-    @JRubyMethod(backtrace = true, visibility = Visibility.PRIVATE)
+    @JRubyMethod(visibility = Visibility.PRIVATE)
     public static IRubyObject implement(ThreadContext context, IRubyObject self, IRubyObject clazz) {
         Ruby runtime = context.getRuntime();
 
@@ -144,17 +145,11 @@ public class JavaInterfaceTemplate {
 
                 // The replacement "new" allocates and inits the Ruby object as before, but
                 // also instantiates our proxified Java object by calling __jcreate!
-                singleton.addMethod("new", new org.jruby.internal.runtime.methods.JavaMethod(singleton, Visibility.PUBLIC) {
-
-                    @Override
-                    public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
-                        assert self instanceof RubyClass : "new defined on non-class";
-
-                        RubyClass clazzSelf = (RubyClass) self;
-                        IRubyObject newObj = clazzSelf.allocate();
-                        RuntimeHelpers.invoke(context, newObj, "__jcreate!", args, block);
-                        RuntimeHelpers.invoke(context, newObj, "initialize", args, block);
-
+                final ObjectAllocator proxyAllocator = clazz.getAllocator();
+                clazz.setAllocator(new ObjectAllocator() {
+                    public IRubyObject allocate(Ruby runtime, RubyClass klazz) {
+                        IRubyObject newObj = proxyAllocator.allocate(runtime, klazz);
+                        RuntimeHelpers.invoke(runtime.getCurrentContext(), newObj, "__jcreate!");
                         return newObj;
                     }
                 });
@@ -165,7 +160,7 @@ public class JavaInterfaceTemplate {
 
                     @Override
                     public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args) {
-                        return jcreateProxy(self, args);
+                        return jcreateProxy(self);
                     }
                 });
             } else {
@@ -183,7 +178,7 @@ public class JavaInterfaceTemplate {
 
                 @Override
                 public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args) {
-                    IRubyObject result = jcreateProxy(self, args);
+                    IRubyObject result = jcreateProxy(self);
                     return result;
                 }
             });
@@ -199,23 +194,25 @@ public class JavaInterfaceTemplate {
 
             // Because we implement Java interfaces now, we need a new === that's
             // aware of those additional "virtual" supertypes
-            clazz.defineAlias("old_eqq", "===");
-            clazz.addMethod("===", new JavaMethodOne(clazz, Visibility.PUBLIC) {
+            if (!clazz.searchMethod("===").isUndefined()) {
+                clazz.defineAlias("old_eqq", "===");
+                clazz.addMethod("===", new JavaMethodOne(clazz, Visibility.PUBLIC) {
 
-                @Override
-                public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject arg) {
-                    // TODO: WRONG - get interfaces from class
-                    if (arg.respondsTo("java_object")) {
-                        IRubyObject interfaces = self.getMetaClass().getInstanceVariables().getInstanceVariable("@java_interfaces");
-                        assert interfaces instanceof RubyArray : "interface list was not an array";
+                    @Override
+                    public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject arg) {
+                        // TODO: WRONG - get interfaces from class
+                        if (arg.respondsTo("java_object")) {
+                            IRubyObject interfaces = self.getMetaClass().getInstanceVariables().getInstanceVariable("@java_interfaces");
+                            assert interfaces instanceof RubyArray : "interface list was not an array";
 
-                        return context.getRuntime().newBoolean(((RubyArray) interfaces).op_diff(
-                                ((JavaClass) ((JavaObject) arg.dataGetStruct()).java_class()).interfaces()).equals(RubyArray.newArray(context.getRuntime())));
-                    } else {
-                        return RuntimeHelpers.invoke(context, self, "old_eqq", arg);
+                            return context.getRuntime().newBoolean(((RubyArray) interfaces).op_diff(
+                                    ((JavaClass) ((JavaObject) arg.dataGetStruct()).java_class()).interfaces()).equals(RubyArray.newArray(context.getRuntime())));
+                        } else {
+                            return RuntimeHelpers.invoke(context, self, "old_eqq", arg);
+                        }
                     }
-                }
-            });
+                });
+            }
         }
 
         // Now we add an "implement" and "implement_all" methods to the class
@@ -254,33 +251,25 @@ public class JavaInterfaceTemplate {
     }
 
     public static void addRealImplClassNew(RubyClass clazz) {
-        RubyClass singleton = clazz.getSingletonClass();
-        singleton.addMethod("new", new org.jruby.internal.runtime.methods.JavaMethod(singleton, Visibility.PUBLIC) {
+        clazz.setAllocator(new ObjectAllocator() {
             private Constructor proxyConstructor;
-            @Override
-            public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
-                assert self instanceof RubyClass : "new defined on non-class";
-
-                RubyClass clazzSelf = (RubyClass) self;
-
+            public IRubyObject allocate(Ruby runtime, RubyClass klazz) {
                 // if we haven't been here before, reify the class
-                Class reifiedClass = clazzSelf.getReifiedClass();
+                Class reifiedClass = klazz.getReifiedClass();
                 if (proxyConstructor == null || proxyConstructor.getDeclaringClass() != reifiedClass) {
                     if (reifiedClass == null) {
-                        reifiedClass = Java.generateRealClass(clazzSelf);
+                        reifiedClass = Java.generateRealClass(klazz);
                     }
-                    proxyConstructor = Java.getRealClassConstructor(context.getRuntime(), reifiedClass);
+                    proxyConstructor = Java.getRealClassConstructor(runtime, reifiedClass);
                 }
-                IRubyObject newObj = Java.constructProxy(context.getRuntime(), proxyConstructor, clazzSelf);
-
-                RuntimeHelpers.invoke(context, newObj, "initialize", args, block);
+                IRubyObject newObj = Java.constructProxy(runtime, proxyConstructor, klazz);
 
                 return newObj;
             }
         });
     }
 
-    private static IRubyObject jcreateProxy(IRubyObject self, IRubyObject[] args) {
+    private static IRubyObject jcreateProxy(IRubyObject self) {
         RubyClass current = self.getMetaClass();
 
         // construct the new interface impl and set it into the object
@@ -344,12 +333,12 @@ public class JavaInterfaceTemplate {
         return singleton;
     }
 
-    @JRubyMethod(name = "[]", rest = true, backtrace = true)
+    @JRubyMethod(name = "[]", rest = true)
     public static IRubyObject op_aref(ThreadContext context, IRubyObject self, IRubyObject[] args) {
         return JavaProxy.op_aref(context, self, args);
     }
 
-    @JRubyMethod(rest = true, backtrace = true)
+    @JRubyMethod(rest = true)
     public static IRubyObject impl(ThreadContext context, IRubyObject self, IRubyObject[] args, final Block implBlock) {
         Ruby runtime = context.getRuntime();
 
@@ -379,7 +368,7 @@ public class JavaInterfaceTemplate {
         return implObject;
     }
 
-    @JRubyMethod(name = "new", rest = true, backtrace = true)
+    @JRubyMethod(name = "new", rest = true)
     public static IRubyObject rbNew(ThreadContext context, IRubyObject self, IRubyObject[] args, Block block) {
         Ruby runtime = context.getRuntime();
 

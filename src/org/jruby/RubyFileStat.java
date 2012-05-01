@@ -40,14 +40,15 @@ import java.util.zip.ZipFile;
 
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
-import org.jruby.ext.posix.FileStat;
-import org.jruby.ext.posix.util.Platform;
+import jnr.posix.FileStat;
+import jnr.posix.util.Platform;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.JRubyFile;
+import org.jruby.util.JRubyNonExistentFile;
 
 /**
  * Implements File::Stat
@@ -111,39 +112,47 @@ public class RubyFileStat extends RubyObject {
             filename += "/";
         }
 
-        if (filename.startsWith("file:") && filename.indexOf('!') != -1) {
-            // file: URL handling
-            String zipFileEntry = filename.substring(filename.indexOf("!") + 1);
-            if (zipFileEntry.length() > 0) {
-                if (zipFileEntry.charAt(0) == '/') {
-                    if (zipFileEntry.length() > 1) {
-                        zipFileEntry = zipFileEntry.substring(1);
-                    } else {
+        if (filename.startsWith("file:") ) {
+            if (filename.indexOf('!') != -1) {
+                // file: URL handling
+                String zipFileEntry = filename.substring(filename.indexOf("!") + 1);
+                if (zipFileEntry.length() > 0) {
+                    if (zipFileEntry.charAt(0) == '/') {
+                        if (zipFileEntry.length() > 1) {
+                            zipFileEntry = zipFileEntry.substring(1);
+                        } else {
+                            throw getRuntime().newErrnoENOENTError("invalid jar/file URL: " + filename);
+                        }
+                    }
+                } else {
+                    throw getRuntime().newErrnoENOENTError("invalid jar/file URL: " + filename);
+                }
+                String zipfilename = filename.substring(5, filename.indexOf("!"));
+
+                try {
+                    ZipFile zipFile = new ZipFile(zipfilename);
+                    ZipEntry zipEntry = RubyFile.getFileEntry(zipFile, zipFileEntry);
+
+                    if (zipEntry == null) {
                         throw getRuntime().newErrnoENOENTError("invalid jar/file URL: " + filename);
                     }
+                    stat = new ZipFileStat(zipEntry);
+                    return;
+                } catch (IOException ioe) {
+                    // fall through and use the zip file as the file to stat
                 }
+
+                filename = zipfilename;
             } else {
                 throw getRuntime().newErrnoENOENTError("invalid jar/file URL: " + filename);
             }
-            String zipfilename = filename.substring(5, filename.indexOf("!"));
-            
-            try {
-                ZipFile zipFile = new ZipFile(zipfilename);
-                ZipEntry zipEntry = RubyFile.getFileEntry(zipFile, zipFileEntry);
-
-                if (zipEntry == null) {
-                    throw getRuntime().newErrnoENOENTError("invalid jar/file URL: " + filename);
-                }
-                stat = new ZipFileStat(zipEntry);
-                return;
-            } catch (IOException ioe) {
-                // fall through and use the zip file as the file to stat
-            }
-
-            filename = zipfilename;
         }
-            
+
         file = JRubyFile.create(getRuntime().getCurrentDirectory(), filename);
+
+        if (file instanceof JRubyNonExistentFile) {
+            throw getRuntime().newErrnoENOENTError("No such file or directory - " + filename);
+        }
 
         if (lstat) {
             stat = getRuntime().getPosix().lstat(file.getAbsolutePath());
@@ -359,7 +368,7 @@ public class RubyFileStat extends RubyObject {
 
     @JRubyMethod(name = "<=>", required = 1)
     public IRubyObject cmp(IRubyObject other) {
-        if (!(other instanceof RubyFileStat)) getRuntime().getNil();
+        if (!(other instanceof RubyFileStat)) return getRuntime().getNil();
         
         long time1 = stat.mtime();
         long time2 = ((RubyFileStat) other).stat.mtime();

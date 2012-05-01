@@ -7,7 +7,7 @@ include FileUtils
 POSTFLIGHT = 'scripts/installer.postflight'
 PMDOC = 'JRuby-installer.pmdoc/01jruby.xml'
 GEMSPMDOC = 'JRuby-installer.pmdoc/02gems.xml'
-GEMSMAC = 'rubygems/jruby_mac.rb'
+GEMSMAC = 'install/macos/rubygems/jruby_mac.rb'
 JRUBY_DEST = '/Library/Frameworks/JRuby.framework'
 
 UNINSTALLER_INDEX = 'JRuby-uninstaller.pmdoc/index.xml'
@@ -15,20 +15,29 @@ UNINSTALLER_PMDOC = 'JRuby-uninstaller.pmdoc/01uninstaller.xml'
 UNINSTALLER_SCRIPT = 'scripts/uninstaller.postinstall'
 UNINSTALLER_WELCOME= 'Welcome.uninstaller.rtf'
 
+pkgmaker = `mdfind "kMDItemDisplayName=='PackageMaker*'"`.chomp
+if pkgmaker == ""
+  warn 'PackageMaker not found'
+else
+  PKGMAKER=File.join(pkgmaker, 'Contents', 'MacOS', 'PackageMaker')
+end
+
 task :installer => [:macos_installer, :windows_installer]
 
 task :macos_installer do
-  next unless Config::CONFIG['target_os'] =~ /darwin/
+  next unless RbConfig::CONFIG['target_os'] =~ /darwin/
+  next unless defined? PKGMAKER
 
   puts "\nBuilding OS X Installer"
 
   cleanup
 
   raise "JRuby #{VERSION_JRUBY} dist ZIP not found!" if !File.exist?(DIST_ZIP)
-  sh "unzip #{DIST_ZIP} -d #{BUILD_DIR}"
+  sh "unzip -o #{DIST_ZIP} -d #{BUILD_DIR}"
+
+  prepare_rubygems
 
   Dir.chdir "#{BASE_DIR}/install/macos" do
-    prepare_rubygems
 
     puts "- Setting package version"
     replace_variables_in POSTFLIGHT
@@ -39,10 +48,10 @@ task :macos_installer do
     replace_variables_in UNINSTALLER_SCRIPT
     replace_variables_in UNINSTALLER_WELCOME
 
-    puts "- Building package, it takes a while, be patient my friend"
+    puts "- Building package"
     mkdir_p PKG_DIR
-    sh "time /Developer/Applications/Utilities/PackageMaker.app/Contents/MacOS/PackageMaker -v --doc JRuby-installer.pmdoc --out #{PKG_DIR}/JRuby-#{VERSION_JRUBY}.pkg --version #{VERSION_JRUBY}"
-    sh "time /Developer/Applications/Utilities/PackageMaker.app/Contents/MacOS/PackageMaker -v --doc JRuby-uninstaller.pmdoc --out #{PKG_DIR}/JRuby-uninstaller-#{VERSION_JRUBY}.pkg --version #{VERSION_JRUBY}"
+    sh "time #{PKGMAKER} --no-recommend -v --doc JRuby-installer.pmdoc --out #{PKG_DIR}/JRuby-#{VERSION_JRUBY}.pkg --version #{VERSION_JRUBY}"
+    sh "time #{PKGMAKER} --no-recommend -v --doc JRuby-uninstaller.pmdoc --out #{PKG_DIR}/JRuby-uninstaller-#{VERSION_JRUBY}.pkg --version #{VERSION_JRUBY}"
 
     rm DMG if File.exist? DMG = File.join(BASE_DIR, DIST_DIR, "JRuby-#{VERSION_JRUBY}.dmg")
     sh "time hdiutil create #{DMG} -volname JRuby-#{VERSION_JRUBY} -fs HFS+ -srcfolder #{PKG_DIR}"

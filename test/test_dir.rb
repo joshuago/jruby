@@ -3,7 +3,13 @@ require 'test/unit'
 require 'rbconfig'
 
 class TestDir < Test::Unit::TestCase
-  WINDOWS = Config::CONFIG['host_os'] =~ /Windows|mswin/
+  WINDOWS = RbConfig::CONFIG['host_os'] =~ /Windows|mswin/
+
+  def jruby
+    exe = File.join RbConfig::CONFIG['bindir'], RbConfig::CONFIG['RUBY_INSTALL_NAME']
+    exe += RbConfig::CONFIG['EXEEXT'] if RbConfig::CONFIG['EXEEXT']
+    exe
+  end
 
   def setup
     @save_dir = Dir.pwd
@@ -118,11 +124,11 @@ class TestDir < Test::Unit::TestCase
     java_test_classes = File.expand_path(File.dirname(__FILE__) + '/..') unless File.exist?(java_test_classes)
     Dir.mkdir("testDir_4")
     Dir.chdir("testDir_4") do
-      pwd = `ruby -e "puts Dir.pwd"`
+      pwd = `#{jruby} -e "puts Dir.pwd"`
       pwd.gsub! '\\', '/'
       assert_equal("testDir_4", pwd.split("/")[-1].strip)
 
-      pwd = `jruby -e "puts Dir.pwd"`
+      pwd = `#{ENV_JAVA['jruby.home']}/bin/jruby -e "puts Dir.pwd"`
       pwd.gsub! '\\', '/'
       assert_equal("testDir_4", pwd.split("/")[-1].strip)
 

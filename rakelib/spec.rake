@@ -38,8 +38,14 @@ namespace :spec do
   desc "Run rubyspecs expected to pass in compiled mode (version-frozen)"
   task :ci_compiled_18 => ['spec:fetch_stable_specs', 'spec:compiled_18']
 
+  desc "Run rubyspecs expected to pass in compiled mode (version-frozen)"
+  task :ci_compiled_19 => ['spec:fetch_stable_specs', 'spec:compiled_19']
+
   desc "Run rubyspecs expected to pass in precompiled mode (version-frozen)"
   task :ci_precompiled_18 => ['spec:fetch_stable_specs', 'spec:precompiled_18']
+
+  desc "Run rubyspecs expected to pass in precompiled mode (version-frozen)"
+  task :ci_precompiled_19 => ['spec:fetch_stable_specs', 'spec:precompiled_19']
 
   desc "Run rubyspecs expected to pass in interpreted mode (version-frozen, both 1.8 and 1.9)"
   task :ci_interpreted_18_19 => ['spec:fetch_stable_specs', 'spec:interpreted_18', 'spec:interpreted_19']
@@ -90,34 +96,46 @@ namespace :spec do
 
   desc "Tagged 1.8 specs in interpreted mode only"
   task :interpreted_18 do
-    mspec :compile_mode => "OFF", :spec_config => RUBY18_MSPEC_FILE
+    mspec :compile_mode => "OFF", :spec_config => RUBY18_MSPEC_FILE, 
+       :compat => "RUBY1_8"
+  end
+
+  desc "Tagged 1.8 specs in interpreted (IR) mode only"
+  task :interpreted_ir_18 do
+    mspec :compile_mode => "OFFIR", :spec_config => RUBY18_MSPEC_FILE, 
+       :compat => "RUBY1_8"
   end
 
   desc "Tagged 1.8 specs in JIT mode only (threshold=0)"
   task :compiled_18 do
     mspec :compile_mode => "JIT", :spec_config => RUBY18_MSPEC_FILE, 
-       :jit_threshold => 0
+       :jit_threshold => 0, 
+       :compat => "RUBY1_8"
   end
 
   desc "Tagged 1.8 specs in AOT mode only"
   task :precompiled_18 do
     mspec :compile_mode => "FORCE", :spec_config => RUBY18_MSPEC_FILE, 
-       :jit_threshold => 0
+       :jit_threshold => 0, 
+       :compat => "RUBY1_8"
   end
 
   desc "All 1.8 specs in interpreted mode only"
   task :all_interpreted_18 do
-    mspec :compile_mode => "OFF" 
+    mspec :compile_mode => "OFF", 
+       :compat => "RUBY1_8"
   end
 
   desc "All 1.8 specs in JIT mode only (threshold=0)"
   task :all_compiled_18 do
-    mspec :compile_mode => "JIT", :jit_threshold => 0
+    mspec :compile_mode => "JIT", :jit_threshold => 0, 
+       :compat => "RUBY1_8"
   end
 
   desc "All 1.8 specs in AOT mode only"
   task :all_precompiled_18 do
-    mspec :compile_mode => "FORCE", :jit_threshold => 0
+    mspec :compile_mode => "FORCE", :jit_threshold => 0, 
+       :compat => "RUBY1_8"
   end
 
   desc "Tagged 1.9 specs in interpreted mode only"
@@ -183,6 +201,12 @@ namespace :spec do
       t.pattern = 'spec/compiler/**/*_spec.rb'
     end
 
+    desc "Runs Profiler Specs"
+    RSpec::Core::RakeTask.new("profiler#{version_suffix}" => "test:compile") do |t|
+      t.ruby_opts = "--profile #{version_arg}"
+      t.pattern = 'spec/profiler/**/*_spec.rb'
+    end
+
     desc "Runs FFI specs"
     RSpec::Core::RakeTask.new("ffi#{version_suffix}" => "test:compile") do |t|
       t.ruby_opts = version_arg
@@ -209,20 +233,12 @@ namespace :spec do
 
   task :fetch_latest_specs => [:install_build_gems, :fetch_latest_rubyspec_repo, :fetch_latest_mspec_repo]
 
-  task :fetch_stable_specs => :fetch_latest_specs do
-    if stable_specs_changed?
-      puts "Rolling rubyspec to stable version"
-      git_checkout('rubyspec', RUBYSPECS_REVISION, RUBYSPEC_DIR)
+  task :fetch_stable_specs => :install_build_gems do
+    puts "Rolling rubyspec to stable version"
+    git_submodule_update('spec/ruby')
 
-      puts "Rolling mspec to stable version"
-      git_checkout('mspec', MSPEC_REVISION, MSPEC_DIR)
-
-      ant.propertyfile(:file => "#{SPEC_DIR}/rubyspecs.current.revision",
-                       :comment => "Revision of downloaded specs") do
-        entry :key => "rubyspecs.current.revision", :value => RUBYSPECS_REVISION
-        entry :key => "mspec.current.revision", :value => MSPEC_REVISION
-      end
-    end
+    puts "Rolling mspec to stable version"
+    git_submodule_update('spec/mspec')
   end
   
   task :fast_forward_to_rubyspec_head => :fetch_latest_specs do
@@ -253,15 +269,6 @@ namespace :spec do
   desc "Clean up spec dirs"
   task :clean_specs do
     clean_spec_dirs(true)
-  end
-
-  def stable_specs_changed?
-    ant.property :file => "${SPEC_DIR}/rubyspecs.current.revision"
-    p = ant.properties
-
-    !File.exists?(RUBYSPEC_DIR) || !File.exists?(MSPEC_DIR) ||
-      RUBYSPECS_REVISION != p['rubyspecs.current.revision'] ||
-      MSPEC_REVISION != p['mspec.current.revision']
   end
 
   def clean_spec_dirs(wipe_spec_dir = false)

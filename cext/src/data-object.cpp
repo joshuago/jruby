@@ -47,13 +47,7 @@ rb_data_object_alloc(VALUE klass, void* data, RUBY_DATA_FUNC dmark, RUBY_DATA_FU
 {
     JLocalEnv env;
 
-    RubyData* h = new RubyData;
-
-    TAILQ_INSERT_TAIL(&dataHandles, h, dataList);
-    h->toRData()->data = data;
-    h->toRData()->dmark = dmark;
-    h->toRData()->dfree = dfree;
-    h->setType(T_DATA);
+    RubyData* h = new RubyData(data, dmark, dfree);
 
     jvalue params[3];
     params[0].l = getRuntime();
@@ -66,8 +60,17 @@ rb_data_object_alloc(VALUE klass, void* data, RUBY_DATA_FUNC dmark, RUBY_DATA_FU
     h->obj = env->NewGlobalRef(obj);
     checkExceptions(env);
 
+    return h->asValue();
+}
 
-    return (VALUE) (uintptr_t) h;
+RubyData::RubyData(void* data, RUBY_DATA_FUNC dmark, RUBY_DATA_FUNC dfree)
+{
+    memset(&rdata, 0, sizeof(rdata));
+    rdata.data = data;
+    rdata.dmark = dmark;
+    rdata.dfree = dfree;
+    setType(T_DATA);
+    TAILQ_INSERT_TAIL(&dataHandles, this, dataList);
 }
 
 RubyData::~RubyData()
@@ -85,12 +88,7 @@ RubyData::~RubyData()
 extern "C" void*
 jruby_data(VALUE v)
 {
-    if (TYPE(v) != T_DATA) {
-        rb_raise(rb_eTypeError, "not a data object");
-        return NULL;
-    }
-
-    return ((RubyData *) v)->toRData()->data;
+    return jruby_rdata(v)->data;
 }
 
 extern "C" struct RData*
@@ -101,7 +99,7 @@ jruby_rdata(VALUE v)
         return NULL;
     }
 
-    RubyData* d = dynamic_cast<RubyData*>(Handle::valueOf(v));
+    RubyData* d = dynamic_cast<RubyData *>(Handle::valueOf(v));
 
     return d->toRData();
 }

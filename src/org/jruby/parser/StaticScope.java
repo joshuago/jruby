@@ -184,7 +184,7 @@ public abstract class StaticScope implements Serializable {
         return result == null ? cref.getConstantNoConstMissing(internedName) : result;
     }
 
-    private IRubyObject getConstantInner(Ruby runtime, String internedName, RubyModule object) {
+    public IRubyObject getConstantInner(Ruby runtime, String internedName, RubyModule object) {
         IRubyObject result = cref.fetchConstant(internedName);
 
         if (result != null) {
@@ -313,12 +313,10 @@ public abstract class StaticScope implements Serializable {
     public void setModule(RubyModule module) {
         this.cref = module;
         
-        if (previousCRefScope == null) {
-            for (StaticScope scope = getEnclosingScope(); scope != null; scope = scope.getEnclosingScope()) {
-                if (scope.cref != null) {
-                    previousCRefScope = scope;
-                    return;
-                }
+        for (StaticScope scope = getEnclosingScope(); scope != null; scope = scope.getEnclosingScope()) {
+            if (scope.cref != null) {
+                previousCRefScope = scope;
+                return;
             }
         }
     }
@@ -369,6 +367,10 @@ public abstract class StaticScope implements Serializable {
      */
     public abstract boolean isArgumentScope();
     public abstract void makeArgumentScope();
+
+    public boolean isBlockScope() {
+        return false;
+    }
 
     public boolean isBackrefLastlineScope() {
         return isBackrefLastlineScope;

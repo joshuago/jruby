@@ -92,7 +92,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.callback.Callback;
 import org.jruby.util.ByteList;
 import org.jruby.util.IdUtil;
-import org.jruby.util.SafePropertyAccessor;
+import org.jruby.util.cli.Options;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
@@ -116,7 +116,7 @@ public class JavaClass extends JavaObject {
             } catch (Throwable t) {
                 // added this so if things are weird in the future we can debug without
                 // spinning a new binary
-                if (SafePropertyAccessor.getBoolean("jruby.ji.logCanSetAccessible")) {
+                if (Options.JI_LOGCANSETACCESSIBLE.load()) {
                     t.printStackTrace();
                 }
 
@@ -131,12 +131,18 @@ public class JavaClass extends JavaObject {
     private void handleScalaSingletons(Class<?> javaClass, InitializerState state) {
         // check for Scala companion object
         try {
-            Class<?> companionClass = javaClass.getClassLoader().loadClass(javaClass.getName() + "$");
+            ClassLoader cl = javaClass.getClassLoader();
+            if (cl == null) {
+                //this is a core class, bail
+                return;
+            }
+            
+            Class<?> companionClass = cl.loadClass(javaClass.getName() + "$");
             Field field = companionClass.getField("MODULE$");
             Object singleton = field.get(null);
             if (singleton != null) {
                 Method[] sMethods = getMethods(companionClass);
-                for (int j = sMethods.length; j-- >= 0;) {
+                for (int j = sMethods.length - 1; j >= 0; j--) {
                     Method method = sMethods[j];
                     String name = method.getName();
                     if (DEBUG_SCALA) {
@@ -184,6 +190,7 @@ public class JavaClass extends JavaObject {
                     }
                 }
             }
+            
         } catch (Exception e) {
             // ignore... there's no companion object
         }
@@ -433,14 +440,14 @@ public class JavaClass extends JavaObject {
         }
 
         void install(RubyModule proxy) {
-            if (hasLocalMethod()) {
-                RubyClass rubySingleton = proxy.getSingletonClass();
-                DynamicMethod method = new SingletonMethodInvoker(this.singleton, rubySingleton, methods);
-                rubySingleton.addMethod(name, method);
-                if (aliases != null && isPublic()) {
-                    rubySingleton.defineAliases(aliases, this.name);
-                    aliases = null;
-                }
+            // we don't check haveLocalMethod() here because it's not local and we know
+            // that we always want to go ahead and install it
+            RubyClass rubySingleton = proxy.getSingletonClass();
+            DynamicMethod method = new SingletonMethodInvoker(this.singleton, rubySingleton, methods);
+            rubySingleton.addMethod(name, method);
+            if (aliases != null && isPublic()) {
+                rubySingleton.defineAliases(aliases, this.name);
+                aliases = null;
             }
         }
     }
@@ -560,7 +567,7 @@ public class JavaClass extends JavaObject {
         return instanceAssignedNames;
     }
     
-    private JavaClass(Ruby runtime, Class<?> javaClass) {
+    public JavaClass(Ruby runtime, Class<?> javaClass) {
         super(runtime, (RubyClass) runtime.getJavaSupport().getJavaClassClass(), javaClass);
         if (javaClass.isInterface()) {
             initializer = new InterfaceInitializer(javaClass);
@@ -681,9 +688,10 @@ public class JavaClass extends JavaObject {
     };
     
     public void setupProxy(final RubyClass proxy) {
+        assert proxyLock.isHeldByCurrentThread();
+        
         initializer.initialize();
 
-        assert proxyLock.isHeldByCurrentThread();
         proxy.defineFastMethod("__jsend!", __jsend_method);
         final Class<?> javaClass = javaClass();
         if (javaClass.isInterface()) {
@@ -706,6 +714,10 @@ public class JavaClass extends JavaObject {
         installClassMethods(proxy);
         installClassConstructors(proxy);
         installClassClasses(javaClass, proxy);
+        
+        // flag the class as a Java class proxy.
+        proxy.setJavaProxy(true);
+        proxy.getSingletonClass().setJavaProxy(true);
         
         // FIXME: bit of a kludge here (non-interface classes assigned to both
         // class and module fields). simplifies proxy extender code, will go away
@@ -738,6 +750,11 @@ public class JavaClass extends JavaObject {
             }
             if (rubyCasedName.equals("update") && argCount == 2) {
                 addUnassignedAlias("[]=", assignedNames, installer);
+            }
+
+            // Scala aliases for $ method names
+            if (name.startsWith("$")) {
+                addUnassignedAlias(fixScalaNames(name), assignedNames, installer);
             }
 
             // Add property name aliases
@@ -835,6 +852,7 @@ public class JavaClass extends JavaObject {
     }
 
     private synchronized void installClassFields(final RubyClass proxy) {
+        assert constantFields != null;
         for (ConstantField field : constantFields) {
             field.install(proxy);
         }
@@ -842,11 +860,13 @@ public class JavaClass extends JavaObject {
     }
 
     private synchronized void installClassMethods(final RubyClass proxy) {
+        assert staticInstallers != null;
         for (NamedInstaller installer : staticInstallers.values()) {
             installer.install(proxy);
         }
         staticInstallers = null;
-        
+
+        assert instanceInstallers != null;
         for (NamedInstaller installer : instanceInstallers.values()) {
             installer.install(proxy);
         }
@@ -908,34 +928,35 @@ public class JavaClass extends JavaObject {
     }
 
     private static String fixScalaNames(String name) {
+        String s = name;
         for (Map.Entry<String, String> entry : SCALA_OPERATORS.entrySet()) {
-            name.replaceAll(entry.getKey(), entry.getValue());
+            s = s.replaceAll(entry.getKey(), entry.getValue());
         }
 
-        return name;
+        return s;
     }
 
     private static final Map<String, String> SCALA_OPERATORS;
     static {
         Map<String, String> tmp = new HashMap();
-        tmp.put("$plus", "+");
-        tmp.put("$minus", "-");
-        tmp.put("$colon", ":");
-        tmp.put("$div", "/");
-        tmp.put("$eq", "=");
-        tmp.put("$less", "<");
-        tmp.put("$greater", ">");
-        tmp.put("$bslash", "\\");
-        tmp.put("$hash", "#");
-        tmp.put("$times", "*");
-        tmp.put("$bang", "!");
-        tmp.put("$at", "@");
-        tmp.put("$percent", "%");
-        tmp.put("$up", "^");
-        tmp.put("$amp", "&");
-        tmp.put("$tilde", "~");
-        tmp.put("$qmark", "?");
-        tmp.put("$bar", "|");
+        tmp.put("\\$plus", "+");
+        tmp.put("\\$minus", "-");
+        tmp.put("\\$colon", ":");
+        tmp.put("\\$div", "/");
+        tmp.put("\\$eq", "=");
+        tmp.put("\\$less", "<");
+        tmp.put("\\$greater", ">");
+        tmp.put("\\$bslash", "\\\\");
+        tmp.put("\\$hash", "#");
+        tmp.put("\\$times", "*");
+        tmp.put("\\$bang", "!");
+        tmp.put("\\$at", "@");
+        tmp.put("\\$percent", "%");
+        tmp.put("\\$up", "^");
+        tmp.put("\\$amp", "&");
+        tmp.put("\\$tilde", "~");
+        tmp.put("\\$qmark", "?");
+        tmp.put("\\$bar", "|");
         SCALA_OPERATORS = Collections.unmodifiableMap(tmp);
     }
 
@@ -948,11 +969,6 @@ public class JavaClass extends JavaObject {
             // install the ones that are named in this class
             Method method = methods[i];
             String name = method.getName();
-
-            // Fix Scala names to be their Ruby equivalents
-            if (name.startsWith("$")) {
-                name = fixScalaNames(name);
-            }
 
             if (Modifier.isStatic(method.getModifiers())) {
                 AssignedName assignedName = state.staticNames.get(name);
@@ -1048,22 +1064,23 @@ public class JavaClass extends JavaObject {
     
     // old (quasi-deprecated) interface class
     private void setupInterfaceProxy(final RubyClass proxy) {
-        initializer.initialize();
-        
         assert javaClass().isInterface();
         assert proxyLock.isHeldByCurrentThread();
         assert this.proxyClass == null;
+        
+        initializer.initialize();
         this.proxyClass = proxy;
         // nothing else to here - the module version will be
         // included in the class.
     }
     
     public void setupInterfaceModule(final RubyModule module) {
-        initializer.initialize();
-        
         assert javaClass().isInterface();
         assert proxyLock.isHeldByCurrentThread();
         assert this.proxyModule == null;
+        
+        initializer.initialize();
+        
         this.unfinishedProxyModule = module;
         Class<?> javaClass = javaClass();
         for (ConstantField field: constantFields) {
@@ -1074,6 +1091,10 @@ public class JavaClass extends JavaObject {
         }
 
         installClassClasses(javaClass, module);
+        
+        // flag the class as a Java class proxy.
+        module.setJavaProxy(true);
+        module.getSingletonClass().setJavaProxy(true);
         
         this.proxyModule = module;
         applyProxyExtenders();
@@ -1120,11 +1141,7 @@ public class JavaClass extends JavaObject {
     }
     
     public static JavaClass get(Ruby runtime, Class<?> klass) {
-        JavaClass javaClass = runtime.getJavaSupport().getJavaClassFromCache(klass);
-        if (javaClass == null) {
-            javaClass = createJavaClass(runtime,klass);
-        }
-        return javaClass;
+        return runtime.getJavaSupport().getJavaClassFromCache(klass);
     }
     
     public static RubyArray getRubyArray(Ruby runtime, Class<?>[] classes) {
@@ -1133,16 +1150,6 @@ public class JavaClass extends JavaObject {
             javaClasses[i] = get(runtime, classes[i]);
         }
         return runtime.newArrayNoCopy(javaClasses);
-    }
-
-    private static synchronized JavaClass createJavaClass(Ruby runtime, Class<?> klass) {
-        // double-check the cache now that we're synchronized
-        JavaClass javaClass = runtime.getJavaSupport().getJavaClassFromCache(klass);
-        if (javaClass == null) {
-            javaClass = new JavaClass(runtime, klass);
-            runtime.getJavaSupport().putJavaClassIntoCache(javaClass);
-        }
-        return javaClass;
     }
 
     public static RubyClass createJavaClassClass(Ruby runtime, RubyModule javaModule) {
@@ -2044,6 +2051,14 @@ public class JavaClass extends JavaObject {
     private static int addNewMethods(HashMap<String, List<Method>> nameMethods, Method[] methods, boolean includeStatic, boolean removeDuplicate) {
         int added = 0;
         Methods: for (Method m : methods) {
+            // Skip private methods, since they may mess with dispatch
+            if (Modifier.isPrivate(m.getModifiers())) continue;
+
+            // ignore bridge methods because we'd rather directly call methods that this method
+            // is bridging (and such methods are by definition always available.)
+            if ((m.getModifiers()&ACC_BRIDGE)!=0)
+                continue;
+
             if (!includeStatic && Modifier.isStatic(m.getModifiers())) {
                 // Skip static methods if we're not suppose to include them.
                 // Generally for superclasses; we only bind statics from the actual
@@ -2127,4 +2142,6 @@ public class JavaClass extends JavaObject {
         
         return finalList.toArray(new Method[finalList.size()]);
     }
+
+    private static final int ACC_BRIDGE    = 0x00000040;
 }

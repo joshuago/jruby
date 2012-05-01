@@ -1,4 +1,5 @@
 require 'test/unit'
+require 'tempfile'
 require_relative 'envutil'
 
 class TestException < Test::Unit::TestCase
@@ -311,5 +312,25 @@ end.join
     id = :"\u2604"
     e = assert_raise(NoMethodError) {str.__send__(id)}
     assert_equal("undefined method `#{id}' for #{str.inspect}:String", e.message, bug3237)
+  end
+
+  def test_errno
+    assert_equal(Encoding.find("locale"), Errno::EINVAL.new.message.encoding)
+  end
+
+  def test_exception_in_name_error_to_str
+    bug5575 = '[ruby-core:41612]'
+    t = Tempfile.new(["test_exception_in_name_error_to_str", ".rb"])
+    t.puts <<-EOC
+      begin
+        BasicObject.new.inspect
+      rescue
+        $!.inspect
+      end
+    EOC
+    t.close
+    assert_nothing_raised(NameError, bug5575) do
+      load(t.path)
+    end
   end
 end

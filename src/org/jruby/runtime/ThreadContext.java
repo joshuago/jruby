@@ -55,9 +55,7 @@ import org.jruby.RubyThread;
 import org.jruby.ast.executable.RuntimeCache;
 import org.jruby.exceptions.JumpException.ReturnJump;
 import org.jruby.lexer.yacc.ISourcePosition;
-import org.jruby.libraries.FiberLibrary.Fiber;
-import org.jruby.parser.BlockStaticScope;
-import org.jruby.parser.LocalStaticScope;
+import org.jruby.ext.fiber.Fiber;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.backtrace.TraceType;
 import org.jruby.runtime.backtrace.TraceType.Gather;
@@ -115,8 +113,8 @@ public final class ThreadContext {
     
     private boolean isProfiling = false;
     // The flat profile data for this thread
-	private IProfileData profileData;
-	
+   private IProfileData profileData;
+   
     // In certain places, like grep, we don't use real frames for the
     // call blocks. This has the effect of not setting the backref in
     // the correct frame - this delta is activated to the place where
@@ -144,7 +142,7 @@ public final class ThreadContext {
         
         // TOPLEVEL self and a few others want a top-level scope.  We create this one right
         // away and then pass it into top-level parse so it ends up being the top level.
-        StaticScope topStaticScope = new LocalStaticScope(null);
+        StaticScope topStaticScope = runtime.getStaticScopeFactory().newLocalScope(null);
         pushScope(new ManyVarsDynamicScope(topStaticScope, null));
 
         Frame[] stack = frameStack;
@@ -157,14 +155,16 @@ public final class ThreadContext {
         for (int i = 0; i < length2; i++) {
             stack2[i] = new BacktraceElement();
         }
-        ThreadContext.pushBacktrace(this, "", "", "", 0);
-        ThreadContext.pushBacktrace(this, "", "", "", 0);
+        ThreadContext.pushBacktrace(this, "", "", 0);
+        ThreadContext.pushBacktrace(this, "", "", 0);
         fiber = (Fiber) runtime.getRootFiber();
     }
 
     @Override
     protected void finalize() throws Throwable {
-        thread.dispose();
+        if (thread != null) {
+            thread.dispose();
+        }
     }
     
     public final Ruby getRuntime() {
@@ -467,19 +467,19 @@ public final class ThreadContext {
         return newBacktrace;
     }
 
-    public static void pushBacktrace(ThreadContext context, String klass, String method, ISourcePosition position) {
+    public static void pushBacktrace(ThreadContext context, String method, ISourcePosition position) {
         int index = ++context.backtraceIndex;
         BacktraceElement[] stack = context.backtrace;
-        BacktraceElement.update(stack[index], klass, method, position);
+        BacktraceElement.update(stack[index], method, position);
         if (index + 1 == stack.length) {
             ThreadContext.expandBacktraceIfNecessary(context);
         }
     }
 
-    public static void pushBacktrace(ThreadContext context, String klass, String method, String file, int line) {
+    public static void pushBacktrace(ThreadContext context, String method, String file, int line) {
         int index = ++context.backtraceIndex;
         BacktraceElement[] stack = context.backtrace;
-        BacktraceElement.update(stack[index], klass, method, file, line);
+        BacktraceElement.update(stack[index], method, file, line);
         if (index + 1 == stack.length) {
             ThreadContext.expandBacktraceIfNecessary(context);
         }
@@ -501,6 +501,22 @@ public final class ThreadContext {
     public boolean isJumpTargetAlive(int target, int skipFrames) {
         for (int i = frameIndex - skipFrames; i >= 0; i--) {
             if (frameStack[i].getJumpTarget() == target) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Check if a static scope is present on the call stack.
+     * This is the IR equivalent of isJumpTargetAlive
+     *
+     * @param s the static scope to look for
+     * @return true if it exists
+     *         false if not
+     **/
+    public boolean scopeExistsOnCallStack(StaticScope s) {
+        DynamicScope[] stack = scopeStack;
+        for (int i = scopeIndex; i >= 0; i--) {
+           if (stack[i].getStaticScope() == s) return true;
         }
         return false;
     }
@@ -533,22 +549,20 @@ public final class ThreadContext {
         return backtrace[backtraceIndex].line;
     }
     
-    public void setFile(String file) {
-        backtrace[backtraceIndex].filename = file;
-    }
-    
     public void setLine(int line) {
         backtrace[backtraceIndex].line = line;
     }
     
     public void setFileAndLine(String file, int line) {
-        backtrace[backtraceIndex].filename = file;
-        backtrace[backtraceIndex].line = line;
+        BacktraceElement b = backtrace[backtraceIndex];
+        b.filename = file;
+        b.line = line;
     }
 
     public void setFileAndLine(ISourcePosition position) {
-        backtrace[backtraceIndex].filename = position.getFile();
-        backtrace[backtraceIndex].line = position.getStartLine();
+        BacktraceElement b = backtrace[backtraceIndex];
+        b.filename = position.getFile();
+        b.line = position.getStartLine();
     }
     
     public Visibility getCurrentVisibility() {
@@ -684,7 +698,6 @@ public final class ThreadContext {
      * Create an Array with backtrace information.
      * @param runtime
      * @param level
-     * @param nativeException
      * @return an Array with the backtrace
      */
     public IRubyObject createCallerBacktrace(Ruby runtime, int level) {
@@ -719,7 +732,6 @@ public final class ThreadContext {
     
     /**
      * Create an Array with backtrace information.
-     * @param runtime
      * @param level
      * @param nativeException
      * @return an Array with the backtrace
@@ -753,7 +765,6 @@ public final class ThreadContext {
     
     /**
      * Create an Array with backtrace information.
-     * @param runtime
      * @param level
      * @param nativeException
      * @return an Array with the backtrace
@@ -889,7 +900,7 @@ public final class ThreadContext {
     
     public void preBsfApply(String[] names) {
         // FIXME: I think we need these pushed somewhere?
-        LocalStaticScope staticScope = new LocalStaticScope(null);
+        StaticScope staticScope = getRuntime().getStaticScopeFactory().newLocalScope(null);
         staticScope.setVariables(names);
         pushFrame();
     }
@@ -1025,7 +1036,7 @@ public final class ThreadContext {
         
         pushRubyClass(executeUnderClass);
         DynamicScope scope = getCurrentScope();
-        StaticScope sScope = new BlockStaticScope(scope.getStaticScope());
+        StaticScope sScope = getRuntime().getStaticScopeFactory().newBlockScope(scope.getStaticScope());
         sScope.setModule(executeUnderClass);
         pushScope(DynamicScope.newDynamicScope(sScope, scope));
         pushCallFrame(frame.getKlazz(), frame.getName(), frame.getSelf(), block);
@@ -1137,7 +1148,7 @@ public final class ThreadContext {
      * Is this thread actively tracing at this moment.
      *
      * @return true if so
-     * @see org.jruby.Ruby#callTraceFunction(String, ISourcePosition, IRubyObject, String, IRubyObject)
+     * @see org.jruby.Ruby#callEventHooks(ThreadContext, RubyEvent, String, int, String, org.jruby.runtime.builtin.IRubyObject)
      */
     public boolean isWithinTrace() {
         return isWithinTrace;
@@ -1147,7 +1158,7 @@ public final class ThreadContext {
      * Set whether we are actively tracing or not on this thread.
      *
      * @param isWithinTrace true is so
-     * @see org.jruby.Ruby#callTraceFunction(String, ISourcePosition, IRubyObject, String, IRubyObject)
+     * @see org.jruby.Ruby#callEventHooks(ThreadContext, RubyEvent, String, int, String, org.jruby.runtime.builtin.IRubyObject)
      */
     public void setWithinTrace(boolean isWithinTrace) {
         this.isWithinTrace = isWithinTrace;
@@ -1206,7 +1217,7 @@ public final class ThreadContext {
      * Return a binding representing the current call's state but with the
      * specified scope and self.
      * @param self the self object to use
-     * @param visibility the scope to use
+     * @param scope the scope to use
      * @return the current binding using the specified self and scope
      */
     public Binding currentBinding(IRubyObject self, DynamicScope scope) {
@@ -1233,6 +1244,7 @@ public final class ThreadContext {
      * Return a binding representing the previous call's state
      * @return the current binding
      */
+    @Deprecated
     public Binding previousBinding() {
         Frame frame = getPreviousFrame();
         return new Binding(frame, getPreviousRubyClass(), getCurrentScope(), backtrace[backtraceIndex].clone());
@@ -1243,6 +1255,7 @@ public final class ThreadContext {
      * @param self the self object to use
      * @return the current binding, using the specified self
      */
+    @Deprecated
     public Binding previousBinding(IRubyObject self) {
         Frame frame = getPreviousFrame();
         return new Binding(self, frame, frame.getVisibility(), getPreviousRubyClass(), getCurrentScope(), backtrace[backtraceIndex].clone());
@@ -1295,6 +1308,11 @@ public final class ThreadContext {
     
     public void setRecursiveSet(Set<RecursiveComparator.Pair> recursiveSet) {
         this.recursiveSet = recursiveSet;
+    }
+
+    @Deprecated
+    public void setFile(String file) {
+        backtrace[backtraceIndex].filename = file;
     }
     
     private Set<RecursiveComparator.Pair> recursiveSet;

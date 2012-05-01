@@ -77,7 +77,7 @@ import org.jruby.util.log.LoggerFactory;
  * this can be detected, MethodFactory will fall back on the reflection-based
  * factory instead.
  * 
- * @see org.jruby.internal.runtime.methods.MethodFactory
+ * @see org.jruby.runtime.MethodFactory
  */
 public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
@@ -198,7 +198,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
     /**
      * Use code generation to provide a method handle for a compiled Ruby method.
      * 
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getCompiledMethod
+     * @see org.jruby.runtime.MethodFactory#getCompiledMethod
      */
     public DynamicMethod getCompiledMethodLazily(
             RubyModule implementationClass,
@@ -231,7 +231,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
     /**
      * Use code generation to provide a method handle for a compiled Ruby method.
      * 
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getCompiledMethod
+     * @see org.jruby.runtime.MethodFactory#getCompiledMethod
      */
     public DynamicMethod getCompiledMethod(
             RubyModule implementationClass,
@@ -271,11 +271,15 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
                 CompiledMethod compiledMethod = (CompiledMethod)generatedClass.newInstance();
                 compiledMethod.init(implementationClass, arity, visibility, scope, scriptObject, callConfig, position, parameterDesc);
-                
-                if (arity.isFixed() && arity.required() <= 3) {
-                    Class[] params = StandardASMCompiler.getStaticMethodParams(scriptClass, scope.getRequiredArgs());
-                    compiledMethod.setNativeCall(scriptClass, method, IRubyObject.class, params, true);
+
+                Class[] params;
+                if (arity.isFixed() && scope.getRequiredArgs() < 4) {
+                    params = StandardASMCompiler.getStaticMethodParams(scriptClass, scope.getRequiredArgs());
+                } else {
+                    params = StandardASMCompiler.getStaticMethodParams(scriptClass, 4);
                 }
+                compiledMethod.setNativeCall(scriptClass, method, IRubyObject.class, params, true);
+
                 return compiledMethod;
             } catch(Exception e) {
                 e.printStackTrace();
@@ -287,7 +291,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
     /**
      * Use code generation to provide a method handle for a compiled Ruby method.
      *
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getCompiledMethod
+     * @see org.jruby.runtime.MethodFactory#getCompiledMethod
      */
     @Override
     public byte[] getCompiledMethodOffline(
@@ -323,7 +327,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
             mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "call", COMPILED_CALL_SIG_BLOCK, null, null);
             mv.start();
-            mv.line(-1);
 
             // check arity
             mv.aloadMany(0, 1, 4, 5); // method, context, name, args, required
@@ -374,7 +377,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
             }
             mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "call", signature, null, null);
             mv.start();
-            mv.line(-1);
 
             mv.aloadMany(0, 1, 2, 3, 4);
             for (int i = 1; i <= scope.getRequiredArgs(); i++) {
@@ -404,8 +406,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
             mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "call", signature, null, null);
         }
 
-        mv.visitCode();
-        mv.line(-1);
+        mv.start();
 
         // save off callNumber
         mv.aload(1);
@@ -590,7 +591,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         private int max;
         private boolean frame;
         private boolean scope;
-        private boolean backtrace;
         private boolean rest;
         private boolean block;
         
@@ -599,7 +599,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
             max = 0;
             frame = false;
             scope = false;
-            backtrace = false;
             rest = false;
             block = false;
             boolean first = true;
@@ -656,13 +655,13 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
                 frame |= desc.anno.frame();
                 scope |= desc.anno.scope();
-                backtrace |= desc.anno.backtrace();
                 block |= desc.hasBlock;
             }
         }
-        
+
+        @Deprecated
         public boolean isBacktrace() {
-            return backtrace;
+            return false;
         }
 
         public boolean isFrame() {
@@ -694,7 +693,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      * Use code generation to provide a method handle based on an annotated Java
      * method.
      * 
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getAnnotatedMethod
+     * @see org.jruby.runtime.MethodFactory#getAnnotatedMethod
      */
     public DynamicMethod getAnnotatedMethod(RubyModule implementationClass, List<JavaMethodDescriptor> descs) {
         JavaMethodDescriptor desc1 = descs.get(0);
@@ -716,8 +715,12 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
                         Arity.optional().getValue(),
                         javaMethodName,
                         desc1.isStatic,
-                        CallConfiguration.getCallConfig(info.isFrame(), info.isScope(), info.isBacktrace()),
-                        desc1.anno.notImplemented());
+                        CallConfiguration.getCallConfig(info.isFrame(), info.isScope()),
+                        desc1.anno.notImplemented(),
+                        desc1.getDeclaringClass(),
+                        desc1.name,
+                        desc1.getReturnClass(),
+                        desc1.getParameterClasses());
                 return ic;
             } catch(Exception e) {
                 e.printStackTrace();
@@ -730,7 +733,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      * Use code generation to provide a method handle based on an annotated Java
      * method. Return the resulting generated or loaded class.
      * 
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getAnnotatedMethod
+     * @see org.jruby.runtime.MethodFactory#getAnnotatedMethod
      */
     public Class getAnnotatedMethodClass(List<JavaMethodDescriptor> descs) throws Exception {
         JavaMethodDescriptor desc1 = descs.get(0);
@@ -805,7 +808,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      * Use code generation to provide a method handle based on an annotated Java
      * method.
      * 
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getAnnotatedMethod
+     * @see org.jruby.runtime.MethodFactory#getAnnotatedMethod
      */
     public DynamicMethod getAnnotatedMethod(RubyModule implementationClass, JavaMethodDescriptor desc) {
         String javaMethodName = desc.name;
@@ -876,7 +879,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         String mname = getBlockCallbackName(classname, method);
         ClassWriter cw = createBlockCtor(mname, classname);
         SkinnyMethodAdapter mv = startBlockCall(cw);
-        mv.line(-1);
         mv.aload(0);
         mv.getfield(mname, "$scriptObject", "L" + classname + ";");
         mv.aloadMany(1, 2, 3, 4);
@@ -938,7 +940,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         String mnamePath = getBlockCallbackName(classname, method);
         ClassWriter cw = createBlockCtor19(mnamePath, classname);
         SkinnyMethodAdapter mv = startBlockCall19(cw);
-        mv.line(-1);
         mv.aload(0);
         mv.getfield(mnamePath, "$scriptObject", "L" + classname + ";");
         mv.aloadMany(1, 2, 3, 4);
@@ -967,8 +968,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         SkinnyMethodAdapter mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC | ACC_SYNTHETIC | ACC_FINAL, "call", BLOCK_CALL_SIG, null, null);
 
         mv.visitCode();
-        Label line = new Label();
-        mv.visitLineNumber(0, line);
         return mv;
     }
 
@@ -976,8 +975,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         SkinnyMethodAdapter mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC | ACC_SYNTHETIC | ACC_FINAL, "call", BLOCK_CALL_SIG19, null, null);
 
         mv.visitCode();
-        Label line = new Label();
-        mv.visitLineNumber(0, line);
         return mv;
     }
 
@@ -989,7 +986,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "$scriptObject", ciClassname, null, null);
         SkinnyMethodAdapter mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "<init>", sig(Void.TYPE, params(Object.class)), null, null);
         mv.start();
-        mv.line(-1);
         mv.aload(0);
         mv.invokespecial(p(CompiledBlockCallback.class), "<init>", sig(void.class));
         mv.aloadMany(0, 1);
@@ -1009,7 +1005,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "$scriptObject", ciClassname, null, null);
         SkinnyMethodAdapter mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "<init>", sig(Void.TYPE, params(Object.class)), null, null);
         mv.start();
-        mv.line(-1);
         mv.aload(0);
         mv.invokespecial(p(Object.class), "<init>", sig(void.class));
         mv.aloadMany(0, 1);
@@ -1025,7 +1020,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      * Use code generation to provide a method handle based on an annotated Java
      * method.
      * 
-     * @see org.jruby.internal.runtime.methods.MethodFactory#getAnnotatedMethod
+     * @see org.jruby.runtime.MethodFactory#getAnnotatedMethod
      */
     public void prepareAnnotatedMethod(RubyModule implementationClass, JavaMethod javaMethod, JavaMethodDescriptor desc) {
         String javaMethodName = desc.name;
@@ -1112,10 +1107,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         cw.visitSource(shortPath, null);
         SkinnyMethodAdapter mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "<init>", "()V", null, null);
         mv.visitCode();
-        mv.line(-1);
         mv.aload(0);
         mv.visitMethodInsn(INVOKESPECIAL, sup, "<init>", "()V");
-        mv.visitLineNumber(-1, new Label());
         mv.voidreturn();
         mv.end();
 
@@ -1129,10 +1122,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         cw.visitSource(sourceFile, null);
         SkinnyMethodAdapter mv = new SkinnyMethodAdapter(cw, ACC_PUBLIC, "<init>", JAVA_SUPER_SIG, null, null);
         mv.start();
-        mv.line(-1);
         mv.aloadMany(0, 1, 2);
         mv.visitMethodInsn(INVOKESPECIAL, sup, "<init>", JAVA_SUPER_SIG);
-        mv.visitLineNumber(-1, new Label());
         mv.voidreturn();
         mv.end();
         
@@ -1325,7 +1316,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
             c.getMethod("call", new Class[]{ThreadContext.class, IRubyObject.class, RubyModule.class,
             String.class, IRubyObject[].class, Block.class});
             
-            if (c != null && seenUndefinedClasses && !haveWarnedUser) {
+            if (seenUndefinedClasses && !haveWarnedUser) {
                 haveWarnedUser = true;
                 System.err.println("WARNING: while creating new bindings for " + targetClass + ",\n" +
                         "found an existing binding; you may want to run a clean build.");
@@ -1455,7 +1446,6 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
             mv = beginMethod(cw, callName, specificArity, hasBlock);
             mv.visitCode();
-            mv.line(-1);
 
             createAnnotatedMethodInvocation(desc, mv, superClass, specificArity, hasBlock);
 

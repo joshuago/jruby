@@ -28,6 +28,7 @@
 
 #include "jruby.h"
 #include "ruby.h"
+#include "st.h"
 
 using namespace jruby;
 
@@ -86,18 +87,28 @@ rb_hash_foreach(VALUE hash, int (*func)(ANYARGS), VALUE arg)
         int ret = (*func)(key, value, arg);
         switch (ret) {
 
-        case 0: // ST_CONTINUE:
+        case ST_CONTINUE:
             continue;
 
-        case 1: // ST_STOP:
+        case ST_STOP:
             return;
 
-        case 2: // ST_DELETE:
+        case ST_DELETE:
             callMethod(hash, "delete", 1, key);
             continue;
 
         default:
             rb_raise(rb_eArgError, "unsupported hash_foreach value");
         }
+    }
+}
+
+extern "C" VALUE
+rb_hash_delete_if(VALUE obj)
+{
+    if (rb_block_given_p()) {
+        return jruby_funcall2b(obj, rb_intern("delete_if"), 0, NULL, rb_block_proc());
+    } else {
+        return callMethod(obj, "delete_if", 0, NULL);
     }
 }

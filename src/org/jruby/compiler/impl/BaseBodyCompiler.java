@@ -5,9 +5,7 @@
 package org.jruby.compiler.impl;
 
 import java.io.PrintStream;
-import java.lang.reflect.InvocationTargetException;
 import java.math.BigInteger;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -25,7 +23,6 @@ import org.jruby.RubyBoolean;
 import org.jruby.RubyClass;
 import org.jruby.RubyException;
 import org.jruby.RubyFixnum;
-import org.jruby.RubyFloat;
 import org.jruby.RubyHash;
 import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyMatchData;
@@ -182,6 +179,10 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         Label line = new Label();
         method.label(line);
         method.visitLineNumber(thisLine + 1, line);
+    }
+
+    public int getLastLine() {
+        return lastLine;
     }
 
     public void loadThreadContext() {
@@ -347,7 +348,6 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     public void assignConstantInObject(String name) {
         // load Object under value
         loadObject();
-        method.swap();
 
         assignConstantInModule(name);
     }
@@ -437,15 +437,14 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
 
     public void createNewString(ArrayCallback callback, int count, Encoding encoding) {
         loadRuntime();
-
-        ByteList startingDstr = new ByteList(StandardASMCompiler.STARTING_DSTR_SIZE);
-        if (encoding != null) {
-            startingDstr.setEncoding(encoding);
+        method.ldc(StandardASMCompiler.STARTING_DSTR_FACTOR * count);
+        if (encoding == null) {
+            method.invokestatic(p(RubyString.class), "newStringLight", sig(RubyString.class, Ruby.class, int.class));
+        } else {
+            script.getCacheCompiler().cacheEncoding(this, encoding);
+            method.invokestatic(p(RubyString.class), "newStringLight", sig(RubyString.class, Ruby.class, int.class, Encoding.class));
         }
-        script.getCacheCompiler().cacheByteList(this, startingDstr);
-        method.invokevirtual(p(ByteList.class), "dup", sig(ByteList.class));
 
-        method.invokestatic(p(RubyString.class), "newStringLight", sig(RubyString.class, Ruby.class, ByteList.class));
         for (int i = 0; i < count; i++) {
             callback.nextValue(this, null, i);
             if (encoding != null) {
@@ -778,11 +777,15 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     }
 
     public void performBooleanBranch(BranchCallback trueBranch, BranchCallback falseBranch) {
-        Label afterJmp = new Label();
-        Label falseJmp = new Label();
-
         // call isTrue on the result
         isTrue();
+        
+        performBooleanBranch2(trueBranch, falseBranch);
+    }
+
+    public void performBooleanBranch2(BranchCallback trueBranch, BranchCallback falseBranch) {
+        Label afterJmp = new Label();
+        Label falseJmp = new Label();
 
         method.ifeq(falseJmp); // EQ == 0 (i.e. false)
         trueBranch.branch(this);
@@ -1342,27 +1345,27 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         method.invokestatic(p(RubyRegexp.class), "nth_match", sig(IRubyObject.class, params(Integer.TYPE, IRubyObject.class)));
     }
 
-    public void match() {
+    public void match(boolean is19) {
         loadThreadContext();
-        method.invokevirtual(p(RubyRegexp.class), "op_match2", sig(IRubyObject.class, params(ThreadContext.class)));
+        method.invokevirtual(p(RubyRegexp.class), is19 ? "op_match2_19" : "op_match2", sig(IRubyObject.class, params(ThreadContext.class)));
     }
 
-    public void match2(CompilerCallback value) {
+    public void match2(CompilerCallback value, boolean is19) {
         loadThreadContext();
         value.call(this);
-        method.invokevirtual(p(RubyRegexp.class), "op_match", sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class)));
+        method.invokevirtual(p(RubyRegexp.class), is19 ? "op_match19" : "op_match", sig(IRubyObject.class, params(ThreadContext.class, IRubyObject.class)));
     }
 
-    public void match2Capture(CompilerCallback value, int[] scopeOffsets) {
+    public void match2Capture(CompilerCallback value, int[] scopeOffsets, boolean is19) {
         loadThreadContext();
         value.call(this);
         method.ldc(RuntimeHelpers.encodeCaptureOffsets(scopeOffsets));
-        invokeUtilityMethod("match2AndUpdateScope", sig(IRubyObject.class, params(IRubyObject.class, ThreadContext.class, IRubyObject.class, String.class)));
+        invokeUtilityMethod(is19 ? "match2AndUpdateScope19" : "match2AndUpdateScope", sig(IRubyObject.class, params(IRubyObject.class, ThreadContext.class, IRubyObject.class, String.class)));
     }
 
-    public void match3() {
+    public void match3(boolean is19) {
         loadThreadContext();
-        invokeUtilityMethod("match3", sig(IRubyObject.class, RubyRegexp.class, IRubyObject.class, ThreadContext.class));
+        invokeUtilityMethod(is19 ? "match3_19" : "match3", sig(IRubyObject.class, RubyRegexp.class, IRubyObject.class, ThreadContext.class));
     }
 
     public void createNewRegexp(final ByteList value, final int options) {
@@ -1379,6 +1382,19 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
             createStringCallback.call(this);
             method.pushInt(options);
             method.invokestatic(p(RubyRegexp.class), "newDRegexpEmbedded", sig(RubyRegexp.class, params(Ruby.class, RubyString.class, int.class))); //[reg]
+        }
+    }
+    
+    public void createDRegexp19(ArrayCallback arrayCallback, Object[] sourceArray, int options) {
+        boolean onceOnly = (options & ReOptions.RE_OPTION_ONCE) != 0;   // for regular expressions with the /o flag
+
+        if (onceOnly) {
+            script.getCacheCompiler().cacheDRegexp19(this, arrayCallback, sourceArray, options);
+        } else {
+            loadRuntime();
+            createObjectArray(sourceArray, arrayCallback);
+            method.ldc(options);
+            method.invokestatic(p(RubyRegexp.class), "newDRegexpEmbedded19", sig(RubyRegexp.class, params(Ruby.class, IRubyObject[].class, int.class))); //[reg]
         }
     }
 
@@ -1595,13 +1611,19 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     }
 
     protected String getNewRescueName() {
-        return "rescue_" + (script.getAndIncrementRescueNumber()) + "$RUBY$SYNTHETIC" + JavaNameMangler.mangleStringForCleanJavaIdentifier(getRubyName());
+        return "rescue_" + (script.getAndIncrementRescueNumber()) + "$RUBY$SYNTHETIC" + JavaNameMangler.mangleMethodName(getRubyName());
     }
 
     public void storeExceptionInErrorInfo() {
         loadException();
         loadThreadContext();
         invokeUtilityMethod("storeExceptionInErrorInfo", sig(void.class, Throwable.class, ThreadContext.class));
+    }
+
+    public void storeNativeExceptionInErrorInfo() {
+        loadException();
+        loadThreadContext();
+        invokeUtilityMethod("storeNativeExceptionInErrorInfo", sig(void.class, Throwable.class, ThreadContext.class));
     }
 
     public void clearErrorInfo() {
@@ -2266,7 +2288,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         String classMethodName = null;
         String rubyName;
         if (receiverCallback == null) {
-            String mangledName = JavaNameMangler.mangleStringForCleanJavaIdentifier(name);
+            String mangledName = JavaNameMangler.mangleMethodName(name);
             classMethodName = "class_" + script.getAndIncrementMethodIndex() + "$RUBY$" + mangledName;
             rubyName = mangledName;
         } else {
@@ -2388,7 +2410,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     }
 
     public void defineModule(final String name, final StaticScope staticScope, final CompilerCallback pathCallback, final CompilerCallback bodyCallback, final ASTInspector inspector) {
-        String mangledName = JavaNameMangler.mangleStringForCleanJavaIdentifier(name);
+        String mangledName = JavaNameMangler.mangleMethodName(name);
         String moduleMethodName = "module__" + script.getAndIncrementMethodIndex() + "$RUBY$" + mangledName;
 
         final RootScopedBodyCompiler classBody = new ClassBodyCompiler(script, moduleMethodName, mangledName, inspector, staticScope);
@@ -2587,14 +2609,8 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
             CompilerCallback body, CompilerCallback args,
             CompilerCallback receiver, ASTInspector inspector, boolean root,
             String filename, int line, String parameterDesc) {
-        // TODO: build arg list based on number of args, optionals, etc
-        String newMethodName;
-        if (root && SafePropertyAccessor.getBoolean("jruby.compile.toplevel", false)) {
-            newMethodName = name;
-        } else {
-            String mangledName = JavaNameMangler.mangleStringForCleanJavaIdentifier(name);
-            newMethodName = "method__" + script.getAndIncrementMethodIndex() + "$RUBY$" + mangledName;
-        }
+        String mangledName = JavaNameMangler.mangleMethodName(name);
+        String newMethodName = "method__" + script.getAndIncrementMethodIndex() + "$RUBY$" + mangledName;
 
         BodyCompiler methodCompiler = script.startMethod(name, newMethodName, args, scope, inspector);
 
@@ -2617,8 +2633,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
 
         method.ldc(newMethodName);
 
-        String scopeNames = RuntimeHelpers.encodeScope(scope);
-        method.ldc(scopeNames);
+        script.getCacheCompiler().cacheStaticScope(this, scope);
 
         method.pushInt(methodArity);
 
@@ -2630,10 +2645,10 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
 
         if (receiver != null) {
             invokeUtilityMethod("defs", sig(IRubyObject.class,
-                    params(ThreadContext.class, IRubyObject.class, IRubyObject.class, Object.class, String.class, String.class, String.class, int.class, String.class, int.class, CallConfiguration.class, String.class)));
+                    params(ThreadContext.class, IRubyObject.class, IRubyObject.class, Object.class, String.class, String.class, StaticScope.class, int.class, String.class, int.class, CallConfiguration.class, String.class)));
         } else {
             invokeUtilityMethod("def", sig(IRubyObject.class,
-                    params(ThreadContext.class, IRubyObject.class, Object.class, String.class, String.class, String.class, int.class, String.class, int.class, CallConfiguration.class, String.class)));
+                    params(ThreadContext.class, IRubyObject.class, Object.class, String.class, String.class, StaticScope.class, int.class, String.class, int.class, CallConfiguration.class, String.class)));
         }
 
         script.addInvokerDescriptor(newMethodName, methodArity, scope, inspector.getCallConfig(), filename, line);
@@ -2778,26 +2793,12 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
                     getCaseValue.call(this);
                     invokeUtilityMethod("getFastSwitchSingleCharString", sig(int.class, IRubyObject.class));
                     break;
-                case STRING:
-                    getCaseValue.call(this);
-                    invokeUtilityMethod("isFastSwitchableString", sig(boolean.class, IRubyObject.class));
-                    method.ifeq(slowPath);
-                    getCaseValue.call(this);
-                    invokeUtilityMethod("getFastSwitchString", sig(int.class, IRubyObject.class));
-                    break;
                 case SINGLE_CHAR_SYMBOL:
                     getCaseValue.call(this);
                     invokeUtilityMethod("isFastSwitchableSingleCharSymbol", sig(boolean.class, IRubyObject.class));
                     method.ifeq(slowPath);
                     getCaseValue.call(this);
                     invokeUtilityMethod("getFastSwitchSingleCharSymbol", sig(int.class, IRubyObject.class));
-                    break;
-                case SYMBOL:
-                    getCaseValue.call(this);
-                    invokeUtilityMethod("isFastSwitchableSymbol", sig(boolean.class, IRubyObject.class));
-                    method.ifeq(slowPath);
-                    getCaseValue.call(this);
-                    invokeUtilityMethod("getFastSwitchSymbol", sig(int.class, IRubyObject.class));
                     break;
                 }
 
@@ -2883,7 +2884,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     }
 
     public void loadEncoding(Encoding encoding) {
-        script.getCacheCompiler().cacheEncoding(this, encoding);
+        script.getCacheCompiler().cacheRubyEncoding(this, encoding);
     }
 
     public void definedCall(String name) {

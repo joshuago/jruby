@@ -132,7 +132,7 @@ rb_define_global_const(const char* name, VALUE obj)
 {
     JLocalEnv env;
 
-    jmethodID mid = getMethodID(env, Ruby_class, "defineGlobalConstant",
+    jmethodID mid = getCachedMethodID(env, Ruby_class, "defineGlobalConstant",
             "(Ljava/lang/String;Lorg/jruby/runtime/builtin/IRubyObject;)V");
     env->CallObjectMethod(getRuntime(), mid, env->NewStringUTF(name), valueToObject(env, obj));
 }
@@ -159,6 +159,13 @@ rb_gv_set(const char* name, VALUE value)
     checkExceptions(env);
 
     return (VALUE)result;
+}
+
+extern "C" void
+rb_define_variable(const char *name, VALUE *var)
+{
+    // FIXME this is not correct - we should define a VariableAccessor and have it read/write the C var©g168
+    rb_gv_set(name, *var);
 }
 
 extern "C" void
@@ -196,7 +203,7 @@ rb_eval_string(const char* string)
 {
     JLocalEnv env;
 
-    jmethodID mid = getMethodID(env, Ruby_class, "evalScriptlet",
+    jmethodID mid = getCachedMethodID(env, Ruby_class, "evalScriptlet",
             "(Ljava/lang/String;)Lorg/jruby/runtime/builtin/IRubyObject;");
     jobject result = env->CallObjectMethod(getRuntime(), mid, env->NewStringUTF(string));
     checkExceptions(env);
@@ -215,6 +222,30 @@ rb_throw(const char* symbol, VALUE result)
 {
     VALUE params[2] = {ID2SYM(rb_intern(symbol)), result};
     callMethodA(rb_mKernel, "throw", 2, params);
+}
+
+extern "C" VALUE 
+rb_errinfo(void)
+{
+    return rb_gv_get("$!");
+}
+
+extern "C" void 
+rb_set_errinfo(VALUE err)
+{
+    rb_gv_set("$!", err);
+}
+
+extern "C" VALUE 
+ruby_verbose(void)
+{
+    return rb_gv_get("$VERBOSE");
+}
+
+extern "C" VALUE 
+ruby_debug(void)
+{
+    return rb_gv_get("$DEBUG");
 }
 
 #define M(x) rb_m##x = getConstModule(env, #x)

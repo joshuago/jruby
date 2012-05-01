@@ -203,7 +203,7 @@ public class RubyKernel {
     }
 
     private static RubyModule getModuleForAutoload(Ruby runtime, IRubyObject recv) {
-        RubyModule module = recv instanceof RubyModule ? (RubyModule) recv : runtime.getObject();
+        RubyModule module = recv instanceof RubyModule ? (RubyModule) recv : recv.getMetaClass().getRealClass();
         if (module == runtime.getKernel()) {
             // special behavior if calling Kernel.autoload directly
             if (runtime.is1_9()) {
@@ -397,6 +397,21 @@ public class RubyKernel {
             return (RubyFloat)TypeConverter.convertToType19(object, runtime.getFloat(), "to_f");
         }
     }
+    
+    @JRubyMethod(name = "Hash", required = 1, module = true, visibility = PRIVATE, compat = RUBY1_9)
+    public static IRubyObject new_hash(ThreadContext context, IRubyObject recv, IRubyObject arg) {
+        IRubyObject tmp;
+        Ruby runtime = recv.getRuntime();
+        if (arg.isNil()) return RubyHash.newHash(runtime);
+        tmp = TypeConverter.checkHashType(runtime, arg);
+        if (tmp.isNil()) {
+            if (arg instanceof RubyArray && ((RubyArray) arg).isEmpty()) {
+                return RubyHash.newHash(runtime);
+            }
+            throw runtime.newTypeError("can't convert " + arg.getMetaClass() + " into Hash");
+        }
+        return tmp;
+    } 
 
     @JRubyMethod(name = "Integer", required = 1, module = true, visibility = PRIVATE, compat = RUBY1_8)
     public static IRubyObject new_integer(ThreadContext context, IRubyObject recv, IRubyObject object) {
@@ -526,7 +541,7 @@ public class RubyKernel {
                 args = ArgsUtil.popArray(args);
             }
 
-            defout.callMethod(context, "write", RubyKernel.sprintf(recv, args));
+            defout.callMethod(context, "write", RubyKernel.sprintf(context, recv, args));
         }
 
         return context.getRuntime().getNil();
@@ -573,14 +588,6 @@ public class RubyKernel {
         }
     }
 
-    /**
-     * Variable-arity version for compatibility. Not bound to Ruby.
-     * @deprecated Use the one or two-arg versions.
-     */
-    public static IRubyObject sub_bang(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        return getLastlineString(context, context.getRuntime()).sub_bang(context, args, block);
-    }
-
     @JRubyMethod(name = "sub!", module = true, visibility = PRIVATE, reads = LASTLINE, compat = RUBY1_8)
     public static IRubyObject sub_bang(ThreadContext context, IRubyObject recv, IRubyObject arg0, Block block) {
         return getLastlineString(context, context.getRuntime()).sub_bang(context, arg0, block);
@@ -589,20 +596,6 @@ public class RubyKernel {
     @JRubyMethod(name = "sub!", module = true, visibility = PRIVATE, reads = LASTLINE, compat = RUBY1_8)
     public static IRubyObject sub_bang(ThreadContext context, IRubyObject recv, IRubyObject arg0, IRubyObject arg1, Block block) {
         return getLastlineString(context, context.getRuntime()).sub_bang(context, arg0, arg1, block);
-    }
-
-    /**
-     * Variable-arity version for compatibility. Not bound to Ruby.
-     * @deprecated Use the one or two-arg versions.
-     */
-    public static IRubyObject sub(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        RubyString str = (RubyString) getLastlineString(context, context.getRuntime()).dup();
-
-        if (!str.sub_bang(context, args, block).isNil()) {
-            context.getCurrentScope().setLastLine(str);
-        }
-
-        return str;
     }
 
     @JRubyMethod(name = "sub", module = true, visibility = PRIVATE, reads = LASTLINE, writes = LASTLINE, compat = RUBY1_8)
@@ -627,14 +620,6 @@ public class RubyKernel {
         return str;
     }
 
-    /**
-     * Variable-arity version for compatibility. Not bound to Ruby.
-     * @deprecated Use the one or two-arg versions.
-     */
-    public static IRubyObject gsub_bang(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        return getLastlineString(context, context.getRuntime()).gsub_bang(context, args, block);
-    }
-
     @JRubyMethod(name = "gsub!", module = true, visibility = PRIVATE, reads = LASTLINE, writes = LASTLINE, compat = RUBY1_8)
     public static IRubyObject gsub_bang(ThreadContext context, IRubyObject recv, IRubyObject arg0, Block block) {
         return getLastlineString(context, context.getRuntime()).gsub_bang(context, arg0, block);
@@ -643,20 +628,6 @@ public class RubyKernel {
     @JRubyMethod(name = "gsub!", module = true, visibility = PRIVATE, reads = LASTLINE, writes = LASTLINE, compat = RUBY1_8)
     public static IRubyObject gsub_bang(ThreadContext context, IRubyObject recv, IRubyObject arg0, IRubyObject arg1, Block block) {
         return getLastlineString(context, context.getRuntime()).gsub_bang(context, arg0, arg1, block);
-    }
-
-    /**
-     * Variable-arity version for compatibility. Not bound to Ruby.
-     * @deprecated Use the one or two-arg versions.
-     */
-    public static IRubyObject gsub(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        RubyString str = (RubyString) getLastlineString(context, context.getRuntime()).dup();
-
-        if (!str.gsub_bang(context, args, block).isNil()) {
-            context.getCurrentScope().setLastLine(str);
-        }
-
-        return str;
     }
 
     @JRubyMethod(module = true, visibility = PRIVATE, reads = LASTLINE, writes = LASTLINE, compat = RUBY1_8)
@@ -699,14 +670,6 @@ public class RubyKernel {
         return str;
     }
 
-    /**
-     * Variable-arity version for compatibility. Not bound to Ruby.
-     * @deprecated Use the zero or one-arg versions.
-     */
-    public static IRubyObject chomp_bang(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        return getLastlineString(context, context.getRuntime()).chomp_bang(args);
-    }
-
     @JRubyMethod(name = "chomp!", module = true, visibility = PRIVATE, reads = LASTLINE, writes = LASTLINE, compat = RUBY1_8)
     public static IRubyObject chomp_bang(ThreadContext context, IRubyObject recv) {
         return getLastlineString(context, context.getRuntime()).chomp_bang(context);
@@ -741,18 +704,6 @@ public class RubyKernel {
 
         context.getCurrentScope().setLastLine(dup);
         return dup;
-    }
-
-    /**
-     * Variable arity version for compatibility. Not bound to a Ruby method.
-     * 
-     * @param context The thread context for the current thread
-     * @param recv The receiver of the method (usually a class that has included Kernel)
-     * @return
-     * @deprecated Use the versions with zero, one, or two args.
-     */
-    public static IRubyObject split(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
-        return getLastlineString(context, context.getRuntime()).split(context, args);
     }
 
     @JRubyMethod(module = true, visibility = PRIVATE, reads = LASTLINE, writes = {LASTLINE, BACKREF}, compat = RUBY1_8)
@@ -941,10 +892,16 @@ public class RubyKernel {
 
         RubyString str = RubyString.stringValue(args[0]);
 
-        RubyArray newArgs = context.getRuntime().newArrayNoCopy(args);
-        newArgs.shift(context);
+        IRubyObject arg;
+        if (context.runtime.is1_9() && args.length == 2 && args[1] instanceof RubyHash) {
+            arg = args[1];
+        } else {
+            RubyArray newArgs = context.getRuntime().newArrayNoCopy(args);
+            newArgs.shift(context);
+            arg = newArgs;
+        }
 
-        return str.op_format(context, newArgs);
+        return str.op_format(context, arg);
     }
 
     @JRubyMethod(name = {"raise", "fail"}, optional = 3, module = true, visibility = PRIVATE, omit = true)
@@ -1004,7 +961,7 @@ public class RubyKernel {
 
     private static void printExceptionSummary(ThreadContext context, Ruby runtime, RubyException rEx) {
         RubyStackTraceElement[] elements = rEx.getBacktraceElements();
-        RubyStackTraceElement firstElement = elements[0];
+        RubyStackTraceElement firstElement = elements.length > 0 ? elements[0] : new RubyStackTraceElement("", "", "(empty)", 0, false);
         String msg = String.format("Exception `%s' at %s:%s - %s\n",
                 rEx.getMetaClass(),
                 firstElement.getFileName(), firstElement.getLineNumber(),
@@ -1088,29 +1045,25 @@ public class RubyKernel {
 
         boolean bindingGiven = args.length > 1 && !args[1].isNil();
         Binding binding = bindingGiven ? evalBinding.convertToBinding(args[1]) : context.currentBinding();
+
         if (args.length > 2) {
             // file given, use it and force it into binding
             binding.setFile(args[2].convertToString().toString());
-        } else {
-            // file not given
-            if (bindingGiven) {
-                // binding given, use binding's file
+
+            if (args.length > 3) {
+                // line given, use it and force it into binding
+                // -1 because parser uses zero offsets and other code compensates
+                binding.setLine(((int) args[3].convertToInteger().getLongValue()) - 1);
             } else {
-                // no binding given, use (eval)
-                binding.setFile("(eval)");
-            }
-        }
-        if (args.length > 3) {
-            // file given, use it and force it into binding
-            // -1 because parser uses zero offsets and other code compensates
-            binding.setLine(((int) args[3].convertToInteger().getLongValue()) - 1);
-        } else {
-            if (bindingGiven) {
-                // binding given, use binding's line
-            } else {
-                // no binding given, use 0 for both
+                // filename given, but no line, start from the beginning.
                 binding.setLine(0);
             }
+        } else if (bindingGiven) {
+            // binding given, use binding's file and line-number
+        } else {
+            // no binding given, use (eval) and start from first line.
+            binding.setFile("(eval)");
+            binding.setLine(0);
         }
 
         // set method to current frame's, which should be caller's
@@ -1169,13 +1122,14 @@ public class RubyKernel {
         return context.createCallerBacktrace(context.getRuntime(), level);
     }
 
-    @JRubyMethod(name = "catch", module = true, visibility = PRIVATE)
+    @JRubyMethod(name = "catch", module = true, visibility = PRIVATE, compat = RUBY1_8)
     public static IRubyObject rbCatch(ThreadContext context, IRubyObject recv, IRubyObject tag, Block block) {
         Ruby runtime = context.runtime;
-        RubyContinuation rbContinuation = new RubyContinuation(runtime, stringOrSymbol(tag));
+        RubySymbol sym = stringOrSymbol(tag);
+        RubyContinuation rbContinuation = new RubyContinuation(runtime, sym);
         try {
             context.pushCatch(rbContinuation.getContinuation());
-            return rbContinuation.enter(context, rbContinuation, block);
+            return rbContinuation.enter(context, sym, block);
         } finally {
             context.popCatch();
         }
@@ -1184,19 +1138,19 @@ public class RubyKernel {
     @JRubyMethod(name = "catch", module = true, visibility = PRIVATE, compat = RUBY1_9)
     public static IRubyObject rbCatch19(ThreadContext context, IRubyObject recv, Block block) {
         IRubyObject tag = new RubyObject(context.runtime.getObject());
-        return rbCatch19Common(context, tag, block, true);
+        return rbCatch19Common(context, tag, block);
     }
 
     @JRubyMethod(name = "catch", module = true, visibility = PRIVATE, compat = RUBY1_9)
     public static IRubyObject rbCatch19(ThreadContext context, IRubyObject recv, IRubyObject tag, Block block) {
-        return rbCatch19Common(context, tag, block, false);
+        return rbCatch19Common(context, tag, block);
     }
 
-    private static IRubyObject rbCatch19Common(ThreadContext context, IRubyObject tag, Block block, boolean yieldTag) {
+    private static IRubyObject rbCatch19Common(ThreadContext context, IRubyObject tag, Block block) {
         RubyContinuation rbContinuation = new RubyContinuation(context.getRuntime(), tag);
         try {
             context.pushCatch(rbContinuation.getContinuation());
-            return rbContinuation.enter(context, yieldTag ? tag : rbContinuation, block);
+            return rbContinuation.enter(context, tag, block);
         } finally {
             context.popCatch();
         }
@@ -1271,12 +1225,6 @@ public class RubyKernel {
             return runtime.newArgumentError(message);
         }
     };
-
-    @JRubyMethod(required = 1, optional = 1, module = true, visibility = PRIVATE)
-    public static IRubyObject trap(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        context.getRuntime().getLoadService().require("jsignal_internal");
-        return RuntimeHelpers.invoke(context, recv, "__jtrap", args, block);
-    }
     
     @JRubyMethod(module = true, visibility = PRIVATE)
     public static IRubyObject warn(ThreadContext context, IRubyObject recv, IRubyObject message) {
@@ -1304,9 +1252,8 @@ public class RubyKernel {
 
     @JRubyMethod(required = 1, optional = 1, module = true, visibility = PRIVATE)
     public static IRubyObject trace_var(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        if (args.length == 0) throw context.getRuntime().newArgumentError(0, 1);
         RubyProc proc = null;
-        String var = args.length > 1 ? args[0].toString() : null;
+        String var = args[0].toString();
         // ignore if it's not a global var
         if (var.charAt(0) != '$') return context.getRuntime().getNil();
         if (args.length == 1) proc = RubyProc.newProc(context.getRuntime(), block, Block.Type.PROC);
@@ -1322,7 +1269,7 @@ public class RubyKernel {
     @JRubyMethod(required = 1, optional = 1, module = true, visibility = PRIVATE)
     public static IRubyObject untrace_var(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
         if (args.length == 0) throw context.getRuntime().newArgumentError(0, 1);
-        String var = args.length >= 1 ? args[0].toString() : null;
+        String var = args[0].toString();
 
         // ignore if it's not a global var
         if (var.charAt(0) != '$') return context.getRuntime().getNil();
@@ -1583,7 +1530,7 @@ public class RubyKernel {
     }
 
     /**
-     * Now implemented in Ruby code. See Process::spawn in src/builtin/prelude.rb
+     * Now implemented in Ruby code. See Process::spawn in src/jruby/kernel19/process.rb
      * 
      * @deprecated 
      */
@@ -1607,6 +1554,16 @@ public class RubyKernel {
     @JRubyMethod(name = "system", required = 1, rest = true, module = true, visibility = PRIVATE, compat = CompatVersion.RUBY1_9)
     public static IRubyObject system19(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         Ruby runtime = context.getRuntime();
+        if (args[0] instanceof RubyHash) {
+            RubyHash env = (RubyHash) args[0].convertToHash();
+            if (env != null) {
+                runtime.getENV().merge_bang(context, env, Block.NULL_BLOCK);
+            }
+            // drop the first element for calling systemCommon()
+            IRubyObject[] rest = new IRubyObject[args.length - 1];
+            System.arraycopy(args, 1, rest, 0, args.length - 1);
+            args = rest;
+        }
         int resultCode = systemCommon(context, recv, args);
         switch (resultCode) {
             case 0: return runtime.getTrue();
@@ -1649,6 +1606,8 @@ public class RubyKernel {
         IRubyObject prog = args[1];
         IRubyObject options = args[2];
         RubyArray cmdArgs = (RubyArray)args[3];
+
+        RubyIO.checkExecOptions(options);
 
         return execCommon(runtime, env, prog, options, cmdArgs.toJavaArray());
     }
@@ -1693,9 +1652,11 @@ public class RubyKernel {
         } catch (Exception e) {
             throw runtime.newErrnoENOENTError("cannot execute");
         }
-        
-        if (nativeFailed) throw runtime.newErrnoENOENTError("cannot execute");
-        
+
+        if (nativeFailed) {
+            throw runtime.newErrnoFromLastPOSIXErrno();
+        }
+
         exit(runtime, new IRubyObject[] {runtime.newFixnum(resultCode)}, true);
 
         // not reached
@@ -1808,7 +1769,7 @@ public class RubyKernel {
         return ((RubyBasicObject)self).respond_to_p19(mname, includePrivate);
     }
 
-    @JRubyMethod(name = {"object_id", "__id__"})
+    @JRubyMethod(name = {"object_id", "__id__"}, compat = RUBY1_8)
     public static IRubyObject id(IRubyObject self) {
         return ((RubyBasicObject)self).id();
     }

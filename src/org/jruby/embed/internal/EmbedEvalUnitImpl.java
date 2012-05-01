@@ -34,6 +34,7 @@ import java.io.PrintWriter;
 import java.io.Writer;
 import org.jruby.Ruby;
 import org.jruby.RubyInstanceConfig.CompileMode;
+import org.jruby.RubySystemExit;
 import org.jruby.ast.Node;
 import org.jruby.ast.executable.Script;
 import org.jruby.embed.AttributeName;
@@ -123,21 +124,15 @@ public class EmbedEvalUnitImpl implements EmbedEvalUnit {
             }
             return ret;
         } catch (RaiseException e) {
+            // handle exits as simple script termination
+            if (e.getException() instanceof RubySystemExit) {
+                return ((RubySystemExit)e.getException()).status();
+            }
             runtime.printError(e.getException());
             throw new EvalFailedException(e.getMessage(), e);
         } catch (StackOverflowError soe) {
             throw runtime.newSystemStackError("stack level too deep", soe);
         } catch (Throwable e) {
-            Writer w = container.getErrorWriter();
-            if (w instanceof PrintWriter) {
-                e.printStackTrace((PrintWriter)w);
-            } else {
-                try {
-                    w.write(e.getMessage());
-                } catch (IOException ex) {
-                    throw new EvalFailedException(ex);
-                }
-            }
             throw new EvalFailedException(e);
         } finally {
             if (sharing_variables) {

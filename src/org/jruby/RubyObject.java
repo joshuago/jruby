@@ -101,15 +101,16 @@ public class RubyObject extends RubyBasicObject {
         super(metaClass);
     }
 
+    @Deprecated
+    protected RubyObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace, boolean canBeTainted) {
+        super(runtime, metaClass, useObjectSpace, canBeTainted);
+    }
+
     /**
      * Path for objects who want to decide whether they don't want to be in
      * ObjectSpace even when it is on. (notably used by objects being
      * considered immediate, they'll always pass false here)
      */
-    protected RubyObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace, boolean canBeTainted) {
-        super(runtime, metaClass, useObjectSpace, canBeTainted);
-    }
-
     protected RubyObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace) {
         super(runtime, metaClass, useObjectSpace);
     }
@@ -175,7 +176,7 @@ public class RubyObject extends RubyBasicObject {
      *
      * Will generally return a value from org.jruby.runtime.ClassIndex
      *
-     * @see org.jruby.runtime.ClassInde
+     * @see org.jruby.runtime.ClassIndex
      */
     @Override
     public int getNativeTypeIndex() {
@@ -389,7 +390,7 @@ public class RubyObject extends RubyBasicObject {
      * so dangerous casting can be omitted
      * Prefered over callMethod(context, "inspect")
      */
-    static RubyString inspect(ThreadContext context, IRubyObject object) {
+    public static RubyString inspect(ThreadContext context, IRubyObject object) {
         return RubyString.objAsString(context, object.callMethod(context, "inspect"));
     }
 

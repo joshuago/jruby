@@ -41,7 +41,6 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.io.BadDescriptorException;
 import org.jruby.util.io.ChannelDescriptor;
 import org.jruby.util.io.ChannelStream;
-import org.jruby.util.io.InvalidValueException;
 import org.jruby.util.io.ModeFlags;
 
 /**
@@ -63,7 +62,7 @@ public class FileDescriptorIO extends RubyIO {
         super(runtime, runtime.getModule("FFI").getClass(CLASS_NAME));
         ModeFlags modes;
         try {
-            modes = new ModeFlags(ModeFlags.RDWR);
+            modes = newModeFlags(runtime, ModeFlags.RDWR);
             openFile.setMainStream(ChannelStream.open(getRuntime(),
                     new ChannelDescriptor(new FileDescriptorByteChannel(getRuntime(), RubyNumeric.fix2int(fd)),
                     modes)));
@@ -72,8 +71,6 @@ public class FileDescriptorIO extends RubyIO {
             openFile.getMainStreamSafe().setSync(true);
         } catch (BadDescriptorException e) {
             throw runtime.newErrnoEBADFError();
-        } catch (InvalidValueException ex) {
-            throw new RuntimeException(ex);
         }
     }
     public static RubyClass createFileDescriptorIOClass(Ruby runtime, RubyModule module) {

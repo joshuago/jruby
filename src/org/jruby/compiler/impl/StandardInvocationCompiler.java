@@ -346,6 +346,12 @@ public class StandardInvocationCompiler implements InvocationCompiler {
         method.invokevirtual(p(CallSite.class), callSiteMethod, signature);
     }
 
+    public void invokeBinaryBooleanFixnumRHS(String name, CompilerCallback receiverCallback, long fixnum) {
+        invokeBinaryFixnumRHS(name, receiverCallback, fixnum);
+        
+        methodCompiler.isTrue();
+    }
+
     public void invokeBinaryFloatRHS(String name, CompilerCallback receiverCallback, double flote) {
         methodCompiler.getScriptCompiler().getCacheCompiler().cacheCallSite(methodCompiler, name, CallType.NORMAL);
         methodCompiler.loadThreadContext(); // [adapter, tc]
@@ -1015,6 +1021,25 @@ public class StandardInvocationCompiler implements InvocationCompiler {
         } else {
             method.invokevirtual(p(Block.class), "yield", sig(IRubyObject.class, ThreadContext.class, IRubyObject.class));
         }
+    }
+
+    public void yield19(CompilerCallback argsCallback, boolean unsplat) {
+        methodCompiler.loadBlock();
+        methodCompiler.loadThreadContext();
+
+        if (argsCallback != null) {
+            argsCallback.call(methodCompiler);
+        } else {
+            method.aconst_null();
+        }
+
+        if (unsplat) {
+            methodCompiler.invokeUtilityMethod("unsplatValue19", sig(IRubyObject.class, IRubyObject.class));
+        }
+
+        method.aconst_null();
+        method.aconst_null();
+        method.invokevirtual(p(Block.class), "yieldArray", sig(IRubyObject.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, RubyModule.class));
     }
 
     public void yieldSpecific(ArgumentsCallback argsCallback) {

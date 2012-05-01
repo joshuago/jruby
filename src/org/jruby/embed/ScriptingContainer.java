@@ -48,6 +48,7 @@ import org.jruby.RubyGlobal.OutputGlobalVariable;
 import org.jruby.RubyIO;
 import org.jruby.RubyInstanceConfig.CompileMode;
 import org.jruby.RubyInstanceConfig.LoadServiceCreator;
+import org.jruby.RubyInstanceConfig.ProfilingMode;
 import org.jruby.embed.internal.BiVariableMap;
 import org.jruby.embed.internal.ConcurrentLocalContextProvider;
 import org.jruby.embed.internal.EmbedRubyInterfaceAdapterImpl;
@@ -64,6 +65,7 @@ import org.jruby.runtime.Block;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ClassCache;
 import org.jruby.util.KCode;
+import org.jruby.util.cli.OutputStrings;
 
 /**
  * ScriptingContainer provides various methods and resources that are useful
@@ -224,8 +226,6 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
         try {
             initConfig();
         } catch (Exception ex) {
-            Writer w = getErrorWriter();
-            ex.printStackTrace((PrintWriter)w);
             throw new RuntimeException(ex);
         }
         setBasicProperties();
@@ -276,7 +276,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * @return a list of load paths.
      */
     public List<String> getLoadPaths() {
-        return provider.getRubyInstanceConfig().loadPaths();
+        return provider.getRubyInstanceConfig().getLoadPaths();
     }
 
     /**
@@ -707,6 +707,37 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
     public void setProfile(Profile profile) {
         provider.getRubyInstanceConfig().setProfile(profile);
     }
+    
+    /**
+     * Returns a ProfilingMode currently used. The default value is ProfilingMode.OFF.
+     *
+     * @since JRuby 1.6.6.
+     *
+     * @return a current profiling mode.
+     */
+    public ProfilingMode getProfilingMode() {
+        return provider.getRubyInstanceConfig().getProfilingMode();
+    }
+
+    /**
+     * Changes a ProfilingMode to a given one. The default value is Profiling.OFF.
+     * Call this method before you use put/get, runScriptlet, and parse methods so that
+     * initial configurations will work.
+     *
+     * ProfilingMode allows you to change profiling style.
+     * 
+     * Profiling.OFF - default. profiling off.
+     * Profiling.API - activates Ruby profiler API. equivalent to --profile.api command line option
+     * Profiling.FLAT - synonym for --profile command line option equivalent to --profile.flat command line option
+     * Profiling.GRAPH - runs with instrumented (timed) profiling, graph format. equivalent to --profile.graph command line option.
+     *
+     * @since JRuby 1.6.6.
+     *
+     * @param mode a new profiling mode to be set.
+     */
+    public void setProfile(ProfilingMode mode) {
+        provider.getRubyInstanceConfig().setProfilingMode(mode);
+    }
 
     /**
      * Returns a LoadServiceCreator currently used.
@@ -947,7 +978,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * @return version information.
      */
     public String getSupportedRubyVersion() {
-        return provider.getRubyInstanceConfig().getVersionString().trim();
+        return OutputStrings.getVersionString(provider.getRubyInstanceConfig().getCompatVersion()).trim();
     }
 
     /**
@@ -1555,7 +1586,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
         RubyIO io = new RubyIO(runtime, istream);
         io.getOpenFile().getMainStream().setSync(true);
         runtime.defineVariable(new InputGlobalVariable(runtime, "$stdin", io));
-        runtime.getObject().getConstantMapForWrite().put("STDIN", io);
+        runtime.getObject().storeConstant("STDIN", io);
     }
 
     /**
@@ -1613,7 +1644,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
         RubyIO io = new RubyIO(runtime, pstream);
         io.getOpenFile().getMainStream().setSync(true);
         runtime.defineVariable(new OutputGlobalVariable(runtime, "$stdout", io));
-        runtime.getObject().getConstantMapForWrite().put("STDOUT", io);
+        runtime.getObject().storeConstant("STDOUT", io);
         runtime.getGlobalVariables().alias("$>", "$stdout");
         runtime.getGlobalVariables().alias("$defout", "$stdout");
     }
@@ -1678,7 +1709,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
         RubyIO io = new RubyIO(runtime, error);
         io.getOpenFile().getMainStream().setSync(true);
         runtime.defineVariable(new OutputGlobalVariable(runtime, "$stderr", io));
-        runtime.getObject().getConstantMapForWrite().put("STDERR", io);
+        runtime.getObject().storeConstant("STDERR", io);
         runtime.getGlobalVariables().alias("$deferr", "$stderr");
     }
 
@@ -1721,7 +1752,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * @since JRuby 1.5.0
      */
     public void terminate() {
-        getProvider().getRuntime().tearDown(false);
+        if (getProvider().isRuntimeInitialized()) getProvider().getRuntime().tearDown(false);
         getProvider().terminate();
     }
 

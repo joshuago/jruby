@@ -404,6 +404,12 @@ describe "JRuby's compiler" do
           [57, 58, 59, 60, 61, 62, 63, 64]]
     compile_and_run(big_triple_flip).should == expected
   end
+
+  it "gracefully handles named captures when there's no match" do
+    lambda do
+      compile_and_run('/(?<a>.+)/ =~ ""')
+    end.should_not raise_error
+  end
   
   it "does a bunch of other stuff" do
     silence_warnings {
@@ -620,5 +626,13 @@ describe "JRuby's compiler" do
     lambda {
       JRuby5871B.new("foo", :each_byte)
     }.should_not raise_error
+
+    class JRUBY4925
+    end
+
+    x = compile_and_run 'JRUBY4925::BLAH, a = 1, 2'
+    JRUBY4925::BLAH.should == 1
+    x = compile_and_run '::JRUBY4925_BLAH, a = 1, 2'
+    JRUBY4925_BLAH.should == 1
   end
 end

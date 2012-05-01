@@ -29,15 +29,25 @@
  */
 package org.jruby.embed.jsr223;
 
+import java.io.IOException;
+import java.io.PrintStream;
+import java.io.Writer;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.Set;
 import javax.script.Bindings;
 import javax.script.ScriptContext;
 import javax.script.ScriptEngine;
+import org.jruby.Ruby;
+import org.jruby.RubyGlobal.OutputGlobalVariable;
+import org.jruby.RubyIO;
 import org.jruby.embed.AttributeName;
 import org.jruby.embed.LocalVariableBehavior;
 import org.jruby.embed.ScriptingContainer;
+import org.jruby.embed.io.WriterOutputStream;
 import org.jruby.embed.variable.TransientLocalVariable;
 import org.jruby.embed.variable.VariableInterceptor;
+import org.jruby.util.io.BadDescriptorException;
 
 /**
  * A collection of JSR223 specific utility methods.
@@ -83,26 +93,29 @@ public class Utils {
     }
 
     static void preEval(ScriptingContainer container, ScriptContext context) {
-        Object receiver = getReceiverObject(context);
+        Object receiver = Utils.getReceiverObject(context);
+
         Bindings bindings = context.getBindings(ScriptContext.ENGINE_SCOPE);
-        Set<String> keys = bindings.keySet();
-        for (String key : keys) {
-            Object value = bindings.get(key);
-            Utils.put(container, receiver, key, value, context);
+        for (Map.Entry<String, Object> entry : bindings.entrySet()) {
+            Utils.put(container, receiver, entry.getKey(), entry.getValue(), context);
+        }
+        try {
+            //container.setReader(context.getReader());
+            Utils.setWriter(container, context.getWriter());
+            Utils.setErrorWriter(container, context.getErrorWriter());
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } catch (BadDescriptorException ex) {
+            throw new RuntimeException(ex);
         }
         
-        //container.setReader(context.getReader());
-        container.setWriter(context.getWriter());
-        container.setErrorWriter(context.getErrorWriter());
 
         // if key of globalMap exists in engineMap, this key-value pair should be skipped.
         bindings = context.getBindings(ScriptContext.GLOBAL_SCOPE);
         if (bindings == null) return;
-        keys = bindings.keySet();
-        for (String key : keys) {
-            if (container.getVarMap().containsKey(key)) continue;
-            Object value = bindings.get(key);
-            put(container, receiver, key, value, context);
+        for (Map.Entry<String, Object> entry : bindings.entrySet()) {
+            if (container.getVarMap().containsKey(entry.getKey())) continue;
+            Utils.put(container, receiver, entry.getKey(), entry.getValue(), context);
         }
     }
 
@@ -110,28 +123,79 @@ public class Utils {
         if (context == null) return null;
         return context.getAttribute(AttributeName.RECEIVER.toString(), ScriptContext.ENGINE_SCOPE);
     }
+    
+    private static void setWriter(ScriptingContainer container, Writer writer) throws IOException, BadDescriptorException {
+        if (writer == null) {
+            return;
+        }
+        Map map = container.getAttributeMap();
+        if (map.containsKey(AttributeName.WRITER)) {
+            Writer old = (Writer) map.get(AttributeName.WRITER);
+            if (old == writer) {
+                return;
+            }
+        }
+        map.put(AttributeName.WRITER, writer);
+        
+        Ruby runtime = container.getProvider().getRuntime();
+        RubyIO io = getRubyIO(runtime, writer);
+        runtime.defineVariable(new OutputGlobalVariable(runtime, "$stdout", io));
+        runtime.getObject().storeConstant("STDOUT", io);
+        runtime.getGlobalVariables().alias("$>", "$stdout");
+        runtime.getGlobalVariables().alias("$defout", "$stdout");
+    }
+    
+    private static void setErrorWriter(ScriptingContainer container, Writer writer) throws IOException, BadDescriptorException {
+        if (writer == null) {
+            return;
+        }
+        Map map = container.getAttributeMap();
+        if (map.containsKey(AttributeName.ERROR_WRITER)) {
+            Writer old = (Writer) map.get(AttributeName.ERROR_WRITER);
+            if (old == writer) {
+                return;
+            }
+        }
+        map.put(AttributeName.ERROR_WRITER, writer);
+        
+        Ruby runtime = container.getProvider().getRuntime();
+        RubyIO io = getRubyIO(runtime, writer);
+        runtime.defineVariable(new OutputGlobalVariable(runtime, "$stderr", io));
+        runtime.getObject().storeConstant("STDERR", io);
+        runtime.getGlobalVariables().alias("$deferr", "$stderr");
+    }
+    
+    private static RubyIO getRubyIO(Ruby runtime, Writer writer) throws IOException, BadDescriptorException {
+        PrintStream pstream = new PrintStream(new WriterOutputStream(writer), true);
+        RubyIO io = new RubyIO(runtime, pstream, false);
+        io.getOpenFile().getMainStreamSafe().setSync(true);
+        io.getOpenFile().getMainStreamSafe().fflush();
+        return io;
+    }
 
     static void postEval(ScriptingContainer container, ScriptContext context) {
         if (context == null) return;
-        Object receiver = getReceiverObject(context);
-        
+        Object receiver = Utils.getReceiverObject(context);
+
         Bindings engineMap = context.getBindings(ScriptContext.ENGINE_SCOPE);
         int size = engineMap.keySet().size();
         String[] names = engineMap.keySet().toArray(new String[size]);
-        for (int i=0; i<names.length; i++) {
-            if (shouldLVarBeDeleted(container, names[i])) {
-                engineMap.remove(names[i]);
+        Iterator<Map.Entry<String, Object>> iter = engineMap.entrySet().iterator();
+        for (;iter.hasNext();) {
+            Map.Entry<String, Object> entry = iter.next();
+            if (Utils.shouldLVarBeDeleted(container, entry.getKey())) {
+                iter.remove();
             }
         }
         Set<String> keys = container.getVarMap().keySet();
         if (keys != null && keys.size() > 0) {
             for (String key : keys) {
                 Object value = container.getVarMap().get(key);
-                engineMap.put(adjustKey(key), value);
+                engineMap.put(Utils.adjustKey(key), value);
             }
         }
 
-        Bindings globalMap = context.getBindings(ScriptContext.ENGINE_SCOPE);
+        Bindings globalMap = context.getBindings(ScriptContext.GLOBAL_SCOPE);
         if (globalMap == null) return;
         keys = globalMap.keySet();
         if (keys != null && keys.size() > 0) {
@@ -145,8 +209,8 @@ public class Utils {
 
     private static Object put(ScriptingContainer container, Object receiver, String key, Object value, ScriptContext context) {
         Object oldValue = null;
-        String adjustedKey = adjustKey(key);
-        if (isRubyVariable(container, adjustedKey)) {
+        String adjustedKey = Utils.adjustKey(key);
+        if (Utils.isRubyVariable(container, adjustedKey)) {
             boolean sharing_variables = true;
             Object obj = context.getAttribute(AttributeName.SHARING_VARIABLES.toString(), ScriptContext.ENGINE_SCOPE);
             if (obj != null && obj instanceof Boolean && ((Boolean) obj) == false) {

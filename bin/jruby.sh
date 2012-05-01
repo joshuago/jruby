@@ -52,7 +52,7 @@ fi
 
 JRUBY_OPTS_SPECIAL="--ng" # space-separated list of special flags
 unset JRUBY_OPTS_TEMP
-function process_special_opts {
+process_special_opts() {
     case $1 in
         --ng) nailgun_client=true;;
         *) break;;
@@ -139,10 +139,12 @@ if [ -z "$JAVA_MEM" ] ; then
 fi
 
 if [ -z "$JAVA_STACK" ] ; then
-  JAVA_STACK=-Xss1024k
+  JAVA_STACK=-Xss2048k
 fi
 
-JAVA_VM=-client
+if [ -z "$JAVA_VM" ]; then
+  JAVA_VM=-client
+fi
 JAVA_ENCODING=""
 
 #declare -a java_args
@@ -258,7 +260,7 @@ set -- "${ruby_args}"
 JAVA_OPTS="$JAVA_OPTS $JAVA_MEM $JAVA_STACK"
 
 JFFI_BOOT=""
-if [ -d $JRUBY_HOME/lib/native/ ]; then
+if [ -d "$JRUBY_HOME/lib/native/" ]; then
   for d in $JRUBY_HOME/lib/native/*`uname -s`; do
     if [ -z "$JFFI_BOOT" ]; then
       JFFI_BOOT="$d"

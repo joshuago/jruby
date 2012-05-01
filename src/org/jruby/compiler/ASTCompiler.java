@@ -163,6 +163,10 @@ import org.jruby.util.StringSupport;
 public class ASTCompiler {
     private boolean isAtRoot = true;
 
+    protected boolean is1_9() {
+        return false;
+    }
+
     public void compileBody(Node node, BodyCompiler context, boolean expr) {
         Node oldBodyNode = currentBodyNode;
         currentBodyNode = node;
@@ -847,12 +851,14 @@ public class ASTCompiler {
 
         if (argsCallback != null && argsCallback.getArity() == 1) {
             Node argument = callNode.getArgsNode().childNodes().get(0);
-            if (MethodIndex.hasFastOps(name)) {
-                if (argument instanceof FixnumNode) {
+            if (argument instanceof FixnumNode) {
+                if (MethodIndex.hasFastFixnumOps(name)) {
                     context.getInvocationCompiler().invokeBinaryFixnumRHS(name, receiverCallback, ((FixnumNode)argument).getValue());
                     if (!expr) context.consumeCurrentValue();
                     return;
-                } else if (argument instanceof FloatNode) {
+                }
+            } else if (argument instanceof FloatNode) {
+                if (MethodIndex.hasFastFloatOps(name)) {
                     context.getInvocationCompiler().invokeBinaryFloatRHS(name, receiverCallback, ((FloatNode)argument).getValue());
                     if (!expr) context.consumeCurrentValue();
                     return;
@@ -1095,22 +1101,12 @@ public class ASTCompiler {
                     if (foundType == null) foundType = FastSwitchType.SINGLE_CHAR_STRING;
 
                     continue;
-                } else {
-                    if (foundType != null && foundType != FastSwitchType.STRING) return null;
-                    if (foundType == null) foundType = FastSwitchType.STRING;
-
-                    continue;
                 }
             } else if (whenNode.getExpressionNodes() instanceof SymbolNode) {
                 SymbolNode symbolNode = (SymbolNode)whenNode.getExpressionNodes();
                 if (symbolNode.getName().length() == 1) {
                     if (foundType != null && foundType != FastSwitchType.SINGLE_CHAR_SYMBOL) return null;
                     if (foundType == null) foundType = FastSwitchType.SINGLE_CHAR_SYMBOL;
-
-                    continue;
-                } else {
-                    if (foundType != null && foundType != FastSwitchType.SYMBOL) return null;
-                    if (foundType == null) foundType = FastSwitchType.SYMBOL;
 
                     continue;
                 }
@@ -1135,10 +1131,10 @@ public class ASTCompiler {
         Map<CompilerCallback, int[]> switchCases = null;
         FastSwitchType switchType = getHomogeneousSwitchType(whenNodes);
         if (switchType != null && !RubyInstanceConfig.FULL_TRACE_ENABLED) {
-            // NOTE: Currently this optimization is limited to the following situations:
+            // NOTE: Currently this optimization is limited to the following scenarios:
             // * All expressions are int-ranged literal fixnums
-            // * All expressions are literal symbols
-            // * All expressions are literal strings
+            // * All expressions are single-character literal symbols
+            // * All expressions are single-character literal strings
             // If the case value is not of the same type as the when values, the
             // default === logic applies.
             switchCases = new HashMap<CompilerCallback, int[]>();
@@ -1405,7 +1401,6 @@ public class ASTCompiler {
             context.assignConstantInCurrent(constDeclNode.getName());
         } else if (constNode.getNodeType() == NodeType.COLON2NODE) {
             compile(((Colon2Node) constNode).getLeftNode(), context,true);
-            context.swapValues();
             context.assignConstantInModule(constDeclNode.getName());
         } else {// colon3, assign in Object
             context.assignConstantInObject(constDeclNode.getName());
@@ -2793,9 +2788,44 @@ public class ASTCompiler {
             };
             
             // normal
-            compile(actualCondition, context, true);
-            context.performBooleanBranch(trueCallback, falseCallback);
+            compileCondition(actualCondition, context, true);
+            context.performBooleanBranch2(trueCallback, falseCallback);
         }
+    }
+    
+    public void compileCondition(Node node, BodyCompiler context, boolean expr) {
+        switch (node.getNodeType()) {
+            case CALLNODE:
+            {
+                final CallNode callNode = (CallNode)node;
+                if (callNode.getArgsNode() != null) {
+                    List<Node> args = callNode.getArgsNode().childNodes();
+                    if (args.size() == 1 && args.get(0) instanceof FixnumNode) {
+                        final FixnumNode fixnumNode = (FixnumNode)args.get(0);
+
+                        if (callNode.getName().equals("<") ||
+                                callNode.getName().equals(">") ||
+                                callNode.getName().equals("<=") ||
+                                callNode.getName().equals(">=") ||
+                                callNode.getName().equals("==")) {
+                            context.getInvocationCompiler().invokeBinaryBooleanFixnumRHS(
+                                    callNode.getName(),
+                                    new CompilerCallback() {
+                                        public void call(BodyCompiler context) {
+                                            compile(callNode.getReceiverNode(), context, true);
+                                        }
+                                    },
+                                    fixnumNode.getValue());
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // otherwise normal call
+        compile(node, context, expr);
+        context.isTrue();
     }
 
     public void compileInstAsgn(Node node, BodyCompiler context, boolean expr) {
@@ -2911,7 +2941,7 @@ public class ASTCompiler {
 
         compile(matchNode.getRegexpNode(), context,true);
 
-        context.match();
+        context.match(is1_9());
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -2926,7 +2956,7 @@ public class ASTCompiler {
             }
         };
 
-        context.match2(value);
+        context.match2(value, is1_9());
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -2937,7 +2967,7 @@ public class ASTCompiler {
         compile(matchNode.getReceiverNode(), context,true);
         compile(matchNode.getValueNode(), context,true);
 
-        context.match3();
+        context.match3(is1_9());
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -3629,7 +3659,26 @@ public class ASTCompiler {
                     compile(realBody, context, true);
                     context.clearErrorInfo();
                 } else {
-                    context.storeExceptionInErrorInfo();
+                    // FIXME
+                    // This is using the static constant name being rescued to determine
+                    // whether to lazily wrap, where the interpreter actually uses the
+                    // runtime rescued type. This is a behavioral difference, but only
+                    // visible if someone is rescuing NativeException as some other name.
+                    // It should be fixed to do it "right" but as rescuing NativeException
+                    // is largely deprecated, this may be a non-issue.
+                    List<Node> exceptionNodes = null;
+                    if (exceptionList != null) {
+                        exceptionNodes = exceptionList.childNodes();
+                    }
+                    if (exceptionNodes != null &&
+                            exceptionNodes.size() == 1 &&
+                            exceptionNodes.get(0) instanceof ConstNode &&
+                            ((ConstNode) exceptionNodes.get(0)).getName().equals("NativeException")) {
+                        context.storeNativeExceptionInErrorInfo();
+                    } else {
+                        context.storeExceptionInErrorInfo();
+                    }
+
                     if (light) {
                         compile(rescueBodyNode.getBodyNode(), context, true);
                     } else {

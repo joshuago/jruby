@@ -16,7 +16,6 @@ import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.internal.runtime.methods.UndefinedMethod;
 import org.jruby.javasupport.util.RuntimeHelpers;
-import org.jruby.parser.LocalStaticScope;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.BlockBody;
 import org.jruby.runtime.CallSite;
@@ -37,14 +36,13 @@ public class RuntimeCache {
     public final StaticScope getScope(ThreadContext context, String varNamesDescriptor, int index) {
         StaticScope scope = scopes[index];
         if (scope == null) {
-            String[] scopeData = varNamesDescriptor.split(",");
-            String[] varNames = scopeData[0].split(";");
-            for (int i = 0; i < varNames.length; i++) {
-                varNames[i] = varNames[i].intern();
-            }
-            scope = scopes[index] = new LocalStaticScope(context.getCurrentScope().getStaticScope(), varNames);
+            scopes[index] = scope = RuntimeHelpers.createScopeForClass(context, varNamesDescriptor);
         }
         return scope;
+    }
+
+    public final StaticScope getScope(int index) {
+        return scopes[index];
     }
 
     public final CallSite getCallSite(int index) {
@@ -160,6 +158,11 @@ public class RuntimeCache {
             regexp = RubyRegexp.newRegexp(runtime, pattern.getByteList(), RegexpOptions.fromEmbeddedOptions(options));
             regexps[index] = regexp;
         }
+        return regexp;
+    }
+
+    public final RubyRegexp cacheRegexp(int index, RubyRegexp regexp) {
+        regexps[index] = regexp;
         return regexp;
     }
 
@@ -425,7 +428,7 @@ public class RuntimeCache {
 
     public IRubyObject reCacheFrom(RubyModule target, ThreadContext context, String name, int index) {
         Object newGeneration = context.getRuntime().getConstantInvalidator().getData();
-        IRubyObject value = target.getConstantFromNoConstMissing(name);
+        IRubyObject value = target.getConstantFromNoConstMissing(name, false);
         constants[index] = value;
         if (value != null) {
             constantGenerations[index] = newGeneration;

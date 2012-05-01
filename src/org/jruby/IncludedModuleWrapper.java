@@ -205,6 +205,11 @@ public final class IncludedModuleWrapper extends RubyClass {
     }
 
     @Override
+    protected ConstantEntry constantEntryFetch(String name) {
+        return delegate.constantEntryFetch(name);
+    }
+
+    @Override
     protected IRubyObject constantTableStore(String name, IRubyObject value) {
         // FIXME: legal here? may want UnsupportedOperationException
         return delegate.constantTableStore(name, value);
@@ -225,5 +230,15 @@ public final class IncludedModuleWrapper extends RubyClass {
     @Override
     public Collection<String> getConstantNames() {
         return delegate.getConstantNames();
+    }
+
+    @Override
+    public Collection<String> getConstantNames(boolean includePrivate) {
+        return delegate.getConstantNames(includePrivate);
+    }
+
+    @Override
+    public IRubyObject getAutoloadConstant(Ruby runtime, String name) {
+        return delegate.getAutoloadConstant(runtime, name);
     }
 }

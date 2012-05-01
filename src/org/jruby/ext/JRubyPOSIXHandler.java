@@ -10,9 +10,10 @@ import java.util.Map.Entry;
 import org.jruby.Ruby;
 import org.jruby.RubyHash;
 import org.jruby.common.IRubyWarnings.ID;
-import org.jruby.ext.posix.POSIXHandler;
+import jnr.posix.POSIXHandler;
 
 import jnr.constants.platform.Errno;
+import org.jruby.util.cli.Options;
 
 public class JRubyPOSIXHandler implements POSIXHandler {
     private final Ruby runtime;
@@ -23,7 +24,7 @@ public class JRubyPOSIXHandler implements POSIXHandler {
 
         boolean verbose = false;
         try {
-            verbose = Boolean.getBoolean("jruby.native.verbose");
+            verbose = Options.NATIVE_VERBOSE.load();
         } catch (SecurityException e) {
         }
         this.isVerbose = verbose;
@@ -38,7 +39,7 @@ public class JRubyPOSIXHandler implements POSIXHandler {
     }
 
     public void unimplementedError(String method) {
-        throw runtime.newNotImplementedError(method + " unsupported on this platform");
+        throw runtime.newNotImplementedError(method + " unsupported or native support failed to load");
     }
 
     public void warn(WARNING_ID id, String message, Object... data) {

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
+import org.jruby.RubyModule;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.java.proxies.ConcreteJavaProxy;
 import org.jruby.javasupport.JavaCallable;
@@ -187,12 +188,12 @@ public class CallableSelector {
 
             // dig out as many trailing args as possible that match varargs type
             int nonVarargs = types.length - 1;
-
+            
             // add one for vararg
             count += 1;
 
             // check remaining args
-            for (int i = 0; i < nonVarargs; i++) {
+            for (int i = 0; i < nonVarargs && i < args.length; i++) {
                 if (types[i].equals(argClass(args[i]))) {
                     count++;
                 }
@@ -242,6 +243,9 @@ public class CallableSelector {
 
     private static boolean exactMatch(ParameterTypes paramTypes, IRubyObject... args) {
         Class[] types = paramTypes.getParameterTypes();
+        
+        if (args.length != types.length) return false;
+        
         for (int i = 0; i < types.length; i++) {
             if (!EXACT.match(types[i], args[i])) {
                 return false;
@@ -279,6 +283,9 @@ public class CallableSelector {
 
     private static boolean assignableAndPrimitivable(ParameterTypes paramTypes, IRubyObject... args) {
         Class[] types = paramTypes.getParameterTypes();
+        
+        if (args.length != types.length) return false;
+        
         for (int i = 0; i < types.length; i++) {
             if (!(ASSIGNABLE.match(types[i], args[i]) && PRIMITIVABLE.match(types[i], args[i]))) {
                 return false;
@@ -289,6 +296,9 @@ public class CallableSelector {
 
     private static boolean assignableOrDuckable(ParameterTypes paramTypes, IRubyObject... args) {
         Class[] types = paramTypes.getParameterTypes();
+        
+        if (args.length != types.length) return false;
+        
         for (int i = 0; i < types.length; i++) {
             if (!(ASSIGNABLE.match(types[i], args[i]) || DUCKABLE.match(types[i], args[i]))) {
                 return false;
@@ -305,6 +315,11 @@ public class CallableSelector {
 
         Class varArgArrayType = types[types.length - 1];
         Class varArgType = varArgArrayType.getComponentType();
+        
+        // if there's no args, we only match when there's just varargs
+        if (args.length == 0) {
+            return types.length <= 1;
+        }
 
         // dig out as many trailing args as will fit, ensuring they match varargs type
         int nonVarargs = types.length - 1;
@@ -411,14 +426,13 @@ public class CallableSelector {
         return a.getJavaClass();
     }
 
-    public static RaiseException argTypesDoNotMatch(Ruby runtime, IRubyObject receiver, Object[] methods, Object... args) {
-        ArrayList<Class<?>> argTypes = new ArrayList<Class<?>>(args.length);
-
-        for (Object o : args) {
-            argTypes.add(argClassTypeError(o));
+    public static RaiseException argTypesDoNotMatch(Ruby runtime, IRubyObject receiver, JavaCallable[] methods, Object... args) {
+        Class[] argTypes = new Class[args.length];
+        for (int i = 0; i < args.length; i++) {
+            argTypes[i] = argClassTypeError(args[i]);
         }
 
-        return argumentError(runtime.getCurrentContext(), methods[0], receiver, argTypes);
+        return argumentError(runtime.getCurrentContext(), methods, receiver, argTypes);
     }
 
     private static Class argClassTypeError(Object object) {
@@ -432,10 +446,34 @@ public class CallableSelector {
         return object.getClass();
     }
 
-    private static RaiseException argumentError(ThreadContext context, Object method, IRubyObject receiver, List<Class<?>> argTypes) {
-        String methodName = (method instanceof JavaConstructor || method instanceof JavaProxyConstructor) ? "constructor" : ((JavaMethod)method).name().toString();
-
-        return context.getRuntime().newNameError("no " + methodName + " with arguments matching " +
-                argTypes + " on object " + receiver.callMethod(context, "inspect"), null);
+    private static RaiseException argumentError(ThreadContext context, ParameterTypes[] methods, IRubyObject receiver, Class[] argTypes) {
+        boolean constructor = methods[0] instanceof JavaConstructor || methods[0] instanceof JavaProxyConstructor;
+        
+        StringBuffer fullError = new StringBuffer();
+        fullError.append("no ");
+        if (constructor) {
+            fullError.append("constructor");
+        } else {
+            fullError.append("method '")
+                    .append(((JavaMethod)methods[0]).name().toString())
+                    .append("' ");
+        }
+        fullError.append("for arguments ")
+                .append(CodegenUtils.prettyParams(argTypes))
+                .append(" on ");
+        if (receiver instanceof RubyModule) {
+            fullError.append(((RubyModule)receiver).getName());
+        } else {
+            fullError.append(receiver.getMetaClass().getRealClass().getName());
+        }
+        
+        if (methods.length > 1) {
+            fullError.append("\n  available overloads:");
+            for (ParameterTypes method : methods) {
+                fullError.append("\n    " + CodegenUtils.prettyParams(method.getParameterTypes()));
+            }
+        }
+        
+        return context.runtime.newNameError(fullError.toString(), null);
     }
 }

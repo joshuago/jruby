@@ -65,7 +65,6 @@ import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.marshal.MarshalStream;
 import org.jruby.runtime.marshal.UnmarshalStream;
-import org.jruby.util.ByteList;
 import org.jruby.util.TypeConverter;
 import org.jruby.util.RecursiveComparator;
 
@@ -111,6 +110,7 @@ import static org.jruby.runtime.MethodIndex.HASH;
  */
 @JRubyClass(name = "Hash", include="Enumerable")
 public class RubyHash extends RubyObject implements Map {
+    public static final int DEFAULT_INSPECT_STR_SIZE = 20;
 
     public static RubyClass createHashClass(Ruby runtime) {
         RubyClass hashc = runtime.defineClass("Hash", runtime.getObject(), HASH_ALLOCATOR);
@@ -713,23 +713,34 @@ public class RubyHash extends RubyObject implements Map {
      *
      */
     private IRubyObject inspectHash(final ThreadContext context) {
-        final ByteList buffer = new ByteList();
-        buffer.append('{');
+        final RubyString str = RubyString.newStringLight(context.runtime, DEFAULT_INSPECT_STR_SIZE);
+        str.cat((byte)'{');
         final boolean[] firstEntry = new boolean[1];
 
         firstEntry[0] = true;
+        final boolean is19 = context.runtime.is1_9();
         visitAll(new Visitor() {
             public void visit(IRubyObject key, IRubyObject value) {
-                if (!firstEntry[0]) buffer.append(',').append(' ');
+                if (!firstEntry[0]) str.cat((byte)',').cat((byte)' ');
 
-                buffer.append(inspect(context, key).getByteList());
-                buffer.append('=').append('>');
-                buffer.append(inspect(context, value).getByteList());
+                RubyString inspectedKey = inspect(context, key);
+                RubyString inspectedValue = inspect(context, value);
+
+                if (is19) {
+                    str.cat19(inspectedKey);
+                    str.cat((byte)'=').cat((byte)'>');
+                    str.cat19(inspectedValue);
+                } else {
+                    str.cat(inspectedKey);
+                    str.cat((byte)'=').cat((byte)'>');
+                    str.cat(inspectedValue);
+                }
+                
                 firstEntry[0] = false;
             }
         });
-        buffer.append('}');
-        return getRuntime().newString(buffer);
+        str.cat((byte)'}');
+        return str;
     }
 
     /** rb_hash_inspect
@@ -824,7 +835,7 @@ public class RubyHash extends RubyObject implements Map {
             oldTable[j] = null;
             while (entry != null) {
                 RubyHashEntry next = entry.next;
-                entry.hash = entry.key.hashCode(); // update the hash value
+                entry.hash = hashValue(entry.key.hashCode()); // update the hash value
                 int i = bucketIndex(entry.hash, newTable.length);
                 entry.next = newTable[i];
                 newTable[i] = entry;
@@ -1054,6 +1065,8 @@ public class RubyHash extends RubyObject implements Map {
      */
     @JRubyMethod(required = 1, optional = 1)
     public IRubyObject fetch(ThreadContext context, IRubyObject[] args, Block block) {
+        Ruby runtime = context.runtime;
+
         if (args.length == 2 && block.isGiven()) {
             getRuntime().getWarnings().warn(ID.BLOCK_BEATS_DEFAULT_VALUE, "block supersedes default value argument");
         }
@@ -1061,7 +1074,13 @@ public class RubyHash extends RubyObject implements Map {
         IRubyObject value;
         if ((value = internalGet(args[0])) == null) {
             if (block.isGiven()) return block.yield(context, args[0]);
-            if (args.length == 1) throw getRuntime().newIndexError("key not found");
+            if (args.length == 1) {
+                if (runtime.is1_9()) {
+                    throw runtime.newKeyError("key not found: " + args[0]);
+                } else {
+                    throw runtime.newIndexError("key not found");
+                }
+            }
             return args[1];
         }
         return value;
@@ -1566,9 +1585,9 @@ public class RubyHash extends RubyObject implements Map {
      */
     @JRubyMethod(name = {"merge!", "update"}, required = 1, compat = RUBY1_9)
     public RubyHash merge_bang19(final ThreadContext context, final IRubyObject other, final Block block) {
-        final RubyHash otherHash = other.convertToHash();
         modify();
-
+        final RubyHash otherHash = other.convertToHash();
+        
         if (otherHash.empty_p().isTrue()) {
             return this;
         }

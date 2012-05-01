@@ -40,6 +40,7 @@ import org.jruby.RubyThread;
  */
 public class FutureThread implements ThreadLike {
     private volatile Future future;
+    private volatile Thread nativeThread;
     private RubyRunnable runnable;
     public RubyThread rubyThread;
     
@@ -59,10 +60,12 @@ public class FutureThread implements ThreadLike {
     public void start() {
         future = rubyThread.getRuntime().getExecutor().submit(new Runnable() {
             public void run() {
+                nativeThread = Thread.currentThread();
                 try {
                     runnable.run();
                 } finally {
                     rubyThread.getRuntime().getThreadService().dissociateThread(future);
+                    nativeThread = null;
                 }
             }
         });
@@ -148,23 +151,40 @@ public class FutureThread implements ThreadLike {
     }
     
     /**
-     * Jobs from the thread pool do not support setting priorities.
-     * 
-     * @return
+     * The current priority of the thread associated with this future.
+     *
+     * @return the current priority of the thread in which we this is running
      */
     public int getPriority() {
-        return 1;
+        if (nativeThread == null) {
+            return 1;
+        }
+
+        return nativeThread.getPriority();
     }
-    
+
+    /**
+     * Set the priority of the thread associated with this future.
+     *
+     * @param priority the new priority
+     */
     public void setPriority(int priority) {
-        //nativeThread.setPriority(priority);
+        if (nativeThread == null) {
+            return;
+        }
+
+        nativeThread.setPriority(priority);
     }
-    
+
     public boolean isCurrent() {
         return rubyThread == rubyThread.getRuntime().getCurrentContext().getThread();
     }
     
     public boolean isInterrupted() {
         return future.isCancelled();
+    }
+    
+    public Thread nativeThread() {
+        return nativeThread;
     }
 }

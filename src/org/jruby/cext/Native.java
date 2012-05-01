@@ -65,7 +65,7 @@ final class Native {
             INSTANCE = new Native(runtime);
             INSTANCE.load(runtime);
             GC.init(INSTANCE);
-        
+
         } else if (INSTANCE.runtime != runtime) {
             throw runtime.newRuntimeError("invalid runtime");
         }
@@ -98,7 +98,7 @@ final class Native {
         } else {
             System.loadLibrary(libName);
         }
-        
+
         // Register Qfalse, Qtrue, Qnil constants to avoid reverse lookups in native code
         GC.register(runtime.getFalse(), Handle.newHandle(runtime, runtime.getFalse(), getFalse()));
         GC.register(runtime.getTrue(), Handle.newHandle(runtime, runtime.getTrue(), getTrue()));
@@ -106,7 +106,7 @@ final class Native {
 
         initNative(runtime);
     }
-    
+
     /**
      * Tries loading the {@value #libName} library from the classpath, the JRuby Jar or the
      * jruby home in the file-system.
@@ -160,7 +160,7 @@ final class Native {
         }
         return dstFile;
     }
-    
+
     /**
      * Gets an <tt>InputStream</tt> representing the stub library image stored in
      * the jar file.
@@ -170,7 +170,7 @@ final class Native {
     private static final InputStream getCextLibraryStream() {
         String path = getCextLibraryPath();
         InputStream is = Native.class.getResourceAsStream(path);
-        
+
         if (is == null) {
             throw new UnsatisfiedLinkError("Could not locate jruby-cext (" + path + ") in jar file");
         }
@@ -218,22 +218,14 @@ final class Native {
     final native long callFunction(long fn, long data);
     final native IRubyObject callProcMethod(long fn, long args_ary);
 
+    static native void freeHandle(long handle);
     final native long newHandle(IRubyObject obj, int type);
     final native long newFixnumHandle(IRubyObject obj, long value);
     final native long newFloatHandle(IRubyObject obj, double value);
     final native long newIOHandle(IRubyObject obj, int fileno, int i);
 
     final native void gc();
-    final native Object pollGC();
-
     final native long getNil();
     final native long getTrue();
     final native long getFalse();
-
-    static native void freeHandle(long handle);
-
-    static native long newRString();
-    static native void freeRString(long address);
-    static native long newRArray();
-    static native void freeRArray(long address);
 }

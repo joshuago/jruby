@@ -70,6 +70,7 @@ public abstract class RubyInteger extends RubyNumeric {
         integer.setReifiedClass(RubyInteger.class);
         
         integer.kindOf = new RubyModule.KindOf() {
+            @Override
             public boolean isKindOf(IRubyObject obj, RubyModule type) {
                 return obj instanceof RubyInteger;
             }
@@ -99,10 +100,12 @@ public abstract class RubyInteger extends RubyNumeric {
         super(runtime, rubyClass, useObjectSpace);
     }     
 
+    @Deprecated
     public RubyInteger(Ruby runtime, RubyClass rubyClass, boolean useObjectSpace, boolean canBeTainted) {
         super(runtime, rubyClass, useObjectSpace, canBeTainted);
     }     
 
+    @Override
     public RubyInteger convertToInteger() {
     	return this;
     }
@@ -120,6 +123,7 @@ public abstract class RubyInteger extends RubyNumeric {
     /** int_int_p
      * 
      */
+    @Override
     @JRubyMethod(name = "integer?")
     public IRubyObject integer_p() {
         return getRuntime().getTrue();
@@ -339,6 +343,7 @@ public abstract class RubyInteger extends RubyNumeric {
         return this;
     }
 
+    @Override
     @JRubyMethod(name = "round", compat = CompatVersion.RUBY1_8)
     public IRubyObject round() {
         return this;
@@ -354,10 +359,16 @@ public abstract class RubyInteger extends RubyNumeric {
         int ndigits = RubyNumeric.num2int(arg);
         if (ndigits > 0) return RubyKernel.new_float(this, this);
         if (ndigits == 0) return this;
-        ndigits = -ndigits;
         Ruby runtime = context.getRuntime();
-        if (ndigits < 0) throw runtime.newArgumentError("ndigits out of range");
-        IRubyObject f = Numeric.int_pow(context, 10, ndigits);
+        
+        long bytes = (this instanceof RubyFixnum) ? 8 : RubyFixnum.fix2long(callMethod("size"));
+        /* If 10**N/2 > this, return 0 */
+        /* We have log_256(10) > 0.415241 and log_256(1/2)=-0.125 */
+        if (-0.415241 * ndigits - 0.125 > bytes) {
+            return RubyFixnum.zero(runtime);
+        }
+        
+        IRubyObject f = Numeric.int_pow(context, 10, -ndigits);
 
         if (this instanceof RubyFixnum && f instanceof RubyFixnum) {
             long x = ((RubyFixnum)this).getLongValue();
@@ -367,11 +378,14 @@ public abstract class RubyInteger extends RubyNumeric {
             x = (x + y / 2) / y * y;
             if (neg) x = -x;
             return RubyFixnum.newFixnum(runtime, x);
+        } else if (f instanceof RubyFloat) {
+            return RubyFixnum.zero(runtime);
         } else {
             IRubyObject h = f.callMethod(context, "/", RubyFixnum.two(runtime));
             IRubyObject r = callMethod(context, "%", f);
             IRubyObject n = callMethod(context, "-", r);
-            if (!r.callMethod(context, "<", h).isTrue()) n = n.callMethod(context, "+", f);
+            String op = callMethod(context, "<", RubyFixnum.zero(runtime)).isTrue() ? "<=" : "<";
+            if (!r.callMethod(context, op, h).isTrue()) n = n.callMethod(context, "+", f);
             return n;
         }
     }
@@ -444,11 +458,13 @@ public abstract class RubyInteger extends RubyNumeric {
         return context.getRuntime().newArray(f_gcd(context, this, other), f_lcm(context, this, other));
     }
 
+    @Override
     @JRubyMethod(name = "numerator", compat = CompatVersion.RUBY1_9)
     public IRubyObject numerator(ThreadContext context) {
         return this;
     }
 
+    @Override
     @JRubyMethod(name = "denominator", compat = CompatVersion.RUBY1_9)
     public IRubyObject denominator(ThreadContext context) {
         return RubyFixnum.one(context.getRuntime());

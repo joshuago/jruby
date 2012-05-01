@@ -31,6 +31,7 @@ import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyModule;
 import org.jruby.exceptions.JumpException;
+import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.builtin.IRubyObject;
 
@@ -43,6 +44,13 @@ public class CompiledBlock19 extends ContextAwareBlockBody {
     protected final CompiledBlockCallback19 callback;
     protected final boolean hasMultipleArgsHead;
     protected final String[] parameterList;
+
+    /**
+     * Whether the arguments "need splat".
+     *
+     * @see RuntimeHelpers#needsSplat19(int, boolean)
+     */
+    private final boolean needsSplat;
     
     public static Block newCompiledClosure(ThreadContext context, IRubyObject self, Arity arity,
             StaticScope scope, CompiledBlockCallback19 callback, boolean hasMultipleArgsHead, int argumentType) {
@@ -68,6 +76,7 @@ public class CompiledBlock19 extends ContextAwareBlockBody {
         this.callback = callback;
         this.hasMultipleArgsHead = hasMultipleArgsHead;
         this.parameterList = parameterList;
+        this.needsSplat = RuntimeHelpers.needsSplat19(arity().required(), !arity().isFixed());
     }
 
     @Override
@@ -171,37 +180,12 @@ public class CompiledBlock19 extends ContextAwareBlockBody {
         return nj.getValue() == null ? context.getRuntime().getNil() : (IRubyObject)nj.getValue();
     }
 
-    private IRubyObject[] setupBlockArgs(IRubyObject value, boolean alreadyArray) {
-        Arity arity = arity();
-        int requiredCount = arity.required();
-        boolean isRest = !arity.isFixed();
-        
-        IRubyObject[] parameters;
-        if (value == null) {
-            parameters = IRubyObject.NULL_ARRAY;
-        } else if (value instanceof RubyArray && (alreadyArray || (isRest && requiredCount > 0))) {
-            parameters = ((RubyArray) value).toJavaArray();
-        } else {
-            parameters = new IRubyObject[] { value };
-        }
-
-        return parameters;
+    private IRubyObject[] setupBlockArg(Ruby ruby, IRubyObject value, IRubyObject self) {
+        return setupBlockArgs(value, false);
     }
 
-    protected IRubyObject[] setupBlockArg(Ruby ruby, IRubyObject value, IRubyObject self) {
-        Arity arity = arity();
-        int requiredCount = arity.required();
-        boolean isRest = !arity.isFixed();
-
-        IRubyObject[] parameters;
-        if (value == null) {
-            parameters = IRubyObject.NULL_ARRAY;
-        } else if (value instanceof RubyArray && ((isRest && requiredCount > 0) || (!isRest && requiredCount > 1))) {
-            parameters = ((RubyArray) value).toJavaArray();
-        } else {
-            parameters = new IRubyObject[] { value };
-        }
-        return parameters;
+    private IRubyObject[] setupBlockArgs(IRubyObject value, boolean alreadyArray) {
+        return RuntimeHelpers.restructureBlockArgs19(value, needsSplat, alreadyArray);
     }
 
     public String getFile() {

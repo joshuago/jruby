@@ -69,11 +69,11 @@ public abstract class Type extends RubyObject {
         //
         // Add aliases in Type::*, NativeType::* and FFI::TYPE_*
         //
-        for (Map.Entry<String, IRubyObject> c : builtinClass.getConstantMap().entrySet()) {
-            if (c.getValue() instanceof Type.Builtin) {
-                typeClass.defineConstant(c.getKey(), c.getValue());
-                nativeType.defineConstant(c.getKey(), c.getValue());
-                ffiModule.defineConstant("TYPE_" + c.getKey(), c.getValue());
+        for (Map.Entry<String, RubyModule.ConstantEntry> c : builtinClass.getConstantMap().entrySet()) {
+            if (c.getValue().value instanceof Type.Builtin) {
+                typeClass.defineConstant(c.getKey(), c.getValue().value);
+                nativeType.defineConstant(c.getKey(), c.getValue().value);
+                ffiModule.defineConstant("TYPE_" + c.getKey(), c.getValue().value);
             }
         }
 
@@ -98,8 +98,9 @@ public abstract class Type extends RubyObject {
         } catch (UnsupportedOperationException ex) {
         }
     }
+
     public static final RubyClass getTypeClass(Ruby runtime) {
-        return runtime.getModule("FFI").getClass("Type");
+        return runtime.getFFI().typeClass;
     }
 
     /**
@@ -303,7 +304,7 @@ public abstract class Type extends RubyObject {
             case BUFFER_OUT:
             case POINTER:
             case STRING:
-            case RBXSTRING:
+            case TRANSIENT_STRING:
                 return true;
             default:
                 return false;

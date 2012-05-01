@@ -39,10 +39,16 @@ public final class Constants {
     public static final String RUBY_MAJOR_VERSION = "@version.ruby.major@";
     public static final String RUBY_VERSION = "@version.ruby@";
     public static final int    RUBY_PATCHLEVEL = Integer.parseInt("@version.ruby.patchlevel@");
+
     public static final String RUBY1_9_MAJOR_VERSION = "@version.ruby1_9.major@";
     public static final String RUBY1_9_VERSION = "@version.ruby1_9@";
     public static final int    RUBY1_9_PATCHLEVEL = Integer.parseInt("@version.ruby1_9.patchlevel@");
     public static final int    RUBY1_9_REVISION = Integer.parseInt("@version.ruby1_9.revision@");
+
+    public static final String RUBY2_0_MAJOR_VERSION = "@version.ruby2_0.major@";
+    public static final String RUBY2_0_VERSION = "@version.ruby2_0@";
+    public static final int    RUBY2_0_PATCHLEVEL = Integer.parseInt("@version.ruby2_0.patchlevel@");
+//    public static final int    RUBY2_0_REVISION = Integer.parseInt("@version.ruby2_0.revision@");
 
     public static final String COMPILE_DATE = "@build.date@";
     public static final String VERSION = "@version.jruby@";
@@ -53,6 +59,28 @@ public final class Constants {
     
     public static final String JODA_TIME_VERSION = "@joda.time.version@";
     public static final String TZDATA_VERSION = "@tzdata.version@";
+    
+    public static final String DEFAULT_RUBY_VERSION;
+    
+    /**
+     * Default size for chained compilation.
+     */
+    public static final int CHAINED_COMPILE_LINE_COUNT_DEFAULT = 500;
+    
+    /**
+     * The max count of active methods eligible for JIT-compilation.
+     */
+    public static final int JIT_MAX_METHODS_LIMIT = 4096;
+
+    /**
+     * The max size of JIT-compiled methods (full class size) allowed.
+     */
+    public static final int JIT_MAX_SIZE_LIMIT = 30000;
+
+    /**
+     * The JIT threshold to the specified method invocation count.
+     */
+    public static final int JIT_THRESHOLD = 50;
 
     @Deprecated
     public static final String JRUBY_PROPERTIES = "/org/jruby/jruby.properties";
@@ -60,6 +88,15 @@ public final class Constants {
     static {
         // This is populated here to avoid javac propagating the value to consumers
         REVISION = "@jruby.revision@";
+        String defaultRubyVersion = "@jruby.default.ruby.version@";
+        if (defaultRubyVersion.equals("1.8")) {
+            DEFAULT_RUBY_VERSION = "1.8";
+        } else if (defaultRubyVersion.equals("1.9")) {
+            DEFAULT_RUBY_VERSION = "1.9";
+        } else {
+            System.err.println("invalid version selected in build (\"" + defaultRubyVersion + "\"), using 1.8");
+            DEFAULT_RUBY_VERSION = "1.8";
+        }
     }
 
     private Constants() {}

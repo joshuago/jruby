@@ -33,6 +33,7 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.javasupport;
 
+import org.jruby.java.util.SystemPropertiesMap;
 import org.jruby.java.proxies.JavaInterfaceTemplate;
 import org.jruby.java.addons.KernelJavaAddons;
 import java.io.IOException;
@@ -67,6 +68,7 @@ import org.jruby.RubyObject;
 import org.jruby.RubyString;
 import org.jruby.RubyUnboundMethod;
 import org.jruby.exceptions.RaiseException;
+import org.jruby.java.util.SystemPropertiesMap;
 import org.jruby.javasupport.proxy.JavaProxyClass;
 import org.jruby.javasupport.proxy.JavaProxyConstructor;
 import org.jruby.javasupport.util.RuntimeHelpers;
@@ -76,7 +78,7 @@ import org.jruby.runtime.ThreadContext;
 import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.load.Library;
-import org.jruby.util.ClassProvider;
+import org.jruby.util.*;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyModule;
 import org.jruby.internal.runtime.methods.JavaMethod.JavaMethodN;
@@ -96,20 +98,17 @@ import org.jruby.java.proxies.MapJavaProxy;
 import org.jruby.java.proxies.InterfaceJavaProxy;
 import org.jruby.java.proxies.JavaProxy;
 import org.jruby.java.proxies.RubyObjectHolderProxy;
-import org.jruby.util.ClassCache;
 import org.jruby.util.ClassCache.OneShotClassLoader;
-import org.jruby.util.CodegenUtils;
-import org.jruby.util.IdUtil;
-import org.jruby.util.SafePropertyAccessor;
+import org.jruby.util.cli.Options;
 
 @JRubyModule(name = "Java")
 public class Java implements Library {
-    public static final boolean NEW_STYLE_EXTENSION = SafePropertyAccessor.getBoolean("jruby.ji.newStyleExtension", false);
-    public static final boolean OBJECT_PROXY_CACHE = SafePropertyAccessor.getBoolean("jruby.ji.objectProxyCache", true);
+    public static final boolean NEW_STYLE_EXTENSION = Options.JI_NEWSTYLEEXTENSION.load();
+    public static final boolean OBJECT_PROXY_CACHE = Options.JI_OBJECTPROXYCACHE.load();
 
     public void load(Ruby runtime, boolean wrap) throws IOException {
         createJavaModule(runtime);
-        runtime.getLoadService().require("builtin/javasupport");
+        runtime.getLoadService().require("jruby/java");
         
         // rewite ArrayJavaProxy superclass to point at Object, so it inherits Object behaviors
         RubyClass ajp = runtime.getClass("ArrayJavaProxy");
@@ -117,6 +116,15 @@ public class Java implements Library {
         ajp.includeModule(runtime.getEnumerable());
         
         RubyClassPathVariable.createClassPathVariable(runtime);
+
+        // modify ENV_JAVA to be a read/write version
+        Map systemProps = new SystemPropertiesMap();
+        runtime.getObject().setConstantQuiet(
+                "ENV_JAVA",
+                new MapJavaProxy(
+                        runtime,
+                        (RubyClass)Java.getProxyClass(runtime, JavaClass.get(runtime, SystemPropertiesMap.class)),
+                        systemProps));
     }
 
     public static RubyModule createJavaModule(Ruby runtime) {
@@ -172,9 +180,6 @@ public class Java implements Library {
         
         // add some base Java classes everyone will need
         runtime.getJavaSupport().setObjectJavaClass(JavaClass.get(runtime, Object.class));
-        
-        // finally, set JavaSupport.isEnabled to true
-        runtime.getJavaSupport().setActive(true);
 
         return javaModule;
     }
@@ -351,24 +356,33 @@ public class Java implements Library {
     }
 
     /**
+     * Same as Java#getInstance(runtime, rawJavaObject, false).
+     */
+    public static IRubyObject getInstance(Ruby runtime, Object rawJavaObject) {
+        return getInstance(runtime, rawJavaObject, false);
+    }
+    
+    /**
      * Returns a new proxy instance of a type corresponding to rawJavaObject's class,
      * or the cached proxy if we've already seen this object.  Note that primitives
      * and strings are <em>not</em> coerced to corresponding Ruby types; use
      * JavaUtil.convertJavaToUsableRubyObject to get coerced types or proxies as
      * appropriate.
      * 
-     * @param runtime
-     * @param rawJavaObject
-     * @return the new or cached proxy for the specified Java object
+     * @param runtime the JRuby runtime
+     * @param rawJavaObject the object to get a wrapper for
+     * @param forceCache whether to force the use of the proxy cache
+     * @return the new (or cached) proxy for the specified Java object
      * @see JavaUtil#convertJavaToUsableRubyObject
      */
-    public static IRubyObject getInstance(Ruby runtime, Object rawJavaObject) {
+    public static IRubyObject getInstance(Ruby runtime, Object rawJavaObject, boolean forceCache) {
         if (rawJavaObject != null) {
-            if (OBJECT_PROXY_CACHE) {
-                return runtime.getJavaSupport().getObjectProxyCache().getOrCreate(rawJavaObject,
-                        (RubyClass) getProxyClass(runtime, JavaClass.get(runtime, rawJavaObject.getClass())));
+            RubyClass proxyClass = (RubyClass) getProxyClass(runtime, JavaClass.get(runtime, rawJavaObject.getClass()));
+
+            if (OBJECT_PROXY_CACHE || forceCache || proxyClass.getCacheProxy()) {
+                return runtime.getJavaSupport().getObjectProxyCache().getOrCreate(rawJavaObject, proxyClass);
             } else {
-                return allocateProxy(rawJavaObject, (RubyClass)getProxyClass(runtime, JavaClass.get(runtime, rawJavaObject.getClass())));
+                return allocateProxy(rawJavaObject, proxyClass);
             }
         }
         return runtime.getNil();
@@ -535,14 +549,14 @@ public class Java implements Library {
     }
 
     public static class JavaProxyClassMethods {
-        @JRubyMethod(backtrace = true, meta = true)
+        @JRubyMethod(meta = true)
         public static IRubyObject java_method(ThreadContext context, IRubyObject proxyClass, IRubyObject rubyName) {
             String name = rubyName.asJavaString();
 
             return getRubyMethod(context, proxyClass, name);
         }
 
-        @JRubyMethod(backtrace = true, meta = true)
+        @JRubyMethod(meta = true)
         public static IRubyObject java_method(ThreadContext context, IRubyObject proxyClass, IRubyObject rubyName, IRubyObject argTypes) {
             String name = rubyName.asJavaString();
             RubyArray argTypesAry = argTypes.convertToArray();
@@ -551,7 +565,7 @@ public class Java implements Library {
             return getRubyMethod(context, proxyClass, name, argTypesClasses);
         }
 
-        @JRubyMethod(backtrace = true, meta = true)
+        @JRubyMethod(meta = true)
         public static IRubyObject java_send(ThreadContext context, IRubyObject recv, IRubyObject rubyName) {
             String name = rubyName.asJavaString();
             Ruby runtime = context.getRuntime();
@@ -560,7 +574,7 @@ public class Java implements Library {
             return method.invokeStaticDirect();
         }
 
-        @JRubyMethod(backtrace = true, meta = true)
+        @JRubyMethod(meta = true)
         public static IRubyObject java_send(ThreadContext context, IRubyObject recv, IRubyObject rubyName, IRubyObject argTypes) {
             String name = rubyName.asJavaString();
             RubyArray argTypesAry = argTypes.convertToArray();
@@ -575,7 +589,7 @@ public class Java implements Library {
             return method.invokeStaticDirect();
         }
 
-        @JRubyMethod(backtrace = true, meta = true)
+        @JRubyMethod(meta = true)
         public static IRubyObject java_send(ThreadContext context, IRubyObject recv, IRubyObject rubyName, IRubyObject argTypes, IRubyObject arg0) {
             String name = rubyName.asJavaString();
             RubyArray argTypesAry = argTypes.convertToArray();
@@ -591,7 +605,7 @@ public class Java implements Library {
             return method.invokeStaticDirect(arg0.toJava(argTypeClass));
         }
 
-        @JRubyMethod(required = 4, rest = true, backtrace = true, meta = true)
+        @JRubyMethod(required = 4, rest = true, meta = true)
         public static IRubyObject java_send(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
             Ruby runtime = context.getRuntime();
 
@@ -614,12 +628,12 @@ public class Java implements Library {
             return method.invokeStaticDirect(argsAry);
         }
 
-        @JRubyMethod(backtrace = true, meta = true, visibility = PRIVATE)
+        @JRubyMethod(meta = true, visibility = PRIVATE)
         public static IRubyObject java_alias(ThreadContext context, IRubyObject proxyClass, IRubyObject newName, IRubyObject rubyName) {
             return java_alias(context, proxyClass, newName, rubyName, context.getRuntime().newEmptyArray());
         }
 
-        @JRubyMethod(backtrace = true, meta = true, visibility = PRIVATE)
+        @JRubyMethod(meta = true, visibility = PRIVATE)
         public static IRubyObject java_alias(ThreadContext context, IRubyObject proxyClass, IRubyObject newName, IRubyObject rubyName, IRubyObject argTypes) {
             String name = rubyName.asJavaString();
             String newNameStr = newName.asJavaString();
@@ -914,27 +928,24 @@ public class Java implements Library {
             
             return packageModule;
         } else {
-            // upper case name, so most likely a class
-            final RubyModule javaModule = getProxyClass(runtime, JavaClass.forNameVerbose(runtime, fullName));
+            try {
+                // First char is upper case, so assume it's a class name
+                final RubyModule javaModule = getProxyClass(runtime, JavaClass.forNameVerbose(runtime, fullName));
+                
+                // save class in singletonized parent, so we don't come back here
+                memoizePackageOrClass(parentPackage, name, javaModule);
 
-            // save class in singletonized parent, so we don't come back here
-            memoizePackageOrClass(parentPackage, name, javaModule);
+                return javaModule;
+            } catch (Exception e) {
+                if (RubyInstanceConfig.UPPER_CASE_PACKAGE_NAME_ALLOWED) {
+                    // but for those not hip to conventions and best practices,
+                    // we'll try as a package
+                    return getJavaPackageModule(runtime, fullName);
+                } else {
+                    throw runtime.newNameError("uppercase package names not accessible this way (`" + fullName + "')", fullName);
+                }
+            }
 
-            return javaModule;
-
-        // FIXME: we should also support orgs that use capitalized package
-        // names (including, embarrassingly, the one I work for), but this
-        // should be enabled by a system property, as the expected default
-        // behavior for an upper-case value should be (and is) to treat it
-        // as a class name, and raise an exception if it's not found 
-
-//            try {
-//                return getProxyClass(runtime, JavaClass.forName(runtime, fullName));
-//            } catch (Exception e) {
-//                // but for those not hip to conventions and best practices,
-//                // we'll try as a package
-//                return getJavaPackageModule(runtime, fullName);
-//            }
         }
     }
 
@@ -989,13 +1000,16 @@ public class Java implements Library {
         } else {
             RubyModule javaModule = null;
             try {
-                javaModule = getProxyClass(runtime, JavaClass.forNameQuiet(runtime, name));
-            } catch (RaiseException re) { /* not a class */
-                RubyException rubyEx = re.getException();
-                if (rubyEx.kind_of_p(context, runtime.getStandardError()).isTrue()) {
-                    RuntimeHelpers.setErrorInfo(runtime, runtime.getNil());
-                }
-            } catch (Exception e) { /* not a class */ }
+                // we do loadJavaClass here to handle things like LinkageError through
+                Class cls = runtime.getJavaSupport().loadJavaClass(name);
+                javaModule = getProxyClass(runtime, JavaClass.get(runtime, cls));
+            } catch (ExceptionInInitializerError eiie) {
+                throw runtime.newNameError("cannot initialize Java class " + name, name, eiie, false);
+            } catch (LinkageError le) {
+                throw runtime.newNameError("cannot link Java class " + name, name, le, false);
+            } catch (SecurityException se) {
+                throw runtime.newSecurityError(se.getLocalizedMessage());
+            } catch (ClassNotFoundException e) { /* not a class */ }
 
             // upper-case package name
             // TODO: top-level upper-case package was supported in the previous (Ruby-based)
@@ -1100,6 +1114,7 @@ public class Java implements Library {
 
     public static IRubyObject newInterfaceImpl(final IRubyObject wrapper, Class[] interfaces) {
         final Ruby runtime = wrapper.getRuntime();
+        ClassDefiningClassLoader classLoader;
 
         Class[] tmp_interfaces = interfaces;
         interfaces = new Class[tmp_interfaces.length + 1];
@@ -1114,17 +1129,18 @@ public class Java implements Library {
             // so just use Proc's hashcode
             if (wrapper.getMetaClass().isSingleton() && wrapper.getMetaClass().getRealClass() == runtime.getProc()) {
                 interfacesHashCode = 31 * interfacesHashCode + runtime.getProc().hashCode();
+                classLoader = runtime.getJRubyClassLoader();
             } else {
                 // normal new class implementing interfaces
                 interfacesHashCode = 31 * interfacesHashCode + wrapper.getMetaClass().getRealClass().hashCode();
+                classLoader = new OneShotClassLoader(runtime.getJRubyClassLoader());
             }
             String implClassName = "org.jruby.gen.InterfaceImpl" + Math.abs(interfacesHashCode);
             Class proxyImplClass;
             try {
                 proxyImplClass = Class.forName(implClassName, true, runtime.getJRubyClassLoader());
             } catch (ClassNotFoundException cnfe) {
-                OneShotClassLoader oneShotClassLoader = new ClassCache.OneShotClassLoader(runtime.getJRubyClassLoader());
-                proxyImplClass = RealClassGenerator.createOldStyleImplClass(interfaces, wrapper.getMetaClass(), runtime, implClassName, oneShotClassLoader);
+                proxyImplClass = RealClassGenerator.createOldStyleImplClass(interfaces, wrapper.getMetaClass(), runtime, implClassName, classLoader);
             }
 
             try {

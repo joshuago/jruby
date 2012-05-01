@@ -14,38 +14,38 @@
 
   <properties>
     <jar.scope>provided</jar.scope>
-    <asm.version>3.3.1</asm.version>
+    <asm.version>4.0</asm.version>
   </properties>
 
   <dependencies>
     <!-- ASM comes with our source, and is included in the jar, but is rewritten to
          a jruby-specific package to avoid conflicts. -->
     <dependency>
-      <groupId>asm</groupId>
+      <groupId>org.ow2.asm</groupId>
       <artifactId>asm</artifactId>
       <version>${asm.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>asm</groupId>
+      <groupId>org.ow2.asm</groupId>
       <artifactId>asm-commons</artifactId>
       <version>${asm.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>asm</groupId>
+      <groupId>org.ow2.asm</groupId>
       <artifactId>asm-util</artifactId>
       <version>${asm.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>asm</groupId>
+      <groupId>org.ow2.asm</groupId>
       <artifactId>asm-analysis</artifactId>
       <version>${asm.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>asm</groupId>
+      <groupId>org.ow2.asm</groupId>
       <artifactId>asm-tree</artifactId>
       <version>${asm.version}</version>
       <scope>provided</scope>
@@ -57,74 +57,74 @@
     <dependency>
       <groupId>org.jruby.joni</groupId>
       <artifactId>joni</artifactId>
-      <version>1.1.6</version>
-      <scope>${jar.scope}</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jruby.extras</groupId>
-      <artifactId>jnr-netdb</artifactId>
-      <version>1.0.3</version>
-      <scope>${jar.scope}</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.jruby.ext.posix</groupId>
-      <artifactId>jnr-posix</artifactId>
       <version>1.1.7</version>
+      <scope>${jar.scope}</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.github.jnr</groupId>
+      <artifactId>jnr-netdb</artifactId>
+      <version>1.0.6</version>
+      <scope>${jar.scope}</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.github.jnr</groupId>
+      <artifactId>jnr-posix</artifactId>
+      <version>2.1</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
       <groupId>org.jruby.extras</groupId>
       <artifactId>bytelist</artifactId>
-      <version>1.0.8</version>
+      <version>1.0.10</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
-      <groupId>org.jruby.extras</groupId>
+      <groupId>com.github.jnr</groupId>
       <artifactId>jnr-constants</artifactId>
-      <version>0.8.1</version>
+      <version>0.8.3</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
       <groupId>org.jruby.jcodings</groupId>
       <artifactId>jcodings</artifactId>
-      <version>1.0.5</version>
+      <version>1.0.7</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
-      <groupId>org.jruby.extras</groupId>
+      <groupId>com.github.jnr</groupId>
       <artifactId>jffi</artifactId>
-      <version>1.0.10</version>
+      <version>1.2.1</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
-      <groupId>org.jruby.extras</groupId>
+      <groupId>com.github.jnr</groupId>
       <artifactId>jffi</artifactId>
-      <version>1.0.10</version>
+      <version>1.1.0</version>
       <scope>runtime</scope>
       <classifier>native</classifier>
     </dependency>
     <dependency>
-      <groupId>org.jruby.extras</groupId>
-      <artifactId>jaffl</artifactId>
-      <version>0.5.9</version>
+      <groupId>com.github.jnr</groupId>
+      <artifactId>jnr-ffi</artifactId>
+      <version>0.7.2</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
       <groupId>org.yaml</groupId>
       <artifactId>snakeyaml</artifactId>
-      <version>1.8</version>
+      <version>1.10</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
       <groupId>jline</groupId>
       <artifactId>jline</artifactId>
-      <version>1.0</version>
+      <version>2.7</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>
       <groupId>joda-time</groupId>
       <artifactId>joda-time</artifactId>
-      <version>1.6</version>
+      <version>2.1</version>
       <scope>${jar.scope}</scope>
     </dependency>
     <dependency>

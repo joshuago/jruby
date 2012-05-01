@@ -38,8 +38,8 @@ import static org.jruby.RubyEnumerator.enumeratorize;
 
 import org.jruby.anno.JRubyMethod;
 import org.jruby.exceptions.RaiseException;
-import org.jruby.ext.posix.FileStat;
-import org.jruby.ext.posix.util.Platform;
+import jnr.posix.FileStat;
+import jnr.posix.util.Platform;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.IAccessor;
 import org.jruby.runtime.ThreadContext;
@@ -87,7 +87,7 @@ public class RubyArgsFile {
                         currentFile = runtime.getGlobalVariables().get("$stdin");
                     } else {
                         currentFile = RubyFile.open(context, runtime.getFile(), new IRubyObject[]{filename}, Block.NULL_BLOCK);
-                        String extension = runtime.getInstanceConfig().getInPlaceBackupExtention();
+                        String extension = runtime.getInstanceConfig().getInPlaceBackupExtension();
                         if (extension != null) {
                             if (Platform.IS_WINDOWS) {
                                 inplaceEditWindows(context, filename.asJavaString(), extension);
@@ -141,7 +141,7 @@ public class RubyArgsFile {
                 ((RubyIO) currentFile).close(); // we can't rename a file while it's open in windows
                 backupFile.delete();
                 file.renameTo(backupFile);
-                currentFile = (RubyIO) RubyFile.open(context, runtime.getFile(), //reopen
+                currentFile = RubyFile.open(context, runtime.getFile(), //reopen
                         new IRubyObject[]{runtime.newString(backup)}, Block.NULL_BLOCK);
             } else {
                 throw runtime.newIOError("Windows doesn't support inplace editing without a backup");
@@ -149,7 +149,7 @@ public class RubyArgsFile {
 
             createNewFile(file);
 
-            runtime.getGlobalVariables().set("$stdout", (RubyIO) RubyFile.open(context, runtime.getFile(),
+            runtime.getGlobalVariables().set("$stdout", RubyFile.open(context, runtime.getFile(),
                     new IRubyObject[]{runtime.newString(filename), runtime.newString("w")}, Block.NULL_BLOCK));
         }
 

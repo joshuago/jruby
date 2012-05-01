@@ -18,17 +18,16 @@ test_block_arg_processing
 test_caller
 test_case
 test_class
-test_command_line_switches
 test_comparable
 test_core_arities
 test_crazy_blocks
 test_custom_enumerable
 test_cvars_in_odd_scopes
-test_date_time
 test_defined
 test_default_constants
 test_delegated_array_equals
 test_dir
+test_dir_with_jar_without_dir_entry
 test_digest_lazy_load
 test_digest_extend
 test_digest2
@@ -56,9 +55,7 @@ test_java_accessible_object
 test_java_extension
 test_java_wrapper_deadlock
 test_jruby_internals
-test_jruby_4084
 compiler/test_jrubyc
-test_launching_by_shell_script
 #test_local_jump_error
 test_marshal_with_instance_variables
 test_marshal_gemspec
@@ -74,7 +71,6 @@ test_random
 test_rbconfig
 test_require_once
 test_respond_to
-test_ri
 test_socket
 test_string_java_bytes
 test_string_printf
@@ -122,3 +118,4 @@ test_jar_file
 # Not sure how to test this, since soft references take too long to collect
 #test_thread_service
 test_jruby_synchronized
+test_instantiating_interfaces

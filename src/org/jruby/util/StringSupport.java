@@ -57,6 +57,17 @@ public final class StringSupport {
             return null;
         }
     }
+    
+    public static String codeRangeAsString(int codeRange) {
+        switch (codeRange) {
+            case CR_UNKNOWN: return "unknown";
+            case CR_7BIT: return "7bit";
+            case CR_VALID: return "valid";
+            case CR_BROKEN: return "broken";
+        }
+        
+        return "???";  // Not reached unless something seriously boned
+    }
 
     // rb_enc_mbclen
     public static int length(Encoding enc, byte[]bytes, int p, int end) {
@@ -313,7 +324,7 @@ public final class StringSupport {
 
         if (enc.isAsciiCompatible()) {
             int c = bytes[p] & 0xff;
-            if (!Encoding.isAscii(c)) pack(-1, len);
+            if (!Encoding.isAscii(c)) return pack(-1, len);
             return pack(c, len == 0 ? 0 : 1);
         } else {
             int cl = preciseLength(enc, bytes, p, end);
@@ -484,4 +495,31 @@ public final class StringSupport {
             }
         }
     }
+
+    public static boolean isUnicode(Encoding enc) {
+        byte[] name = enc.getName();
+        return name.length > 4 && name[0] == 'U' && name[1] == 'T' && name[2] == 'F' && name[4] != '7'; 
+    }
+
+    public static String escapedCharFormat(int c, boolean isUnicode) {
+        String format;
+        if (isUnicode) {
+
+            if (c < 0x7F && Encoding.isAscii(c) && ASCIIEncoding.INSTANCE.isPrint(c)) {
+                format = "%c"; 
+            } else if (c < 0x10000) {
+                format = "\\u%04X";
+            } else {
+                format = "\\u{%X}";
+            }
+        } else {
+            if (c < 0x100) {
+                format = "\\x%02X";
+            } else {
+                format = "\\x{%X}";
+            }
+        }
+        return format;
+    }
+
 }

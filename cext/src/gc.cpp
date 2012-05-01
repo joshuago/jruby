@@ -45,6 +45,24 @@ rb_gc_mark_locations(VALUE* first, VALUE* last)
     }
 }
 
+static void
+gc_mark_children(Handle* h)
+{
+    switch (h->getType()) {
+        case T_ARRAY:
+            dynamic_cast<RubyArray *>(h)->markElements();
+            break;
+
+        case T_DATA: {
+            RData* rdata = dynamic_cast<RubyData *>(h)->toRData();
+            if (rdata->dmark != NULL) {
+	        (*rdata->dmark)(rdata->data);
+	    }
+            break;
+        }
+    }
+}
+
 extern "C" void
 rb_gc_mark(VALUE v)
 {
@@ -56,6 +74,7 @@ rb_gc_mark(VALUE v)
     Handle* h = Handle::valueOf(v);
     if ((h->flags & FL_MARK) == 0) {
         h->flags |= FL_MARK;
+        gc_mark_children(h);
     }
 }
 
@@ -68,7 +87,7 @@ rb_gc_mark_maybe(VALUE v)
 
     Handle* h;
     TAILQ_FOREACH(h, &liveHandles, all) {
-        if ((VALUE) h == v) {
+        if (h->asValue() == v) {
             rb_gc_mark(v);
             break;
         }
@@ -87,6 +106,12 @@ rb_gc_unregister_address(VALUE *addr)
     globalVariables.remove(addr);
 }
 
+extern "C" void 
+rb_gc() 
+{
+    // We'll let the Java GC decide when to run
+}
+
 extern "C" void
 rb_global_variable(VALUE *var)
 {
@@ -101,51 +126,42 @@ rb_global_variable(VALUE *var)
 extern "C" JNIEXPORT void JNICALL
 Java_org_jruby_cext_Native_gc(JNIEnv* env, jobject self)
 {
-    RubyData* dh;
     Handle* h;
 
-    TAILQ_FOREACH(dh, &dataHandles, dataList) {
-        RData* rdata = dh->toRData();
-        if ((dh->flags & FL_MARK) == 0 && rdata->dmark != NULL) {
-            dh->flags |= FL_MARK;
-            (*rdata->dmark)(rdata->data);
-            dh->flags &= ~FL_MARK;
-        }
-    }
-
     /*
-     * Set the mark flag on all global vars, so they don't get pruned out
+     * Mark on all global vars, so they don't get pruned out
      */
     for (std::list<VALUE*>::iterator it = globalVariables.begin(); it != globalVariables.end(); ++it) {
         VALUE* vp = *it;
-        if (vp != NULL && !SPECIAL_CONST_P(*vp)) {
-            reinterpret_cast<Handle*>(*vp)->flags |= FL_MARK;
+        rb_gc_mark(*vp);
+    }
+    
+    /*
+     * Mark the children of all handles, but not the handle itself, so if it 
+     * is not referenced by other handles, it can be pruned.
+     */
+    TAILQ_FOREACH(h, &liveHandles, all) {
+        if ((h->flags & FL_MARK) == 0) {
+            gc_mark_children(h);
         }
     }
 
-    for (h = TAILQ_FIRST(&liveHandles); h != TAILQ_END(&liveHandles); ) {
-        Handle* next = TAILQ_NEXT(h, all);
+    TAILQ_FOREACH(h, &liveHandles, all) {
 
         if ((h->flags & (FL_MARK | FL_CONST)) == 0) {
 
-            if (unlikely(h->getType() == T_DATA)) {
-                if ((h->flags & FL_WEAK) == 0) {
-                    h->flags |= FL_WEAK;
-                    jobject obj = env->NewWeakGlobalRef(h->obj);
-                    env->DeleteGlobalRef(h->obj);
-                    h->obj = obj;
-                }
-
-            } else {
-                TAILQ_REMOVE(&liveHandles, h, all);
-                TAILQ_INSERT_TAIL(&deadHandles, h, all);
-            }
+            h->makeWeak(env);
 
         } else if ((h->flags & FL_MARK) != 0) {
+	    // If the handle was marked, but was not strongly reffed, make it a strong ref again
+            if (h->isWeak()) {
+		jobject tmp = env->NewLocalRef(h->obj);
+		if (!env->IsSameObject(tmp, NULL)) {
+                    h->makeStrong(env);
+		}
+	    }
             h->flags &= ~FL_MARK;
         }
-
-        h = next;
     }
 }
 
@@ -157,15 +173,5 @@ Java_org_jruby_cext_Native_gc(JNIEnv* env, jobject self)
 extern "C" JNIEXPORT jobject JNICALL
 Java_org_jruby_cext_Native_pollGC(JNIEnv* env, jobject self)
 {
-    Handle* h = TAILQ_FIRST(&deadHandles);
-    if (h == TAILQ_END(&deadHandles)) {
-        return NULL;
-    }
-    TAILQ_REMOVE(&deadHandles, h, all);
-
-    jobject obj = env->NewLocalRef(h->obj);
-    env->DeleteGlobalRef(h->obj);
-    delete h;
-
-    return obj;
+    return NULL;
 }

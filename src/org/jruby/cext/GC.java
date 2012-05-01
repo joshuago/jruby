@@ -29,15 +29,20 @@
 package org.jruby.cext;
 
 import java.lang.ref.Reference;
-import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
+import org.jruby.RubyBasicObject;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.threading.DaemonThreadFactory;
 import org.jruby.util.SoftReferenceReaper;
+import org.jruby.util.WeakIdentityHashMap;
+import org.jruby.util.WeakReferenceReaper;
 
 /**
  * The cext {@link GC} keeps track of native handles and associates them with their corresponding Java objects
@@ -46,11 +51,12 @@ import org.jruby.util.SoftReferenceReaper;
  */
 public class GC {
 
-    private static final Map<Object, Handle> nativeHandles = new IdentityHashMap<Object, Handle>();
+    private static final Map<Object, Handle> nativeHandles = new WeakIdentityHashMap();
     private static final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(new DaemonThreadFactory());
     private static volatile Reference<Object> reaper = null;
     private static Runnable gcTask;
     private static volatile Future<?> gcFuture;
+    private static final AtomicInteger gcDisable = new AtomicInteger();
 
     /**
      * This is an upcall from the C++ stub to mark objects that are only strongly
@@ -71,22 +77,22 @@ public class GC {
     static void init(final Native n) {
         gcTask = new Runnable() {
             public void run() {
-                GIL.acquire();
-                try {
-                    n.gc();
-                    Object obj;
-                    while ((obj = n.pollGC()) != null) {
-                        nativeHandles.remove(obj);
+                if (gcDisable.get() == 0) {
+                    GIL.acquire();
+                    try {
+                        n.gc();
+                    } finally {
+                        GIL.releaseNoCleanup();
                     }
-                } finally {
-                    GIL.releaseNoCleanup();
                 }
             }
         };
     }
 
     static final Handle lookup(IRubyObject obj) {
-        return nativeHandles.get(obj);
+        return obj instanceof RubyBasicObject 
+                ? (Handle) ((RubyBasicObject) obj).getNativeHandle()
+                : nativeHandles.get(obj);
     }
 
     /**
@@ -94,7 +100,13 @@ public class GC {
      * @param obj
      */
     static final void register(IRubyObject obj, Handle h) {
-        nativeHandles.put(obj, h);
+        if (obj instanceof RubyBasicObject) {
+            ((RubyBasicObject) obj).setNativeHandle(h);
+        } else {
+            nativeHandles.put(obj, h);
+        }
+
+        Cleaner.register(h);
     }
 
     static final void cleanup() {
@@ -103,12 +115,22 @@ public class GC {
         // soft references.
         //
         if (reaper == null) {
-            reaper = new SoftReferenceReaper<Object>(new Object()) {
+            reaper = new WeakReferenceReaper<Object>(new Object()) {
                 public void run() {
                     reaper = null;
                     GC.trigger();
                 }
             };
+        }
+    }
+
+    static void disable() {
+        gcDisable.incrementAndGet();
+    }
+
+    static void enable() {
+        if (gcDisable.decrementAndGet() == 0) {
+            cleanup();
         }
     }
 }

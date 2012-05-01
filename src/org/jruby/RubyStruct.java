@@ -70,16 +70,14 @@ public class RubyStruct extends RubyObject {
      * @param runtime
      * @param rubyClass
      */
-    public RubyStruct(Ruby runtime, RubyClass rubyClass) {
+    private RubyStruct(Ruby runtime, RubyClass rubyClass) {
         super(runtime, rubyClass);
         
         int size = RubyNumeric.fix2int(getInternalVariable((RubyClass)rubyClass, "__size__"));
 
         values = new IRubyObject[size];
 
-        for (int i = 0; i < size; i++) {
-            values[i] = getRuntime().getNil();
-        }
+        RuntimeHelpers.fillNil(values, runtime);
     }
 
     public static RubyClass createStructClass(Ruby runtime) {
@@ -305,9 +303,14 @@ public class RubyStruct extends RubyObject {
             return RubyStruct.newStruct(recv, arg0, arg1, arg2, block);
         }
 
-        @JRubyMethod
+        @JRubyMethod(name = "members", compat = CompatVersion.RUBY1_8)
         public static IRubyObject members(IRubyObject recv, Block block) {
             return RubyStruct.members(recv, block);
+        }
+
+        @JRubyMethod(name = "members", compat = CompatVersion.RUBY1_9)
+        public static IRubyObject members19(IRubyObject recv, Block block) {
+            return RubyStruct.members19(recv, block);
         }
     }
 
@@ -428,9 +431,27 @@ public class RubyStruct extends RubyObject {
         return result;
     }
 
-    @JRubyMethod
+    public static RubyArray members19(IRubyObject recv, Block block) {
+        RubyArray member = (RubyArray) getInternalVariable((RubyClass) recv, "__member__");
+
+        assert !member.isNil() : "uninitialized struct";
+
+        RubyArray result = recv.getRuntime().newArray(member.getLength());
+        for (int i = 0,k=member.getLength(); i < k; i++) {
+            result.append(member.eltInternal(i));
+        }
+
+        return result;
+    }
+
+    @JRubyMethod(name = "members", compat = CompatVersion.RUBY1_8)
     public RubyArray members() {
         return members(classOf(), Block.NULL_BLOCK);
+    }
+
+    @JRubyMethod(name = "members", compat = CompatVersion.RUBY1_9)
+    public RubyArray members19() {
+        return members19(classOf(), Block.NULL_BLOCK);
     }
     
     @JRubyMethod

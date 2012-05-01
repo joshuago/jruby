@@ -28,10 +28,16 @@
 package org.jruby.runtime.load;
 
 import org.jruby.Ruby;
+import org.jruby.RubyString;
 import org.jruby.platform.Platform;
+import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.ThreadContext;
 import org.jruby.util.JRubyFile;
 
+import java.security.AccessControlException;
+
 public class LoadService19 extends LoadService {
+    private boolean canGetAbsolutePath = true;
     
     public LoadService19(Ruby runtime) {
         super(runtime);
@@ -39,15 +45,39 @@ public class LoadService19 extends LoadService {
 
     @Override
     protected String resolveLoadName(LoadServiceResource foundResource, String previousPath) {
-        String path = foundResource.getAbsolutePath();
-        if (Platform.IS_WINDOWS) {
-            path = path.replace('\\', '/');
+        if (canGetAbsolutePath) {
+            try {
+                String path = foundResource.getAbsolutePath();
+                if (Platform.IS_WINDOWS) {
+                    path = path.replace('\\', '/');
+                }
+                return path;
+            } catch (AccessControlException ace) {
+                // can't get absolute path in this security context, so we give up forever
+                runtime.getWarnings().warn("can't canonicalize loaded names due to security restrictions; disabling");
+                canGetAbsolutePath = false;
+            }
         }
-        return path;
+        return super.resolveLoadName(foundResource, previousPath);
     }
 
     @Override
     protected String getFileName(JRubyFile file, String nameWithSuffix) {
         return file.getAbsolutePath();
     }
+
+    @Override
+    protected String getLoadPathEntry(IRubyObject entry) {
+        RubyString entryString;
+        ThreadContext context = entry.getRuntime().getCurrentContext();
+
+        if (entry.respondsTo("to_path")) {
+            entryString = entry.callMethod(context, "to_path").convertToString();
+        } else {
+            entryString = entry.convertToString();
+        }
+
+        return entryString.asJavaString();
+    }
 }
+

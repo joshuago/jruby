@@ -58,7 +58,7 @@ public abstract class RubyToJavaInvoker extends JavaMethod {
             for (Member method: members) {
                 int currentArity = getMemberParameterTypes(method).length;
                 maxArity = Math.max(currentArity, maxArity);
-                List<JavaCallable> methodsForArity = (ArrayList<JavaCallable>)methodsMap.get(currentArity);
+                List<JavaCallable> methodsForArity = methodsMap.get(currentArity);
                 if (methodsForArity == null) {
                     methodsForArity = new ArrayList<JavaCallable>();
                     methodsMap.put(currentArity,methodsForArity);
@@ -98,9 +98,29 @@ public abstract class RubyToJavaInvoker extends JavaMethod {
         this.minVarargsArity = varargsArity;
         
         // if it's not overloaded, set up a NativeCall
-        if (javaCallable != null && javaCallable instanceof org.jruby.javasupport.JavaMethod) {
-            Method method = (Method)((org.jruby.javasupport.JavaMethod)javaCallable).getValue();
-            setNativeCall(method.getDeclaringClass(), method.getName(), method.getReturnType(), method.getParameterTypes(), Modifier.isStatic(method.getModifiers()), true);
+        if (javaCallable != null) {
+            // no constructor support yet
+            if (javaCallable instanceof org.jruby.javasupport.JavaMethod) {
+                org.jruby.javasupport.JavaMethod javaMethod = (org.jruby.javasupport.JavaMethod)javaCallable;
+                Method method = (Method)javaMethod.getValue();
+                // only public, since non-public don't bind
+                if (Modifier.isPublic(method.getModifiers()) && Modifier.isPublic(method.getDeclaringClass().getModifiers())) {
+                    setNativeCall(method.getDeclaringClass(), method.getName(), method.getReturnType(), method.getParameterTypes(), Modifier.isStatic(method.getModifiers()), true);
+                }
+            }
+        } else {
+            // use the lowest-arity non-overload
+            for (JavaCallable[] callablesForArity : javaCallables) {
+                if (callablesForArity != null
+                        && callablesForArity.length == 1
+                        && callablesForArity[0] instanceof org.jruby.javasupport.JavaMethod) {
+                    Method method = (Method)((org.jruby.javasupport.JavaMethod)callablesForArity[0]).getValue();
+                    // only public, since non-public don't bind
+                    if (Modifier.isPublic(method.getModifiers()) && Modifier.isPublic(method.getDeclaringClass().getModifiers())) {
+                        setNativeCall(method.getDeclaringClass(), method.getName(), method.getReturnType(), method.getParameterTypes(), Modifier.isStatic(method.getModifiers()), true);
+                    }
+                }
+            }
         }
     }
 
@@ -136,7 +156,9 @@ public abstract class RubyToJavaInvoker extends JavaMethod {
         int varargsCount = args.length - varargsStart;
 
         Object varargs;
-        if (varargsCount == 1 && args[varargsStart] instanceof ArrayJavaProxy) {
+        if (args.length == 0) {
+            return Array.newInstance(varargType, 0);
+        } else if (varargsCount == 1 && args[varargsStart] instanceof ArrayJavaProxy) {
             // we may have a pre-created array to pass; try that first
             varargs = args[varargsStart].toJava(varargArrayType);
         } else {

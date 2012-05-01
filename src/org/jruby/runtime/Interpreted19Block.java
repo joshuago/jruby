@@ -28,16 +28,13 @@
 package org.jruby.runtime;
 
 import org.jruby.Ruby;
-import org.jruby.RubyArray;
 import org.jruby.RubyModule;
+import org.jruby.ast.ArgsNoArgNode;
+import org.jruby.ast.ArgsNode;
 import org.jruby.ast.IterNode;
 import org.jruby.ast.LambdaNode;
 import org.jruby.ast.NilImplicitNode;
 import org.jruby.ast.Node;
-import org.jruby.ast.ArgsNoArgNode;
-import org.jruby.ast.ArgsNode;
-import org.jruby.ast.util.ArgsUtil;
-import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.evaluator.ASTInterpreter;
 import org.jruby.exceptions.JumpException;
 import org.jruby.javasupport.util.RuntimeHelpers;
@@ -61,6 +58,13 @@ public class Interpreted19Block  extends ContextAwareBlockBody {
 
     /** The argument list, pulled out of iterNode */
     private final ArgsNode args;
+
+    /**
+     * Whether the arguments "need splat".
+     *
+     * @see RuntimeHelpers#needsSplat19(int, boolean)
+     */
+    private final boolean needsSplat;
 
     /** The parameter names, for Proc#parameters */
     private final String[] parameterList;
@@ -88,6 +92,7 @@ public class Interpreted19Block  extends ContextAwareBlockBody {
         super(iterNode.getScope(), ((ArgsNode)iterNode.getVarNode()).getArity(), -1); // We override that the logic which uses this
 
         this.args = (ArgsNode)iterNode.getVarNode();
+        this.needsSplat = RuntimeHelpers.needsSplat19(args.getRequiredArgsCount(), args.getRestArg() != -1);
         this.parameterList = RuntimeHelpers.encodeParameterList(args).split(";");
         this.body = iterNode.getBodyNode() == null ? NilImplicitNode.NIL : iterNode.getBodyNode();
         this.position = iterNode.getPosition();
@@ -101,6 +106,7 @@ public class Interpreted19Block  extends ContextAwareBlockBody {
         super(lambdaNode.getScope(), lambdaNode.getArgs().getArity(), -1); // We override that the logic which uses this
 
         this.args = lambdaNode.getArgs();
+        this.needsSplat = RuntimeHelpers.needsSplat19(args.getRequiredArgsCount(), args.getRestArg() != -1);
         this.parameterList = RuntimeHelpers.encodeParameterList(args).split(";");
         this.body = lambdaNode.getBody() == null ? NilImplicitNode.NIL : lambdaNode.getBody();
         this.position = lambdaNode.getPosition();
@@ -221,71 +227,19 @@ public class Interpreted19Block  extends ContextAwareBlockBody {
         return nj.getValue() == null ? context.getRuntime().getNil() : (IRubyObject)nj.getValue();
     }
 
-    private IRubyObject convertIfAlreadyArray(ThreadContext context, IRubyObject value) {
-        int length = ArgsUtil.arrayLength(value);
-        switch (length) {
-        case 0:
-            value = context.getRuntime().getNil();
-            break;
-        case 1:
-            value = ((RubyArray)value).eltInternal(0);
-            break;
-        default:
-            context.getRuntime().getWarnings().warn(ID.MULTIPLE_VALUES_FOR_BLOCK, "multiple values for a block parameter (" + length + " for 1)");
-        }
-
-        return value;
-    }
-
     private void setupBlockArg(ThreadContext context, IRubyObject value, IRubyObject self, Block block, Block.Type type) {
-//        System.out.println("AA: (" + value + ")");
-        
-        int requiredCount = args.getRequiredArgsCount();
-        boolean isRest = args.getRestArg() != -1;
-
-        IRubyObject[] parameters;
-        if (value == null) {
-            parameters = IRubyObject.NULL_ARRAY;
-        } else if (value instanceof RubyArray && ((isRest && requiredCount > 0) || (!isRest && requiredCount > 1))) {
-            parameters = ((RubyArray) value).toJavaArray();
-        } else {
-            parameters = new IRubyObject[] { value };
-        }
-
-        if (!(args instanceof ArgsNoArgNode)) {
-            Ruby runtime = context.getRuntime();
-
-            // FIXME: This needs to happen for lambdas
-//            args.checkArgCount(runtime, parameters.length);
-            args.prepare(context, runtime, self, parameters, block);
-        }
+        setupBlockArgs(context, value, self, block, type, false);
     }
-    // . Array given to rest should pass itself
-    // . Array with rest + other args should extract array
-    // . Array with multiple values and NO rest should extract args if there are more than one argument
 
+    /**
+     * @see RuntimeHelpers#restructureBlockArgs19(IRubyObject, boolean, boolean)
+     */
     private void setupBlockArgs(ThreadContext context, IRubyObject value, IRubyObject self, Block block, Block.Type type, boolean alreadyArray) {
-//        System.out.println("AS: " + alreadyArray + "(" + value + ")");
+        IRubyObject[] parameters = RuntimeHelpers.restructureBlockArgs19(value, needsSplat, alreadyArray);
 
-        int requiredCount = args.getRequiredArgsCount();
-        boolean isRest = args.getRestArg() != -1;
-
-        IRubyObject[] parameters;
-        if (value == null) {
-            parameters = IRubyObject.NULL_ARRAY;
-        } else if (value instanceof RubyArray && (alreadyArray || (isRest && requiredCount > 0))) {
-            parameters = ((RubyArray) value).toJavaArray();
-        } else {
-            parameters = new IRubyObject[] { value };
-        }
-
-        if (!(args instanceof ArgsNoArgNode)) {
-            Ruby runtime = context.getRuntime();
-
-            // FIXME: This needs to happen for lambdas
-//            args.checkArgCount(runtime, parameters.length);
-            args.prepare(context, runtime, self, parameters, block);
-        }
+        Ruby runtime = context.getRuntime();        
+        if (type == Block.Type.LAMBDA) args.checkArgCount(runtime, parameters.length);        
+        if (!(args instanceof ArgsNoArgNode)) args.prepare(context, runtime, self, parameters, block);
     }
 
     public ArgsNode getArgs() {

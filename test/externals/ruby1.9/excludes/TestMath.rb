@@ -1,0 +1,6 @@
+exclude :test_acos, "needs investigation"
+exclude :test_acosh, "needs investigation"
+exclude :test_asin, "needs investigation"
+exclude :test_atan2, "needs investigation"
+exclude :test_atanh, "needs investigation"
+exclude :test_sqrt, "needs investigation"

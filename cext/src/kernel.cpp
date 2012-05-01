@@ -121,9 +121,16 @@ extern "C" void
 rb_define_alias(VALUE klass, const char* new_name, const char* old_name)
 {
     JLocalEnv env;
-    jmethodID mid = getMethodID(env, RubyModule_class, "defineAlias",
+    jmethodID mid = getCachedMethodID(env, RubyModule_class, "defineAlias",
             "(Ljava/lang/String;Ljava/lang/String;)V");
     env->CallVoidMethod(valueToObject(env, klass), mid, env->NewStringUTF(new_name),
             env->NewStringUTF(old_name));
     checkExceptions(env);
+}
+
+extern "C" VALUE
+rb_f_sprintf(int argc, const VALUE* argv)
+{
+    VALUE ary = rb_ary_new4(argc-1, argv+1);
+    return callMethod(argv[0], "%", 1, ary);
 }

@@ -30,18 +30,25 @@ package org.jruby.util;
 import java.math.BigInteger;
 import java.text.DecimalFormatSymbols;
 import java.text.NumberFormat;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
+import org.jcodings.Encoding;
+import org.jcodings.specific.UTF8Encoding;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyBignum;
 import org.jruby.RubyFixnum;
 import org.jruby.RubyFloat;
+import org.jruby.RubyHash;
 import org.jruby.RubyInteger;
 import org.jruby.RubyKernel;
 import org.jruby.RubyNumeric;
 import org.jruby.RubyString;
+import org.jruby.RubySymbol;
 import org.jruby.common.IRubyWarnings.ID;
+import org.jruby.runtime.Block;
 import org.jruby.runtime.ClassIndex;
 import org.jruby.runtime.builtin.IRubyObject;
 
@@ -81,13 +88,20 @@ public class Sprintf {
     private static final String ERR_MALFORMED_DOT_NUM = "malformed format string - %.[0-9]";
     private static final String ERR_MALFORMED_STAR_NUM = "malformed format string - %*[0-9]";
     private static final String ERR_ILLEGAL_FORMAT_CHAR = "illegal format character - %";
-    
+    private static final String ERR_MALFORMED_NAME = "malformed name - unmatched parenthesis";
+
+    private static final ThreadLocal<Map<Locale, NumberFormat>> LOCALE_NUMBER_FORMATS = new ThreadLocal<Map<Locale, NumberFormat>>() {
+        protected Map<Locale, NumberFormat> initialValue() {
+            return new HashMap<Locale, NumberFormat>();
+        }
+    };
     
     private static final class Args {
         private final Ruby runtime;
         private final Locale locale;
         private final IRubyObject rubyObject;
         private final RubyArray rubyArray;
+        private final RubyHash rubyHash;
         private final int length;
         private int unnumbered; // last index (+1) accessed by next()
         private int numbered;   // last index (+1) accessed by get()
@@ -97,11 +111,18 @@ public class Sprintf {
             this.locale = locale == null ? Locale.getDefault() : locale;
             this.rubyObject = rubyObject;
             if (rubyObject instanceof RubyArray) {
-                this.rubyArray = ((RubyArray)rubyObject);
+                this.rubyArray = (RubyArray)rubyObject;
+                this.rubyHash = null;
                 this.length = rubyArray.size();
+            } else if (rubyObject instanceof RubyHash && rubyObject.getRuntime().is1_9()) {
+                // allow a hash for args if in 1.9 mode
+                this.rubyHash = (RubyHash)rubyObject;
+                this.rubyArray = null;
+                this.length = -1;
             } else {
                 this.length = 1;
                 this.rubyArray = null;
+                this.rubyHash = null;
             }
             this.runtime = rubyObject.getRuntime();
         }
@@ -119,6 +140,10 @@ public class Sprintf {
         void raiseArgumentError(String message) {
             throw runtime.newArgumentError(message);
         }
+
+        void raiseKeyError(String message) {
+            throw runtime.newKeyError(message);
+        }
         
         void warn(ID id, String message) {
             runtime.getWarnings().warn(id, message);
@@ -128,7 +153,20 @@ public class Sprintf {
             if (runtime.isVerbose()) runtime.getWarnings().warning(id, message);
         }
         
-        IRubyObject next() {
+        IRubyObject next(ByteList name) {
+            // for 1.9 hash args
+            if (runtime.is1_9()) {
+                if (name != null) {
+                    if (rubyHash == null) raiseArgumentError("positional args mixed with named args");
+
+                    IRubyObject object = rubyHash.fastARef(runtime.newSymbol(name));
+                    if (object == null) raiseKeyError("key<" + name + "> not found");
+                    return object;
+                } else if (rubyHash != null) {
+                    raiseArgumentError("positional args mixed with named args");
+                }
+            }
+
             // this is the order in which MRI does these two tests
             if (numbered > 0) raiseArgumentError("unnumbered" + (unnumbered + 1) + "mixed with numbered");
             if (unnumbered >= length) raiseArgumentError("too few arguments");
@@ -138,6 +176,8 @@ public class Sprintf {
         }
         
         IRubyObject get(int index) {
+            // for 1.9 hash args
+            if (rubyHash != null) raiseArgumentError("positional args mixed with named args");
             // this is the order in which MRI does these tests
             if (unnumbered > 0) raiseArgumentError("numbered("+numbered+") after unnumbered("+unnumbered+")");
             if (index < 0) raiseArgumentError("invalid index - " + (index + 1) + '$');
@@ -151,11 +191,7 @@ public class Sprintf {
         }
         
         int nextInt() {
-            return intValue(next());
-        }
-        
-        int getInt(int index) {
-            return intValue(get(index));
+            return intValue(next(null));
         }
 
         int getNthInt(int formatIndex) {
@@ -218,7 +254,9 @@ public class Sprintf {
         int offset;
         int length;
         int start;
-        int mark;        
+        int mark;
+        ByteList name = null;
+        Encoding encoding = null;
 
         if (charFormat instanceof ByteList) {
             ByteList list = (ByteList)charFormat;
@@ -228,12 +266,14 @@ public class Sprintf {
             length = begin + list.length();
             start = begin;
             mark = begin;
+            encoding = list.getEncoding();
         } else {
             format = stringToBytes(charFormat, false);
             offset = 0;
             length = charFormat.length();
             start = 0;
-            mark = 0;             
+            mark = 0;
+            encoding = UTF8Encoding.INSTANCE;
         }
 
         while (offset < length) {
@@ -271,6 +311,51 @@ public class Sprintf {
                         raiseArgumentError(args,ERR_MALFORMED_FORMAT);
                     }
                     break;
+
+                case '<': {
+                    // Ruby 1.9 named args
+                    int nameStart = ++offset;
+                    int nameEnd = nameStart;
+
+                    for ( ; offset < length ; offset++) {
+                        if (format[offset] == '>') {
+                            nameEnd = offset;
+                            offset++;
+                            break;
+                        }
+                    }
+
+                    if (nameEnd == nameStart) raiseArgumentError(args, ERR_MALFORMED_NAME);
+
+                    ByteList oldName = name;
+                    name = new ByteList(format, nameStart, nameEnd - nameStart, encoding, false);
+
+                    if (oldName != null) raiseArgumentError(args, "name<" + name + "> after <" + oldName + ">");
+
+                    break;
+                }
+
+                case '{': {
+                    // Ruby 1.9 named replacement
+                    int nameStart = ++offset;
+                    int nameEnd = nameStart;
+
+                    for ( ; offset < length ; offset++) {
+                        if (format[offset] == '}') {
+                            nameEnd = offset;
+                            offset++;
+                            break;
+                        }
+                    }
+
+                    if (nameEnd == nameStart) raiseArgumentError(args, ERR_MALFORMED_NAME);
+
+                    ByteList localName = new ByteList(format, nameStart, nameEnd - nameStart, encoding, false);
+                    buf.append(args.next(localName).asString().getByteList());
+                    incomplete = false;
+
+                    break;
+                }
 
                 case ' ':
                     flags |= FLAG_SPACE;
@@ -398,7 +483,10 @@ public class Sprintf {
                     break;
 
                 case 'c': {
-                    if (arg == null) arg = args.next();
+                    if (arg == null || name != null) {
+                        arg = args.next(name);
+                        name = null;
+                    }
                     
                     int c = 0;
                     // MRI 1.8.5-p12 doesn't support 1-char strings, but
@@ -431,7 +519,10 @@ public class Sprintf {
                 }
                 case 'p':
                 case 's': {
-                    if (arg == null) arg = args.next();
+                    if (arg == null || name != null) {
+                        arg = args.next(name);
+                        name = null;
+                    }
 
                     if (fchar == 'p') {
                         arg = arg.callMethod(arg.getRuntime().getCurrentContext(),"inspect");
@@ -476,7 +567,10 @@ public class Sprintf {
                 case 'b':
                 case 'B':
                 case 'u': {
-                    if (arg == null) arg = args.next();
+                    if (arg == null || name != null) {
+                        arg = args.next(name);
+                        name = null;
+                    }
 
                     int type = arg.getMetaClass().index;
                     if (type != ClassIndex.FIXNUM && type != ClassIndex.BIGNUM) {
@@ -659,7 +753,10 @@ public class Sprintf {
                 case 'f':
                 case 'G':
                 case 'g': {
-                    if (arg == null) arg = args.next();
+                    if (arg == null || name != null) {
+                        arg = args.next(name);
+                        name = null;
+                    }
                     
                     if (!(arg instanceof RubyFloat)) {
                         // FIXME: what is correct 'recv' argument?
@@ -722,7 +819,7 @@ public class Sprintf {
                         break;
                     }
 
-                    NumberFormat nf = NumberFormat.getNumberInstance(args.locale);
+                    NumberFormat nf = getNumberFormat(args.locale);
                     nf.setMaximumFractionDigits(Integer.MAX_VALUE);
                     String str = nf.format(dval);
                     
@@ -1215,6 +1312,15 @@ public class Sprintf {
         }
 
         return tainted;
+    }
+    
+    public static NumberFormat getNumberFormat(Locale locale) {
+        NumberFormat format = LOCALE_NUMBER_FORMATS.get().get(locale);
+        if (format == null) {
+            format = NumberFormat.getNumberInstance(locale);
+            LOCALE_NUMBER_FORMATS.get().put(locale, format);
+        }
+        return format;
     }
 
     private static void writeExp(ByteList buf, int exponent, byte expChar) {

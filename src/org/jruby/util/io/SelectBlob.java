@@ -26,21 +26,26 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.util.io;
 
-import java.io.IOException;
-import java.nio.channels.CancelledKeyException;
-import java.nio.channels.Channel;
-import java.nio.channels.SelectableChannel;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.spi.SelectorProvider;
-import java.util.Iterator;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyFixnum;
 import org.jruby.RubyFloat;
 import org.jruby.RubyIO;
+import org.jruby.RubyThread;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+
+import java.io.IOException;
+import java.nio.channels.CancelledKeyException;
+import java.nio.channels.Channel;
+import java.nio.channels.IllegalBlockingModeException;
+import java.nio.channels.SelectableChannel;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
 
 /**
  * This is a reimplementation of MRI's IO#select logic. It has been rewritten
@@ -74,7 +79,14 @@ public class SelectBlob {
             // If all streams are nil, just sleep the specified time (JRUBY-4699)
             if (args[0].isNil() && args[1].isNil() && args[2].isNil()) {
                 if (timeout > 0) {
-                    context.getThread().sleep(timeout);
+                    RubyThread thread = context.getThread();
+                    long now = System.currentTimeMillis();
+                    thread.sleep(timeout);
+                    // Guard against spurious wakeup
+                    while (System.currentTimeMillis() < now + timeout) {
+                        thread.sleep(1);
+                    }
+
                 }
             } else {
                 doSelect(has_timeout, timeout);
@@ -114,11 +126,14 @@ public class SelectBlob {
                 readArray = null;
             } else {
                 readIOs = new RubyIO[readSize];
+                Map<Character,Integer> attachment = new HashMap<Character,Integer>(1);
                 for (int i = 0; i < readSize; i++) {
                     RubyIO ioObj = saveReadIO(i, context);
                     saveReadBlocking(ioObj, i);
-                    saveBufferedRead(ioObj, i);
-                    trySelectRead(context, i, ioObj);
+                    saveBufferedRead(ioObj, i);                    
+                    attachment.clear();
+                    attachment.put('r', i);
+                    trySelectRead(context, attachment, ioObj);
                 }
             }
         }
@@ -145,15 +160,15 @@ public class SelectBlob {
         }
     }
 
-    private void trySelectRead(ThreadContext context, int i, RubyIO ioObj) throws IOException {
-        if (ioObj.getChannel() instanceof SelectableChannel && registerSelect(context, getSelector(context), i, ioObj, SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) {
+    private void trySelectRead(ThreadContext context, Map<Character,Integer> attachment, RubyIO ioObj) throws IOException {
+        if (ioObj.getChannel() instanceof SelectableChannel && registerSelect(context, getSelector(context, (SelectableChannel)ioObj.getChannel()), attachment, ioObj, SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) {
             selectedReads++;
             if (ioObj.writeDataBuffered()) {
-                getPendingReads()[i] = true;
+                getPendingReads()[(Integer)attachment.get('r')] = true;
             }
         } else {
             if ((ioObj.getOpenFile().getMode() & OpenFile.READABLE) != 0) {
-                getUnselectableReads()[i] = true;
+                getUnselectableReads()[(Integer)attachment.get('r')] = true;
             }
         }
     }
@@ -169,10 +184,13 @@ public class SelectBlob {
                 writeArray = null;
             } else {
                 writeIOs = new RubyIO[writeSize];
+                Map<Character,Integer> attachment = new HashMap<Character,Integer>(1);
                 for (int i = 0; i < writeSize; i++) {
                     RubyIO ioObj = saveWriteIO(i, context);
                     saveWriteBlocking(ioObj, i);
-                    trySelectWrite(context, i, ioObj);
+                    attachment.clear();                    
+                    attachment.put('w', i);
+                    trySelectWrite(context, attachment, ioObj);
                 }
             }
         }
@@ -202,11 +220,12 @@ public class SelectBlob {
         }
     }
 
-    private void trySelectWrite(ThreadContext context, int i, RubyIO ioObj) throws IOException {
-        if (!registerSelect(context, getSelector(context), i, ioObj, SelectionKey.OP_WRITE)) {
+    private void trySelectWrite(ThreadContext context, Map<Character,Integer> attachment, RubyIO ioObj) throws IOException {
+        if (!(ioObj.getChannel() instanceof SelectableChannel)
+                || !registerSelect(context, getSelector(context, (SelectableChannel)ioObj.getChannel()), attachment, ioObj, SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT)) {
             selectedReads++;
             if ((ioObj.getOpenFile().getMode() & OpenFile.WRITABLE) != 0) {
-                getUnselectableWrites()[i] = true;
+                getUnselectableWrites()[(Integer)attachment.get('w')] = true;
             }
         }
     }
@@ -245,41 +264,53 @@ public class SelectBlob {
         }
     }
 
-    private void processSelectedKeys(Ruby runtime) {
+    @SuppressWarnings("unchecked")
+    private void processSelectedKeys(Ruby runtime) throws IOException {
         if (selector != null) {
             for (Iterator i = selector.selectedKeys().iterator(); i.hasNext();) {
                 SelectionKey key = (SelectionKey) i.next();
-                int ioIndex = (Integer) key.attachment();
+                int readIoIndex = 0;
+                int writeIoIndex = 0;
                 try {
                     int interestAndReady = key.interestOps() & key.readyOps();
-                    if (readArray != null && (interestAndReady & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT | SelectionKey.OP_CONNECT)) != 0) {
-                        getReadResults().append(readArray.eltOk(ioIndex));
+                    if (readArray != null && (interestAndReady & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0) {
+                        readIoIndex = ((Map<Character,Integer>)key.attachment()).get('r');
+                        getReadResults().append(readArray.eltOk(readIoIndex));
                         if (pendingReads != null) {
-                            pendingReads[ioIndex] = false;
+                            pendingReads[readIoIndex] = false;
                         }
                     }
-                    if (writeArray != null && (interestAndReady & (SelectionKey.OP_WRITE)) != 0) {
-                        getWriteResults().append(writeArray.eltOk(ioIndex));
+                    if (writeArray != null && (interestAndReady & (SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT)) != 0) {
+                        writeIoIndex = ((Map<Character,Integer>)key.attachment()).get('w');
+                        getWriteResults().append(writeArray.eltOk(writeIoIndex));
+
+                        // not-great logic for JRUBY-5165; we should move finishConnect into RubySocket logic, I think
+                        if (key.channel() instanceof SocketChannel) {
+                            SocketChannel socketChannel = (SocketChannel)key.channel();
+                            if (socketChannel.isConnectionPending()) {
+                                socketChannel.finishConnect();
+                            }
+                        }
                     }
                 } catch (CancelledKeyException cke) {
                     // TODO: is this the right thing to do?
                     int interest = key.interestOps();
                     if (readArray != null && (interest & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT | SelectionKey.OP_CONNECT)) != 0) {
                         if (pendingReads != null) {
-                            pendingReads[ioIndex] = false;
+                            pendingReads[readIoIndex] = false;
                         }
                         if (errorResults != null) {
                             errorResults = RubyArray.newArray(runtime, readArray.size() + writeArray.size());
                         }
-                        if (fastSearch(errorResults.toJavaArrayUnsafe(), readIOs[ioIndex]) == -1) {
+                        if (fastSearch(errorResults.toJavaArrayUnsafe(), readIOs[readIoIndex]) == -1) {
                             // only add to error if not there
-                            getErrorResults().append(readArray.eltOk(ioIndex));
+                            getErrorResults().append(readArray.eltOk(readIoIndex));
                         }
                     }
                     if (writeArray != null && (interest & (SelectionKey.OP_WRITE)) != 0) {
-                        if (fastSearch(errorResults.toJavaArrayUnsafe(), writeIOs[ioIndex]) == -1) {
+                        if (fastSearch(errorResults.toJavaArrayUnsafe(), writeIOs[writeIoIndex]) == -1) {
                             // only add to error if not there
-                            errorResults.append(writeArray.eltOk(ioIndex));
+                            errorResults.append(writeArray.eltOk(writeIoIndex));
                         }
                     }
                 }
@@ -319,14 +350,22 @@ public class SelectBlob {
         if (readBlocking != null) {
             for (int i = 0; i < readBlocking.length; i++) {
                 if (readBlocking[i] != null) {
-                    ((SelectableChannel) readIOs[i].getChannel()).configureBlocking(readBlocking[i]);
+                    try {
+                        ((SelectableChannel) readIOs[i].getChannel()).configureBlocking(readBlocking[i]);
+                    } catch (IllegalBlockingModeException ibme) {
+                        throw runtime.newConcurrencyError("can not set IO blocking after select; concurrent select detected?");
+                    }
                 }
             }
         }
         if (writeBlocking != null) {
             for (int i = 0; i < writeBlocking.length; i++) {
                 if (writeBlocking[i] != null) {
-                    ((SelectableChannel) writeIOs[i].getChannel()).configureBlocking(writeBlocking[i]);
+                    try {
+                        ((SelectableChannel) writeIOs[i].getChannel()).configureBlocking(writeBlocking[i]);
+                    } catch (IllegalBlockingModeException ibme) {
+                        throw runtime.newConcurrencyError("can not set IO blocking after select; concurrent select detected?");
+                    }
                 }
             }
         }
@@ -353,9 +392,9 @@ public class SelectBlob {
         return errorResults;
     }
 
-    private Selector getSelector(ThreadContext context) throws IOException {
+    private Selector getSelector(ThreadContext context, SelectableChannel channel) throws IOException {
         if (selector == null) {
-            selector = SelectorFactory.openWithRetryFrom(context.getRuntime(), SelectorProvider.provider());
+            selector = SelectorFactory.openWithRetryFrom(context.getRuntime(), channel.provider());
         }
         return selector;
     }
@@ -383,7 +422,7 @@ public class SelectBlob {
 
     private boolean[] getUnselectableWrites() {
         if (unselectableWrites == null) {
-            unselectableWrites = new boolean[readSize];
+            unselectableWrites = new boolean[writeSize];
         }
         return unselectableWrites;
     }
@@ -419,7 +458,8 @@ public class SelectBlob {
         }
     }
 
-    private static boolean registerSelect(ThreadContext context, Selector selector, Object obj, RubyIO ioObj, int ops) throws IOException {
+    @SuppressWarnings("unchecked")
+    private static boolean registerSelect(ThreadContext context, Selector selector, Map<Character,Integer> obj, RubyIO ioObj, int ops) throws IOException {
         Channel channel = ioObj.getChannel();
         if (channel == null || !(channel instanceof SelectableChannel)) {
             return false;
@@ -430,13 +470,19 @@ public class SelectBlob {
         SelectionKey key = ((SelectableChannel) channel).keyFor(selector);
 
         if (key == null) {
-            ((SelectableChannel) channel).register(selector, real_ops, obj);
+            Map<Character,Integer>  attachment = new HashMap<Character,Integer> (1);
+            attachment.putAll(obj);
+            ((SelectableChannel) channel).register(selector, real_ops, attachment );
         } else {
             key.interestOps(key.interestOps() | real_ops);
+            Map<Character,Integer> att = (Map<Character,Integer>)key.attachment();
+            att.putAll(obj);
+            key.attach(att);
         }
 
         return true;
     }
+    
     Ruby runtime;
     RubyArray readArray = null;
     int readSize = 0;

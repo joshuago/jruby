@@ -118,6 +118,7 @@ public class RubyNumeric extends RubyObject {
         super(runtime, metaClass, useObjectSpace);
     }    
 
+    @Deprecated
     public RubyNumeric(Ruby runtime, RubyClass metaClass, boolean useObjectSpace, boolean canBeTainted) {
         super(runtime, metaClass, useObjectSpace, canBeTainted);
     }    
@@ -429,7 +430,7 @@ public class RubyNumeric extends RubyObject {
         return args[0].callMethod(context, method, args[1]);
     }
 
-    protected IRubyObject callCoerced(ThreadContext context, String method, IRubyObject other) {
+    public IRubyObject callCoerced(ThreadContext context, String method, IRubyObject other) {
         IRubyObject[] args = getCoerced(context, other, false);
         if(args == null) {
             return getRuntime().getNil();
@@ -462,7 +463,10 @@ public class RubyNumeric extends RubyObject {
         }
     
         if (!(result instanceof RubyArray) || ((RubyArray) result).getLength() != 2) {
-            throw getRuntime().newTypeError("coerce must return [x, y]");
+            if (err) {
+                throw getRuntime().newTypeError("coerce must return [x, y]");
+            }
+            return null;
         }
         return (RubyArray) result;
     }
@@ -929,7 +933,7 @@ public class RubyNumeric extends RubyObject {
     public IRubyObject arg(ThreadContext context) {
         double value = this.getDoubleValue();
         if (Double.isNaN(value)) {
-            return RubyFloat.newFloat(context.getRuntime(), Double.NaN);
+            return this;
         }
         if (f_negative_p(context, this) || (value == 0.0 && 1/value == Double.NEGATIVE_INFINITY)) {
             // negative or -0.0

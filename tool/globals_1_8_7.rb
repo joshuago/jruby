@@ -70,7 +70,6 @@ STDLIB_FILES = %w[
   rubyunit.rb
   runit
   scanf.rb
-  securerandom.rb
   set.rb
   shell
   shell.rb
@@ -79,7 +78,6 @@ STDLIB_FILES = %w[
   soap
   sync.rb
   test
-  thread.rb
   thwait.rb
   time.rb
   tmpdir.rb

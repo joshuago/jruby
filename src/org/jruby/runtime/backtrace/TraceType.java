@@ -1,13 +1,14 @@
 package org.jruby.runtime.backtrace;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileDescriptor;
 import java.io.PrintStream;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
 import org.jruby.RubyException;
+import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyString;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -26,12 +27,37 @@ public class TraceType {
         this.format = format;
     }
 
+    /**
+     * Get a normal Ruby backtrace, using the current Gather type.
+     *
+     * @param context
+     * @param nativeException
+     * @return
+     */
     public BacktraceData getBacktrace(ThreadContext context, boolean nativeException) {
         return gather.getBacktraceData(context, nativeException);
     }
 
-    public String printBacktrace(RubyException exception) {
-        return format.printBacktrace(exception);
+    /**
+     * Get an integrated Ruby/Java backtrace if the current Gather type is NORMAL
+     *
+     * @param context
+     * @param javaTrace
+     * @return
+     */
+    public BacktraceData getIntegratedBacktrace(ThreadContext context, StackTraceElement[] javaTrace) {
+        return gather.getIntegratedBacktraceData(context, javaTrace);
+    }
+
+    public String printBacktrace(RubyException exception, boolean console) {
+        return format.printBacktrace(exception, console);
+    }
+
+    public static void logBacktrace(RubyStackTraceElement[] trace) {
+        LOG.info("Backtrace generated:");
+        for (RubyStackTraceElement element : trace) {
+            LOG.info("  " + element.getFileName() + ":" + element.getLineNumber() + " in " + element.getMethodName());
+        }
     }
     
     public static void dumpException(RubyException exception) {
@@ -39,7 +65,8 @@ public class TraceType {
     }
     
     public static void dumpBacktrace(RubyException exception) {
-        System.err.println("Backtrace generated:\n" + Format.JRUBY.printBacktrace(exception));
+        Ruby runtime = exception.getRuntime();
+        System.err.println("Backtrace generated:\n" + Format.JRUBY.printBacktrace(exception, runtime.getPosix().isatty(FileDescriptor.err)));
     }
     
     public static void dumpCaller(RubyArray trace) {
@@ -49,7 +76,9 @@ public class TraceType {
     public static TraceType traceTypeFor(String style) {
         if (style.equalsIgnoreCase("raw")) return new TraceType(Gather.RAW, Format.JRUBY);
         else if (style.equalsIgnoreCase("ruby_framed")) return new TraceType(Gather.NORMAL, Format.JRUBY);
-        else if (style.equalsIgnoreCase("rubinius")) return new TraceType(Gather.NORMAL, Format.RUBINIUS);
+        else if (style.equalsIgnoreCase("normal")) return new TraceType(Gather.NORMAL, Format.JRUBY);
+        // deprecated, just uses jruby format now
+        else if (style.equalsIgnoreCase("rubinius")) return new TraceType(Gather.NORMAL, Format.JRUBY);
         else if (style.equalsIgnoreCase("full")) return new TraceType(Gather.FULL, Format.JRUBY);
         else if (style.equalsIgnoreCase("mri")) return new TraceType(Gather.NORMAL, Format.MRI);
         else return new TraceType(Gather.NORMAL, Format.JRUBY);
@@ -60,13 +89,13 @@ public class TraceType {
          * Full raw backtraces with all Java frames included.
          */
         RAW {
-            public BacktraceData getBacktraceData(ThreadContext context, Thread thread, boolean nativeException) {
+            public BacktraceData getBacktraceData(ThreadContext context, StackTraceElement[] javaTrace, boolean nativeException) {
                 return new BacktraceData(
-                        thread.getStackTrace(),
+                        javaTrace,
                         new BacktraceElement[0],
                         true,
                         false,
-                        this);
+                        false);
             }
         },
 
@@ -74,13 +103,27 @@ public class TraceType {
          * A backtrace with interpreted frames intact, but don't remove Java frames.
          */
         FULL {
-            public BacktraceData getBacktraceData(ThreadContext context, Thread thread, boolean nativeException) {
+            public BacktraceData getBacktraceData(ThreadContext context, StackTraceElement[] javaTrace, boolean nativeException) {
         return new BacktraceData(
-                        thread.getStackTrace(),
+                        javaTrace,
                         context.createBacktrace2(0, nativeException),
                         true,
                         false,
-                        this);
+                        false);
+            }
+        },
+
+        /**
+         * A normal Ruby-style backtrace, but which includes any non-org.jruby frames
+         */
+        INTEGRATED {
+            public BacktraceData getBacktraceData(ThreadContext context, StackTraceElement[] javaTrace, boolean nativeException) {
+                return new BacktraceData(
+                        javaTrace,
+                        context.createBacktrace2(0, nativeException),
+                        false,
+                        false,
+                        true);
             }
         },
 
@@ -88,13 +131,13 @@ public class TraceType {
          * Normal Ruby-style backtrace, showing only Ruby and core class methods.
          */
         NORMAL {
-            public BacktraceData getBacktraceData(ThreadContext context, Thread thread, boolean nativeException) {
+            public BacktraceData getBacktraceData(ThreadContext context, StackTraceElement[] javaTrace, boolean nativeException) {
                 return new BacktraceData(
-                        thread.getStackTrace(),
+                        javaTrace,
                         context.createBacktrace2(0, nativeException),
                         false,
-                        false,
-                        this);
+                        context.runtime.getInstanceConfig().getBacktraceMask(),
+                        false);
             }
         },
 
@@ -102,20 +145,56 @@ public class TraceType {
          * Normal Ruby-style backtrace, showing only Ruby and core class methods.
          */
         CALLER {
-            public BacktraceData getBacktraceData(ThreadContext context, Thread thread, boolean nativeException) {
+            public BacktraceData getBacktraceData(ThreadContext context, StackTraceElement[] javaTrace, boolean nativeException) {
                 return new BacktraceData(
-                        thread.getStackTrace(),
+                        javaTrace,
                         context.createBacktrace2(0, nativeException),
                         false,
                         true,
-                        this);
+                        false);
             }
         };
 
+        /**
+         * Gather backtrace data for a normal Ruby trace.
+         *
+         * @param context
+         * @param nativeException
+         * @return
+         */
         public BacktraceData getBacktraceData(ThreadContext context, boolean nativeException) {
-            return getBacktraceData(context, Thread.currentThread(), nativeException);
+            BacktraceData data = getBacktraceData(context, Thread.currentThread().getStackTrace(), nativeException);
+
+            context.runtime.incrementBacktraceCount();
+            if (RubyInstanceConfig.LOG_BACKTRACES) logBacktrace(data.getBacktrace(context.runtime));
+
+            return data;
         }
-        public abstract BacktraceData getBacktraceData(ThreadContext context, Thread thread, boolean nativeException);
+
+        /**
+         * Gather backtrace data for an integrated trace if the current gather type is "NORMAL", otherwise use the
+         * current gather type.
+         * 
+         * @param context
+         * @param javaTrace
+         * @return
+         */
+        public BacktraceData getIntegratedBacktraceData(ThreadContext context, StackTraceElement[] javaTrace) {
+            Gather useGather = this;
+
+            if (useGather == NORMAL) {
+                useGather = INTEGRATED;
+            }
+            
+            BacktraceData data = useGather.getBacktraceData(context, javaTrace, false);
+
+            context.runtime.incrementBacktraceCount();
+            if (RubyInstanceConfig.LOG_BACKTRACES) logBacktrace(data.getBacktrace(context.runtime));
+
+            return data;
+        }
+
+        public abstract BacktraceData getBacktraceData(ThreadContext context, StackTraceElement[] javaTrace, boolean nativeException);
     }
     
     public enum Format {
@@ -123,8 +202,8 @@ public class TraceType {
          * Formatting like C Ruby
          */
         MRI {
-            public String printBacktrace(RubyException exception) {
-                return printBacktraceMRI(exception);
+            public String printBacktrace(RubyException exception, boolean console) {
+                return printBacktraceMRI(exception, console);
             }
         },
 
@@ -132,24 +211,15 @@ public class TraceType {
          * New JRuby formatting
          */
         JRUBY {
-            public String printBacktrace(RubyException exception) {
-                return printBacktraceJRuby(exception);
-            }
-        },
-
-        /**
-         * Rubinius-style formatting
-         */
-        RUBINIUS {
-            public String printBacktrace(RubyException exception) {
-                return printBacktraceRubinius(exception);
+            public String printBacktrace(RubyException exception, boolean console) {
+                return printBacktraceJRuby(exception, console);
             }
         };
 
-        public abstract String printBacktrace(RubyException exception);
+        public abstract String printBacktrace(RubyException exception, boolean console);
     }
 
-    protected static String printBacktraceMRI(RubyException exception) {
+    protected static String printBacktraceMRI(RubyException exception, boolean console) {
         Ruby runtime = exception.getRuntime();
         ThreadContext context = runtime.getCurrentContext();
         IRubyObject backtrace = exception.callMethod(context, "backtrace");
@@ -223,69 +293,7 @@ public class TraceType {
     private static final String EVAL_COLOR = "\033[0;33m";
     private static final String CLEAR_COLOR = "\033[0m";
 
-    protected static String printBacktraceRubinius(RubyException exception) {
-        Ruby runtime = exception.getRuntime();
-        RubyStackTraceElement[] frames = exception.getBacktraceElements();
-        if (frames == null) frames = new RubyStackTraceElement[0];
-
-        ArrayList firstParts = new ArrayList();
-        int longestFirstPart = 0;
-        for (RubyStackTraceElement frame : frames) {
-            String firstPart = frame.getClassName() + "#" + frame.getMethodName();
-            if (firstPart.length() > longestFirstPart) longestFirstPart = firstPart.length();
-            firstParts.add(firstPart);
-        }
-
-        // determine spacing
-        int center = longestFirstPart
-                + 2 // initial spaces
-                + 1; // spaces before "at"
-
-        StringBuilder buffer = new StringBuilder();
-
-        buffer
-                .append("An exception has occurred:\n")
-                .append("    ");
-
-        if (exception.getMetaClass() == runtime.getRuntimeError() && exception.message(runtime.getCurrentContext()).toString().length() == 0) {
-            buffer.append("No current exception (RuntimeError)");
-        } else {
-            buffer.append(exception.message(runtime.getCurrentContext()).toString());
-        }
-
-        buffer
-                .append('\n')
-                .append('\n')
-                .append("Backtrace:\n");
-
-        int i = 0;
-        for (RubyStackTraceElement frame : frames) {
-            String firstPart = (String)firstParts.get(i);
-            String secondPart = frame.getFileName() + ":" + frame.getLineNumber();
-
-            if (i == 0) {
-                buffer.append(FIRST_COLOR);
-            } else if (frame.isBinding() || frame.getFileName().equals("(eval)")) {
-                buffer.append(EVAL_COLOR);
-            } else if (frame.getFileName().indexOf(".java") != -1) {
-                buffer.append(KERNEL_COLOR);
-            }
-            buffer.append("  ");
-            for (int j = 0; j < center - firstPart.length(); j++) {
-                buffer.append(' ');
-            }
-            buffer.append(firstPart);
-            buffer.append(" at ");
-            buffer.append(secondPart);
-            buffer.append(CLEAR_COLOR);
-            buffer.append('\n');
-            i++;
-        }
-
-        return buffer.toString();
-    }
-
-    protected static String printBacktraceJRuby(RubyException exception) {
+    protected static String printBacktraceJRuby(RubyException exception, boolean console) {
         Ruby runtime = exception.getRuntime();
         RubyStackTraceElement[] frames = exception.getBacktraceElements();
         if (frames == null) frames = new RubyStackTraceElement[0];
@@ -308,9 +316,23 @@ public class TraceType {
                 .append(": ")
                 .append(message)
                 .append('\n');
+        
+        boolean color = console && runtime.getInstanceConfig().getBacktraceColor();
 
         // backtrace lines
+        boolean first = true;
         for (RubyStackTraceElement frame : frames) {
+            if (color) {
+                if (first) {
+                    buffer.append(FIRST_COLOR);
+                } else if (frame.isBinding() || frame.getFileName().equals("(eval)")) {
+                    buffer.append(EVAL_COLOR);
+                } else if (frame.getFileName().indexOf(".java") != -1) {
+                    buffer.append(KERNEL_COLOR);
+                }
+                first = false;
+            }
+            
             buffer.append("  ");
 
             // method name
@@ -323,73 +345,14 @@ public class TraceType {
                     .append(" at ")
                     .append(frame.getFileName())
                     .append(':')
-                    .append(frame.getLineNumber())
-                    .append('\n');
-        }
-
-        return buffer.toString();
-    }
-
-    protected static String printBacktraceJRuby2(RubyException exception) {
-        Ruby runtime = exception.getRuntime();
-        RubyStackTraceElement[] frames = exception.getBacktraceData().getBacktrace(runtime);
-        if (frames == null) frames = new RubyStackTraceElement[0];
-
-        List<String> lineNumbers = new ArrayList(frames.length);
-
-        // find longest filename and line number
-        int longestFileName = 0;
-        int longestLineNumber = 0;
-        for (RubyStackTraceElement frame : frames) {
-            String lineNumber = String.valueOf(frame.getLineNumber());
-            lineNumbers.add(lineNumber);
+                    .append(frame.getLineNumber());
             
-            longestFileName = Math.max(longestFileName, frame.getFileName().length());
-            longestLineNumber = Math.max(longestLineNumber, String.valueOf(frame.getLineNumber()).length());
-        }
-
-        StringBuilder buffer = new StringBuilder();
-
-        // exception line
-        String message = exception.message(runtime.getCurrentContext()).toString();
-        if (exception.getMetaClass() == runtime.getRuntimeError() && message.length() == 0) {
-            message = "No current exception";
-        }
-        buffer
-                .append(exception.getMetaClass().getName())
-                .append(": ")
-                .append(message)
-                .append('\n');
-
-        // backtrace lines
-        int i = 0;
-        for (RubyStackTraceElement frame : frames) {
-            buffer.append("  ");
-
-            // file and line, centered on :
-            String fileName = frame.getFileName();
-            String lineNumber = lineNumbers.get(i);
-            for (int j = 0; j < longestFileName - fileName.length(); j++) {
-                buffer.append(' ');
+            if (color) {
+                buffer.append(CLEAR_COLOR);
             }
-            buffer
-                    .append(fileName)
-                    .append(":")
-                    .append(lineNumber);
-
-            // padding to center remainder on "in"
-            for (int l = 0; l < longestLineNumber - lineNumber.length(); l++) {
-                buffer.append(' ');
-            }
-
-            // method name
-            buffer
-                    .append(' ')
-                    .append("in ")
-                    .append(frame.getMethodName())
-                    .append('\n');
             
-            i++;
+            buffer
+                    .append('\n');
         }
 
         return buffer.toString();
@@ -410,15 +373,6 @@ public class TraceType {
         }
 
         return traceArray;
-    }
-
-    protected static BacktraceData getBacktrace(ThreadContext context, Gather gather, boolean nativeException, boolean full, boolean maskNative) {
-        return new BacktraceData(
-                Thread.currentThread().getStackTrace(),
-                context.createBacktrace2(0, nativeException),
-                full,
-                maskNative,
-                gather);
     }
 
     private static void printErrorPos(ThreadContext context, PrintStream errorStream) {

@@ -161,6 +161,20 @@ public class RubyException extends RubyObject {
         }
     }
 
+    /**
+     * Prepare an "integrated" backtrace that includes the normal Ruby trace plus non-filtered Java frames. Used by
+     * Java integration to show the Java frames for a JI-called method.
+     *
+     * @param context
+     * @param javaTrace
+     */
+    public void prepareIntegratedBacktrace(ThreadContext context, StackTraceElement[] javaTrace) {
+        // if it's null, build a backtrace
+        if (backtraceData == null) {
+            backtraceData = context.runtime.getInstanceConfig().getTraceType().getIntegratedBacktrace(context, javaTrace);
+        }
+    }
+
     public void forceBacktrace(IRubyObject backtrace) {
         backtraceData = BacktraceData.EMPTY;
         set_backtrace(backtrace);
@@ -201,7 +215,7 @@ public class RubyException extends RubyObject {
         } else if (!isArrayOfStrings(obj)) {
             throw getRuntime().newTypeError("backtrace must be Array of String");
         } else {
-            backtrace = (RubyArray) obj;
+            backtrace = obj;
         }
         return backtrace();
     }
@@ -228,13 +242,20 @@ public class RubyException extends RubyObject {
         }
     }
 
-    @JRubyMethod(name = "to_s")
+    @JRubyMethod(name = "to_s", compat = CompatVersion.RUBY1_8)
     public IRubyObject to_s(ThreadContext context) {
         if (message.isNil()) return context.getRuntime().newString(getMetaClass().getRealClass().getName());
         message.setTaint(isTaint());
         return message;
     }
-
+    
+    @JRubyMethod(name = "to_s", compat = CompatVersion.RUBY1_9)
+    public IRubyObject to_s19(ThreadContext context) {
+        if (message.isNil()) return context.getRuntime().newString(getMetaClass().getRealClass().getName());
+        message.setTaint(isTaint());
+        return message.asString();
+    }
+    
     @JRubyMethod(name = "to_str", compat = CompatVersion.RUBY1_8)
     public IRubyObject to_str(ThreadContext context) {
         return callMethod(context, "to_s");
@@ -264,6 +285,7 @@ public class RubyException extends RubyObject {
     @Override
     public IRubyObject op_equal(ThreadContext context, IRubyObject other) {
         boolean equal =
+                getMetaClass() == other.getMetaClass() &&
                 context.getRuntime().getException().isInstance(other) &&
                 callMethod(context, "message").equals(other.callMethod(context, "message")) &&
                 callMethod(context, "backtrace").equals(other.callMethod(context, "backtrace"));

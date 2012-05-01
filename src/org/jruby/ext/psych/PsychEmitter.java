@@ -35,13 +35,16 @@ import java.util.Map;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
+import org.jruby.RubyFixnum;
 import org.jruby.RubyModule;
 import org.jruby.RubyObject;
+import org.jruby.RubyString;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.IOOutputStream;
+import org.jruby.util.TypeConverter;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.emitter.Emitter;
 import org.yaml.snakeyaml.emitter.EmitterException;
@@ -86,6 +89,10 @@ public class PsychEmitter extends RubyObject {
 
     @JRubyMethod
     public IRubyObject start_stream(ThreadContext context, IRubyObject encoding) {
+        if (!(encoding instanceof RubyFixnum)) {
+            throw context.runtime.newTypeError(encoding, context.runtime.getFixnum());
+        }
+        
         // TODO: do something with encoding? perhaps at the stream level?
         StreamStartEvent event = new StreamStartEvent(NULL_MARK, NULL_MARK);
         emit(context, event);
@@ -101,12 +108,13 @@ public class PsychEmitter extends RubyObject {
 
     @JRubyMethod
     public IRubyObject start_document(ThreadContext context, IRubyObject version, IRubyObject tags, IRubyObject implicit) {
-        Integer[] versionInts = new Integer[] {1, 1};
+        Integer[] versionInts = null;
         boolean implicitBool = implicit.isTrue();
-        Map<String, String> tagsMap = Collections.EMPTY_MAP;
+        Map<String, String> tagsMap = null;
 
         RubyArray versionAry = version.convertToArray();
         if (versionAry.size() == 2) {
+            versionInts = new Integer[] {1, 1};
             versionInts[0] = (int)versionAry.eltInternal(0).convertToInteger().getLongValue();
             versionInts[1] = (int)versionAry.eltInternal(1).convertToInteger().getLongValue();
         }
@@ -127,7 +135,7 @@ public class PsychEmitter extends RubyObject {
             }
         }
 
-        DocumentStartEvent event = new DocumentStartEvent(NULL_MARK, NULL_MARK, implicitBool, versionInts, tagsMap);
+        DocumentStartEvent event = new DocumentStartEvent(NULL_MARK, NULL_MARK, !implicitBool, versionInts, tagsMap);
         emit(context, event);
         return this;
     }
@@ -147,6 +155,10 @@ public class PsychEmitter extends RubyObject {
         IRubyObject plain = args[3];
         IRubyObject quoted = args[4];
         IRubyObject style = args[5];
+        
+        if (!(value instanceof RubyString)) {
+            throw context.runtime.newTypeError(value, context.runtime.getString());
+        }
 
         ScalarEvent event = new ScalarEvent(
                 anchor.isNil() ? null : anchor.asJavaString(),
@@ -155,7 +167,8 @@ public class PsychEmitter extends RubyObject {
                 quoted.isTrue()),
                 value.asJavaString(),
                 NULL_MARK,
-                NULL_MARK, (char)style.convertToInteger().getLongValue());
+                NULL_MARK,
+                SCALAR_STYLES[(int)style.convertToInteger().getLongValue()]);
         emit(context, event);
         return this;
     }
@@ -167,13 +180,15 @@ public class PsychEmitter extends RubyObject {
         IRubyObject implicit = args[2];
         IRubyObject style = args[3];
 
+        final int SEQUENCE_BLOCK = 1; // see psych/nodes/sequence.rb
+
         SequenceStartEvent event = new SequenceStartEvent(
                 anchor.isNil() ? null : anchor.asJavaString(),
                 tag.isNil() ? null : tag.asJavaString(),
                 implicit.isTrue(),
                 NULL_MARK,
                 NULL_MARK,
-                style.convertToInteger().getLongValue() == 0);
+                SEQUENCE_BLOCK != style.convertToInteger().getLongValue());
         emit(context, event);
         return this;
     }
@@ -192,13 +207,15 @@ public class PsychEmitter extends RubyObject {
         IRubyObject implicit = args[2];
         IRubyObject style = args[3];
 
+        final int MAPPING_BLOCK = 1; // see psych/nodes/mapping.rb
+
         MappingStartEvent event = new MappingStartEvent(
                 anchor.isNil() ? null : anchor.asJavaString(),
                 tag.isNil() ? null : tag.asJavaString(),
                 implicit.isTrue(),
                 NULL_MARK,
                 NULL_MARK,
-                style.convertToInteger().getLongValue() == 0);
+                MAPPING_BLOCK != style.convertToInteger().getLongValue());
         emit(context, event);
         return this;
     }
@@ -218,10 +235,10 @@ public class PsychEmitter extends RubyObject {
     }
 
     @JRubyMethod(name = "canonical=")
-    public IRubyObject canonical_set(ThreadContext context, IRubyObject style) {
+    public IRubyObject canonical_set(ThreadContext context, IRubyObject canonical) {
         // TODO: unclear if this affects a running emitter
-        options.setCanonical(style.isTrue());
-        return style;
+        options.setCanonical(canonical.isTrue());
+        return canonical;
     }
 
     @JRubyMethod
@@ -243,6 +260,17 @@ public class PsychEmitter extends RubyObject {
         return context.runtime.newFixnum(options.getIndent());
     }
 
+    @JRubyMethod(name = "line_width=")
+    public IRubyObject line_width_set(ThreadContext context, IRubyObject width) {
+        options.setWidth((int)width.convertToInteger().getLongValue());
+        return width;
+    }
+
+    @JRubyMethod
+    public IRubyObject line_width(ThreadContext context) {
+        return context.runtime.newFixnum(options.getWidth());
+    }
+
     private void emit(ThreadContext context, Event event) {
         try {
             emitter.emit(event);
@@ -257,4 +285,15 @@ public class PsychEmitter extends RubyObject {
     DumperOptions options = new DumperOptions();
 
     private static final Mark NULL_MARK = new Mark(null, 0, 0, 0, null, 0);
+
+    // Map style constants from Psych values (ANY = 0 ... FOLDED = 5)
+    // to SnakeYaml values; see psych/nodes/scalar.rb.
+    private static final Character[] SCALAR_STYLES = new Character[] {
+        null, // ANY; we'll choose plain
+        null, // PLAIN
+        '\'', // SINGLE_QUOTED
+        '"',  // DOUBLE_QUOTED
+        '|',  // LITERAL
+        '>',  // FOLDED
+    };
 }

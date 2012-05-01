@@ -27,24 +27,38 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.util.log;
 
-import org.jruby.util.SafePropertyAccessor;
-
 import java.lang.reflect.Constructor;
+import org.jruby.util.cli.Options;
 
 public class LoggerFactory {
 
-    private static final String LOGGER_CLASS = SafePropertyAccessor.getProperty("jruby.logger.class", "org.jruby.util.log.StandardErrorLogger");
+    private static final String LOGGER_CLASS = Options.LOGGER_CLASS.load();
+    private static final String BACKUP_LOGGER_CLASS = "org.jruby.util.log.StandardErrorLogger";
 
     private static final Constructor<?> CTOR;
+    private static final Logger LOG;
+    
     static {
         Constructor<?> ctor;
+        Logger log;
+        
         try {
             final Class<?> cls = Class.forName(LOGGER_CLASS);
             ctor = cls.getDeclaredConstructor(String.class);
-        } catch (Exception e) {
-            throw new IllegalStateException("unable to instantiate logger", e);
+            log = (Logger)ctor.newInstance("LoggerFactory");
+        } catch (Exception e1) {
+            try {
+                final Class<?> cls = Class.forName(BACKUP_LOGGER_CLASS);
+                ctor = cls.getDeclaredConstructor(String.class);
+                log = (Logger)ctor.newInstance("LoggerFactory");
+                
+                log.debug("failed to create logger \"" + LOGGER_CLASS + "\", using \"" + BACKUP_LOGGER_CLASS + "\"");
+            } catch (Exception e2) {
+                throw new IllegalStateException("unable to instantiate any logger", e1);
+            }
         }
         CTOR = ctor;
+        LOG = log;
     }
 
     public static Logger getLogger(String loggerName) {

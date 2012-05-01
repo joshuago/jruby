@@ -77,6 +77,23 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     public static final String IRUBYOBJECT = p(IRubyObject.class);
     public static final boolean VERIFY_CLASSFILES = true;
 
+    public static Class[] getStaticMethodArgs(Class target, int args) {
+        switch (args) {
+        case 0:
+            return new Class[] {target, ThreadContext.class, IRubyObject.class, Block.class};
+        case 1:
+            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject.class, Block.class};
+        case 2:
+            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class};
+        case 3:
+            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class};
+        case 4:
+            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject[].class, Block.class};
+        default:
+            throw new RuntimeException("unsupported arity: " + args);
+        }
+    }
+
     public static String getStaticMethodSignature(String classname, int args) {
         switch (args) {
         case 0:
@@ -156,7 +173,7 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     public static final int PREVIOUS_EXCEPTION_OFFSET = 4;
     public static final int FIRST_TEMP_OFFSET = 5;
 
-    public static final int STARTING_DSTR_SIZE = 20;
+    public static final int STARTING_DSTR_FACTOR = 10;
     
     private String classname;
     private String sourcename;
