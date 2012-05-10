@@ -116,7 +116,7 @@ public class Interpreter {
 //        evalScript.runCompilerPass(new CallSplitter());
         ThreadContext context = runtime.getCurrentContext(); 
         runBeginEndBlocks(evalScript.getBeginBlocks(), context, self, null); // FIXME: No temp vars yet right?
-        IRubyObject rv = evalScript.call(context, self, evalScript.getStaticScope().getModule(), rootNode.getScope(), block, backtraceName);
+        IRubyObject rv = evalScript.call(context, self, rootNode.getScope(), block, backtraceName);
         runBeginEndBlocks(evalScript.getEndBlocks(), context, self, null); // FIXME: No temp vars right?
         return rv;
     }
@@ -398,6 +398,19 @@ public class Interpreter {
                 Object result = null;
                 try {
                     switch(operation) {
+                    case PUSH_BINDING: {
+                        // SSS FIXME: Blocks are a headache -- so, these instrs. are only added to IRMethods
+                        // Blocks have more complicated logic for pushing a dynamic scope (see InterpretedIRBlockBody)
+                        currDynScope = DynamicScope.newDynamicScope(scope.getStaticScope());
+                        context.pushScope(currDynScope);
+                        ipc++;
+                        break;
+                    }
+                    case POP_BINDING: {
+                        context.popScope();
+                        ipc++;
+                        break;
+                    }
                     case JUMP: {
                         ipc = ((JumpInstr)lastInstr).getJumpTarget().getTargetPC();
                         break;
@@ -491,6 +504,8 @@ public class Interpreter {
                         break;
                     }
                     case RECV_EXCEPTION: {
+                        // In the interpreter, we dont use the 'checkType' field because the exception is
+                        // properly set up in the places below where it is caught and setup.
                         result = exception;
                         resultVar = ((ResultInstr)lastInstr).getResult();
                         ipc++;
@@ -607,11 +622,6 @@ public class Interpreter {
                 if (ipc == -1) throw re; // No one rescued exception, pass it on!
 
                 exception = re.getException();
-                // SSS: Copied this comment and line from ast/RescueNode.java:handleException
-                // TODO: Rubicon TestKernel dies without this line.  A cursory glance implies we
-                // falsely set $! to nil and this sets it back to something valid.  This should 
-                // get fixed at the same time we address bug #1296484.
-                runtime.getGlobalVariables().set("$!", (IRubyObject)exception);
             } catch (Throwable t) {
                 if (t instanceof Unrescuable) {
                     // ThreadKill, RubyContinuation, MainExitException, etc.
@@ -619,10 +629,7 @@ public class Interpreter {
                     ipc = scope.getEnsurerPC(lastInstr);
                 } else {
                     // Error and other java exceptions which could be rescued
-                    if (debug) {
-                        LOG.info("in scope: " + scope + ", caught Java throwable: " + t + "; excepting instr: " + lastInstr);
-                    }
-                    //t.printStackTrace();
+                    if (debug) LOG.info("in scope: " + scope + ", caught Java throwable: " + t + "; excepting instr: " + lastInstr);
                     ipc = scope.getRescuerPC(lastInstr);
                     if (debug) LOG.info("ipc for rescuer: " + ipc);
                 }
@@ -647,6 +654,15 @@ public class Interpreter {
 
         if (inClosure) {
             if (methodToReturnFrom == null) {
+                // SSS FIXME: As Tom correctly pointed out, this is not correct.  The example that breaks this code is:
+                //
+                //      jruby -X-CIR -e "Thread.new { Proc.new { return }.call }.join"
+                //
+                // This should report a LocalJumpError, not a ThreadError.
+                //
+                // The right fix would involve checking the closure to see who it is associated with.
+                // If it is a thread-body, it would be a ThreadError.  If not, it would be a local-jump-error
+                // This requires having access to the block -- same requirement as in handleBreakJump.
                 if (context.getThread() == context.getRuntime().getThreadService().getMainThread()) {
                     throw IRException.RETURN_LocalJumpError.getException(context.getRuntime());
                 } else {

@@ -171,7 +171,7 @@ public class InvokeDynamicSupport {
     }
     
     public static Handle getVariableHandle() {
-        return getBootstrapHandle("variableBootstrap", BOOTSTRAP_BARE_SIG);
+        return getBootstrapHandle("variableBootstrap", BOOTSTRAP_STRING_INT_SIG);
     }
     
     ////////////////////////////////////////////////////////////////////////////
@@ -383,11 +383,11 @@ public class InvokeDynamicSupport {
         return site;
     }
 
-    public static CallSite variableBootstrap(Lookup lookup, String name, MethodType type) throws Throwable {
+    public static CallSite variableBootstrap(Lookup lookup, String name, MethodType type, String file, int line) throws Throwable {
         String[] names = name.split(":");
         String operation = names[0];
         String varName = names[1];
-        VariableSite site = new VariableSite(type, varName);
+        VariableSite site = new VariableSite(type, varName, file, line);
         MethodHandle handle;
         
         if (operation.equals("get")) {
@@ -405,7 +405,8 @@ public class InvokeDynamicSupport {
     }
     
     public static IRubyObject getVariableFallback(VariableSite site, IRubyObject self) throws Throwable {
-        RubyClass.VariableAccessor accessor = self.getMetaClass().getRealClass().getVariableAccessorForRead(site.name);
+        RubyClass realClass = self.getMetaClass().getRealClass();
+        RubyClass.VariableAccessor accessor = realClass.getVariableAccessorForRead(site.name);
         
         // produce nil if the variable has not been initialize
         MethodHandle nullToNil = findStatic(RuntimeHelpers.class, "nullToNil", methodType(IRubyObject.class, IRubyObject.class, IRubyObject.class));
@@ -419,66 +420,77 @@ public class InvokeDynamicSupport {
         
         // prepare fallback
         MethodHandle fallback = null;
-        if (site.getTarget() == null || site.chainCount() > RubyInstanceConfig.MAX_POLY_COUNT) {
-            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tget triggered site rebind " + self.getMetaClass().id);
-            fallback = findStatic(InvokeDynamicSupport.class, "getVariableFallback", methodType(IRubyObject.class, VariableSite.class, IRubyObject.class));
+        if (site.chainCount() > RubyInstanceConfig.MAX_POLY_COUNT) {
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tqet on type " + self.getMetaClass().id + " failed (polymorphic)" + extractSourceInfo(site));
+            fallback = findStatic(InvokeDynamicSupport.class, "getVariableFail", methodType(IRubyObject.class, VariableSite.class, IRubyObject.class));
             fallback = fallback.bindTo(site);
-            site.clearChainCount();
+            site.setTarget(fallback);
+            return (IRubyObject)fallback.invokeWithArguments(self);
         } else {
-            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tget added to PIC " + self.getMetaClass().id);
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tget on type " + self.getMetaClass().id + " added to PIC" + extractSourceInfo(site));
             fallback = site.getTarget();
             site.incrementChainCount();
         }
         
         // prepare test
-        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, RubyClass.class, IRubyObject.class));
-        test = test.bindTo(self.getMetaClass().getRealClass());
+        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, int.class, IRubyObject.class));
+        test = insertArguments(test, 0, accessor.getClassId());
         
         getValue = guardWithTest(test, getValue, fallback);
         
-        if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tget on class " + self.getMetaClass().id + " bound directly");
+        if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tget on class " + self.getMetaClass().id + " bound directly" + extractSourceInfo(site));
         site.setTarget(getValue);
         
         return (IRubyObject)getValue.invokeWithArguments(self);
     }
+
+    public static IRubyObject getVariableFail(VariableSite site, IRubyObject self) throws Throwable {
+        return site.getVariable(self);
+    }
     
     public static IRubyObject setVariableFallback(VariableSite site, IRubyObject self, IRubyObject value) throws Throwable {
-        RubyClass.VariableAccessor accessor = self.getMetaClass().getRealClass().getVariableAccessorForWrite(site.name);
-        
+        RubyClass realClass = self.getMetaClass().getRealClass();
+        RubyClass.VariableAccessor accessor = realClass.getVariableAccessorForWrite(site.name);
+
         // return provided value
         MethodHandle returnValue = identity(IRubyObject.class);
         returnValue = dropArguments(returnValue, 0, IRubyObject.class);
-        
+
         // set variable value and fold by returning value
         MethodHandle setValue = findVirtual(IRubyObject.class, "setVariable", methodType(void.class, int.class, Object.class));
         setValue = explicitCastArguments(setValue, methodType(void.class, IRubyObject.class, int.class, IRubyObject.class));
         setValue = insertArguments(setValue, 1, accessor.getIndex());
         setValue = foldArguments(returnValue, setValue);
-        
+
         // prepare fallback
         MethodHandle fallback = null;
-        if (site.getTarget() == null || site.chainCount() > RubyInstanceConfig.MAX_POLY_COUNT) {
-            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tset triggered site rebind " + self.getMetaClass().id);
-            fallback = findStatic(InvokeDynamicSupport.class, "setVariableFallback", methodType(IRubyObject.class, VariableSite.class, IRubyObject.class, IRubyObject.class));
+        if (site.chainCount() > RubyInstanceConfig.MAX_POLY_COUNT) {
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tset on type " + self.getMetaClass().id + " failed (polymorphic)" + extractSourceInfo(site));
+            fallback = findStatic(InvokeDynamicSupport.class, "setVariableFail", methodType(IRubyObject.class, VariableSite.class, IRubyObject.class, IRubyObject.class));
             fallback = fallback.bindTo(site);
-            site.clearChainCount();
+            site.setTarget(fallback);
+            return (IRubyObject)fallback.invokeWithArguments(self, value);
         } else {
-            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tset added to PIC " + self.getMetaClass().id);
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tset on type " + self.getMetaClass().id + " added to PIC" + extractSourceInfo(site));
             fallback = site.getTarget();
             site.incrementChainCount();
         }
-        
+
         // prepare test
-        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, RubyClass.class, IRubyObject.class));
-        test = test.bindTo(self.getMetaClass().getRealClass());
+        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, int.class, IRubyObject.class));
+        test = insertArguments(test, 0, accessor.getClassId());
         test = dropArguments(test, 1, IRubyObject.class);
-        
+
         setValue = guardWithTest(test, setValue, fallback);
-        
-        if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tset on class " + self.getMetaClass().id + " bound directly");
+
+        if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name + "\tset on class " + self.getMetaClass().id + " bound directly" + extractSourceInfo(site));
         site.setTarget(setValue);
-        
+
         return (IRubyObject)setValue.invokeWithArguments(self, value);
+    }
+
+    public static IRubyObject setVariableFail(VariableSite site, IRubyObject self, IRubyObject value) throws Throwable {
+        return site.setVariable(self, value);
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -676,5 +688,9 @@ public class InvokeDynamicSupport {
         } catch (IllegalAccessException nae) {
             throw new RuntimeException(nae);
         }
+    }
+
+    private static String extractSourceInfo(VariableSite site) {
+        return " (" + site.file() + ":" + site.line() + ")";
     }
 }

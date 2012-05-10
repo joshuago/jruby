@@ -60,6 +60,7 @@ import org.jruby.internal.runtime.methods.CompiledMethod;
 import org.jruby.internal.runtime.methods.DefaultMethod;
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.internal.runtime.methods.JittedMethod;
+import org.jruby.java.invokers.SingletonMethodInvoker;
 import org.jruby.javasupport.JavaUtil;
 import org.jruby.javasupport.proxy.InternalJavaProxy;
 import org.jruby.runtime.Block;
@@ -627,8 +628,8 @@ public class InvocationLinker {
         return metaclass == ((RubyBasicObject)self).getMetaClass();
     }
 
-    public static boolean testRealClass(RubyClass realclass, IRubyObject self) {
-        return realclass == ((RubyBasicObject)self).getMetaClass().getRealClass();
+    public static boolean testRealClass(int id, IRubyObject self) {
+        return id == ((RubyBasicObject)self).getMetaClass().getRealClass().id;
     }
     
     public static IRubyObject getLast(IRubyObject[] args) {
@@ -1049,6 +1050,15 @@ public class InvocationLinker {
         Ruby runtime = method.getImplementationClass().getRuntime();
         DynamicMethod.NativeCall nativeCall = method.getNativeCall();
         boolean isStatic = nativeCall.isStatic();
+
+        // varargs broken, so ignore methods that take a trailing array
+        Class[] signature = nativeCall.getNativeSignature();
+        if (signature.length > 0 && signature[signature.length - 1].isArray()) {
+            return null;
+        }
+
+        // Scala singletons have slightly different JI logic, so skip for now
+        if (method instanceof SingletonMethodInvoker) return null;
         
         // the "apparent" type from the NativeCall, excluding receiver
         MethodType apparentType = methodType(nativeCall.getNativeReturn(), nativeCall.getNativeSignature());

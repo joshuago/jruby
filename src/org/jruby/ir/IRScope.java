@@ -8,16 +8,20 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import org.jruby.RubyModule;
+import org.jruby.exceptions.Unrescuable;
 import org.jruby.ir.dataflow.DataFlowProblem;
 import org.jruby.ir.instructions.CallBase;
 import org.jruby.ir.instructions.CopyInstr;
+import org.jruby.ir.instructions.GetGlobalVariableInstr;
 import org.jruby.ir.instructions.Instr;
-import org.jruby.ir.instructions.ReceiveClosureInstr;
+import org.jruby.ir.instructions.PutGlobalVarInstr;
+import org.jruby.ir.instructions.ReceiveSelfInstr;
 import org.jruby.ir.instructions.ReceiveSelfInstr;
 import org.jruby.ir.instructions.ResultInstr;
 import org.jruby.ir.instructions.Specializeable;
 import org.jruby.ir.instructions.ThreadPollInstr;
 import org.jruby.ir.instructions.ZSuperInstr;
+import org.jruby.ir.operands.GlobalVariable;
 import org.jruby.ir.operands.Label;
 import org.jruby.ir.operands.LocalVariable;
 import org.jruby.ir.operands.Operand;
@@ -203,6 +207,10 @@ public abstract class IRScope {
     /** Does this scope call any eval */
     private boolean usesEval;
 
+    /** Since backref ($~) and lastline ($_) vars are allocated space on the dynamic scope,
+     * this is an useful flag to compute. */
+    private boolean usesBackrefOrLastline;
+
     /** Does this scope call any zsuper */
     private boolean usesZSuper;
 
@@ -211,6 +219,13 @@ public abstract class IRScope {
 
     /** # of thread poll instrs added to this scope */
     private int threadPollInstrsCount;
+
+    /** Does this scope have explicit call protocol instructions?
+     *  If yes, there are IR instructions for managing bindings/frames, etc.
+     *  If not, this has to be managed implicitly as in the current runtime
+     *  For now, only dyn-scopes are managed explicitly.
+     *  Others will come in time */
+    private boolean hasExplicitCallProtocol;
 
     /** Should we re-run compiler passes -- yes after we've inlined, for example */
     private boolean relinearizeCFG;
@@ -240,7 +255,9 @@ public abstract class IRScope {
         this.canCaptureCallersBinding = s.canCaptureCallersBinding;
         this.bindingHasEscaped = s.bindingHasEscaped;
         this.usesEval = s.usesEval;
+        this.usesBackrefOrLastline = s.usesBackrefOrLastline;
         this.usesZSuper = s.usesZSuper;
+        this.hasExplicitCallProtocol = s.hasExplicitCallProtocol;
 
         this.localVars = new LocalVariableAllocator(); // SSS FIXME: clone!
         this.localVars.nextSlot = s.localVars.nextSlot;
@@ -275,7 +292,10 @@ public abstract class IRScope {
         this.canCaptureCallersBinding = true;
         this.bindingHasEscaped = true;
         this.usesEval = true;
+        this.usesBackrefOrLastline = true;
         this.usesZSuper = true;
+
+        this.hasExplicitCallProtocol = false;
 
         this.localVars = new LocalVariableAllocator();
         synchronized(globalScopeCount) { this.scopeId = globalScopeCount++; }
@@ -450,6 +470,14 @@ public abstract class IRScope {
         return hasLoops;
     }
 
+    public boolean hasExplicitCallProtocol() {
+        return hasExplicitCallProtocol;
+    }
+
+    public void setExplicitCallProtocolFlag(boolean flag) {
+        this.hasExplicitCallProtocol = flag;
+    }
+
     public void setCodeModificationFlag(boolean f) { 
         canModifyCode = f;
     }
@@ -460,6 +488,10 @@ public abstract class IRScope {
 
     public boolean bindingHasEscaped() {
         return bindingHasEscaped;
+    }
+
+    public boolean usesBackrefOrLastline() {
+        return usesBackrefOrLastline;
     }
 
     public boolean usesEval() {
@@ -489,6 +521,13 @@ public abstract class IRScope {
     public CFG getCFG() {
         return cfg;
     }
+
+    private void setupLabelPCs(HashMap<Label, Integer> labelIPCMap) {
+        for (BasicBlock b: linearizedBBList) {
+            Label l = b.getLabel();
+            l.setTargetPC(labelIPCMap.get(l));
+        }
+    }
     
     private Instr[] prepareInstructionsForInterpretation() {
         checkRelinearization();
@@ -508,12 +547,10 @@ public abstract class IRScope {
 
         // Set up IPCs
         HashMap<Label, Integer> labelIPCMap = new HashMap<Label, Integer>();
-        List<Label> labelsToFixup = new ArrayList<Label>();
         List<Instr> newInstrs = new ArrayList<Instr>();
         int ipc = 0;
-        for (BasicBlock b : linearizedBBList) {
+        for (BasicBlock b: linearizedBBList) {
             labelIPCMap.put(b.getLabel(), ipc);
-            labelsToFixup.add(b.getLabel());
             List<Instr> bbInstrs = b.getInstrs();
             int bbInstrsLength = bbInstrs.size();
             for (int i = 0; i < bbInstrsLength; i++) {
@@ -531,10 +568,8 @@ public abstract class IRScope {
             }
         }
 
-        // Fix up labels
-        for (Label l : labelsToFixup) {
-            l.setTargetPC(labelIPCMap.get(l));
-        }
+        // Set up label PCs
+        setupLabelPCs(labelIPCMap);
 
         // Exit BB ipc
         cfg().getExitBB().getLabel().setTargetPC(ipc + 1);
@@ -593,10 +628,13 @@ public abstract class IRScope {
         // Set up IPCs
         // FIXME: Would be nice to collapse duplicate labels; for now, using Label[]
         HashMap<Integer, Label[]> ipcLabelMap = new HashMap<Integer, Label[]>();
+        HashMap<Label, Integer>   labelIPCMap = new HashMap<Label, Integer>();
         List<Instr> newInstrs = new ArrayList<Instr>();
         int ipc = 0;
         for (BasicBlock b : linearizedBBList) {
-            ipcLabelMap.put(ipc, catLabels(ipcLabelMap.get(ipc), b.getLabel()));
+            Label l = b.getLabel();
+            labelIPCMap.put(l, ipc);
+            ipcLabelMap.put(ipc, catLabels(ipcLabelMap.get(ipc), l));
             for (Instr i : b.getInstrs()) {
                 if (!(i instanceof ReceiveSelfInstr)) {
                     newInstrs.add(i);
@@ -605,7 +643,46 @@ public abstract class IRScope {
             }
         }
 
+        // Set up label PCs
+        setupLabelPCs(labelIPCMap);
+
         return new Tuple<Instr[], Map<Integer,Label[]>>(newInstrs.toArray(new Instr[newInstrs.size()]), ipcLabelMap);
+    }
+
+    private List<Object[]> buildJVMExceptionTable() {
+        List<Object[]> etEntries = new ArrayList<Object[]>();
+        for (BasicBlock b: linearizedBBList) {
+            // We need handlers for:
+            // - RaiseException (Ruby exceptions -- handled by rescues),
+            // - Unrescuable    (JRuby exceptions -- handled by ensures),
+            // - Throwable      (JRuby/Java exceptions -- handled by rescues)
+            // in that order since Throwable < Unrescuable and Throwable < RaiseException
+            BasicBlock rBB = cfg().getRescuerBBFor(b);
+            BasicBlock eBB = cfg().getEnsurerBBFor(b);
+            if ((eBB != null) && (rBB == eBB || rBB == null)) {
+                // 1. same rescue and ensure handler ==> just spit out one entry with a Throwable class
+                // 2. only ensure handler            ==> just spit out one entry with a Throwable class
+                //
+                // The rescue handler knows whether to unwrap or not.  But for now, the rescue handler
+                // has to process its recv_exception instruction as
+                //    e = (e instanceof RaiseException) ? unwrap(e) : e;
+
+                int start = b.getLabel().getTargetPC();
+                int end   = start + b.instrCount();
+                etEntries.add(new Object[] {start, end, eBB.getLabel().getTargetPC(), Throwable.class});
+            } else if (rBB != null) {
+                int start = b.getLabel().getTargetPC();
+                int end   = start + b.instrCount();
+                // Unrescuable comes before Throwable
+                if (eBB != null) etEntries.add(new Object[] {start, end, eBB.getLabel().getTargetPC(), Unrescuable.class});
+                etEntries.add(new Object[] {start, end, rBB.getLabel().getTargetPC(), Throwable.class});
+            }
+        }
+
+        // SSS FIXME: This could be optimized by compressing entries for adjacent BBs that have identical handlers
+        // This could be optimized either during generation or as another pass over the table.  But, if the JVM
+        // does that already, do we need to bother with it?
+        return etEntries;
     }
     
     private static Label[] catLabels(Label[] labels, Label cat) {
@@ -618,15 +695,13 @@ public abstract class IRScope {
 
     private boolean computeScopeFlags(boolean receivesClosureArg, List<Instr> instrs) {
         for (Instr i: instrs) {
-            if (i instanceof ReceiveClosureInstr)
+            Operation op = i.getOperation();
+            if (op == Operation.RECV_CLOSURE) {
                 receivesClosureArg = true;
-
-            if (i instanceof ZSuperInstr) {
+            } else if (op == Operation.ZSUPER) {
                 canCaptureCallersBinding = true;
                 usesZSuper = true;
-            }
-
-            if (i instanceof CallBase) {
+            } else if (i instanceof CallBase) {
                 CallBase call = (CallBase) i;
 
                 if (call.targetRequiresCallersBinding()) bindingHasEscaped = true;
@@ -648,9 +723,31 @@ public abstract class IRScope {
                     // If this method receives a closure arg, and this call is an eval that has more than 1 argument,
                     // it could be using the closure as a binding -- which means it could be using pretty much any
                     // variable from the caller's binding!
-                    if (receivesClosureArg && (call.getCallArgs().length > 1))
+                    if (receivesClosureArg && (call.getCallArgs().length > 1)) {
                         canCaptureCallersBinding = true;
+                    }
                 }
+            } else if (op == Operation.GET_GLOBAL_VAR) {
+                GlobalVariable gv = (GlobalVariable)((GetGlobalVariableInstr)i).getSource();
+                String gvName = gv.getName();
+                if (gvName.equals("$_") || 
+                    gvName.equals("$~") ||
+                    gvName.equals("$`") ||
+                    gvName.equals("$'") ||
+                    gvName.equals("$+") ||
+                    gvName.equals("$LAST_READ_LINE") ||
+                    gvName.equals("$LAST_MATCH_INFO") ||
+                    gvName.equals("$PREMATCH") ||
+                    gvName.equals("$POSTMATCH") ||
+                    gvName.equals("$LAST_PAREN_MATCH")) {
+                    usesBackrefOrLastline = true;
+                }
+            } else if (op == Operation.PUT_GLOBAL_VAR) {
+                GlobalVariable gv = (GlobalVariable)((PutGlobalVarInstr)i).getTarget();
+                String gvName = gv.getName();
+                if (gvName.equals("$_") || gvName.equals("$~")) usesBackrefOrLastline = true;
+            } else if (op == Operation.MATCH || op == Operation.MATCH2 || op == Operation.MATCH3) {
+                usesBackrefOrLastline = true;
             }
         }
 
@@ -668,6 +765,7 @@ public abstract class IRScope {
         canCaptureCallersBinding = false;
         usesZSuper = false;
         usesEval = false;
+        usesBackrefOrLastline = false;
         bindingHasEscaped = (this instanceof IREvalScript); // for eval scopes, bindings are considered escaped ...
 
         // recompute flags -- we could be calling this method different times
@@ -1116,6 +1214,13 @@ public abstract class IRScope {
      * Does this scope represent a module body?  (SSS FIXME: what about script or eval script bodies?)
      */
     public boolean isModuleBody() {
+        return false;
+    }
+
+    /**
+     * Is this IRClassBody but not IRMetaClassBody?
+     */
+    public boolean isNonSingletonClassBody() {
         return false;
     }
 

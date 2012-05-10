@@ -119,7 +119,7 @@ public class Bootstrap {
         String[] names = name.split(":");
         String operation = names[0];
         String varName = names[1];
-        VariableSite site = new VariableSite(type, varName);
+        VariableSite site = new VariableSite(type, varName, "noname", 0);
         MethodHandle handle;
 
         handle = lookup.findStatic(Bootstrap.class, operation, type.insertParameterTypes(0, VariableSite.class));
@@ -673,8 +673,8 @@ public class Bootstrap {
         }
 
         // prepare test
-        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, RubyClass.class, IRubyObject.class));
-        test = test.bindTo(self.getMetaClass().getRealClass());
+        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, int.class, IRubyObject.class));
+        test = insertArguments(test, 0, accessor.getClassId());
 
         getValue = guardWithTest(test, getValue, fallback);
 
@@ -706,8 +706,8 @@ public class Bootstrap {
         }
 
         // prepare test
-        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, RubyClass.class, IRubyObject.class));
-        test = test.bindTo(self.getMetaClass().getRealClass());
+        MethodHandle test = findStatic(InvocationLinker.class, "testRealClass", methodType(boolean.class, int.class, IRubyObject.class));
+        test = insertArguments(test, 0, accessor.getClassId());
         test = dropArguments(test, 1, IRubyObject.class);
 
         setValue = guardWithTest(test, setValue, fallback);

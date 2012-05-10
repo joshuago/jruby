@@ -21,12 +21,11 @@ import java.util.Set;
 // This problem tries to find places to insert binding stores -- for spilling local variables onto a heap store
 // It does better than spilling all local variables to the heap at all call sites.  This is similar to a
 // available expressions analysis in that it tries to propagate availability of stores through the flow graph.
-//
-// We have piggybacked the problem of identifying sites where binding allocation instrutions are necessary.  So,
-// strictly speaking, this is a AND of two independent dataflow analyses -- we are doing these together for
-// efficiency reasons, and also because the binding allocation problem is also a forwards flow problem and is a
-// relatively straightforward analysis.
 public class StoreLocalVarPlacementProblem extends DataFlowProblem {
+    public static final String NAME = "Placement of local-var stores";
+
+    private boolean scopeHasLocalVarStores;
+    private boolean scopeHasUnrescuedExceptions;
 
     public StoreLocalVarPlacementProblem() {
         super(DataFlowProblem.DF_Direction.FORWARD);
@@ -45,7 +44,15 @@ public class StoreLocalVarPlacementProblem extends DataFlowProblem {
         return "";
     }
 
-    public void addStoreAndBindingAllocInstructions(Map<Operand, Operand> varRenameMap) {
+    public boolean scopeHasLocalVarStores() {
+        return scopeHasLocalVarStores;
+    }
+
+    public boolean scopeHasUnrescuedExceptions() {
+        return scopeHasUnrescuedExceptions;
+    }
+
+    public void addStores(Map<Operand, Operand> varRenameMap) {
         /* --------------------------------------------------------------------
          * If this is a closure, introduce a global ensure block that spills
          * into the binding the union of dirty vars from all call sites that
@@ -56,27 +63,44 @@ public class StoreLocalVarPlacementProblem extends DataFlowProblem {
          * vars from the parent scope have been stored.
          * -------------------------------------------------------------------- */
         boolean mightRequireGlobalEnsureBlock = false;
+
         Set<LocalVariable> dirtyVars = null;
-        CFG cfg = getScope().cfg();
+
+        CFG     cfg      = getScope().cfg();
         IRScope cfgScope = cfg.getScope();
+
+        this.scopeHasLocalVarStores      = false;
+        this.scopeHasUnrescuedExceptions = false;
+
         if (cfgScope instanceof IRClosure) {
             mightRequireGlobalEnsureBlock = true;
             dirtyVars = new HashSet<LocalVariable>();
         }
 
+        // Add local-var stores
         for (FlowGraphNode n : flowGraphNodes) {
             StoreLocalVarPlacementNode bspn = (StoreLocalVarPlacementNode) n;
-            if (mightRequireGlobalEnsureBlock && !bspn.hasExceptionsRescued()) {
-                bspn.addStoreAndBindingAllocInstructions(varRenameMap, dirtyVars);
+            boolean bbAddedStores;
+            // SSS: This is highly conservative.  If the bb has an exception raising instr.
+            // and we dont have a rescuer, only then do we have unrescued exceptions.
+            // Right now, we are only checking for rescuers.
+            boolean bbHasUnrescuedExceptions = !bspn.hasExceptionsRescued();
+            if (mightRequireGlobalEnsureBlock && bbHasUnrescuedExceptions) {
+                bbAddedStores = bspn.addStores(varRenameMap, dirtyVars);
             } else {
-                bspn.addStoreAndBindingAllocInstructions(varRenameMap, null);
+                bbAddedStores = bspn.addStores(varRenameMap, null);
             }
+
+            scopeHasUnrescuedExceptions = scopeHasUnrescuedExceptions || bbHasUnrescuedExceptions;
+            scopeHasLocalVarStores      = scopeHasLocalVarStores || bbAddedStores;
         }
 
+        // Allocate global-ensure block, if necessary
+        BasicBlock geb = null;
         if ((mightRequireGlobalEnsureBlock == true) && !dirtyVars.isEmpty()) {
-            BasicBlock geb = new BasicBlock(cfg, new Label("_GLOBAL_ENSURE_BLOCK"));
             Variable exc = cfgScope.getNewTemporaryVariable();
-            geb.addInstr(new ReceiveExceptionInstr(exc));
+            geb = new BasicBlock(cfg, new Label("_GLOBAL_ENSURE_BLOCK"));
+            geb.addInstr(new ReceiveExceptionInstr(exc, false)); // No need to check type since it is not used before rethrowing
             for (LocalVariable v : dirtyVars) {
                 Operand value = varRenameMap.get(v);
                 if (value == null) {
@@ -86,7 +110,7 @@ public class StoreLocalVarPlacementProblem extends DataFlowProblem {
                 geb.addInstr(new StoreLocalVarInstr(value, (IRClosure) cfgScope, v));
             }
             geb.addInstr(new ThrowExceptionInstr(exc));
-            cfg.addGlobalEnsureBlock(geb);
+            cfg.addGlobalEnsureBB(geb);
         }
     }
 }

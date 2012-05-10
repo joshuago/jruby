@@ -1,6 +1,7 @@
 
 package org.jruby.ext.ffi.jffi;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.Map;
@@ -54,30 +55,51 @@ public final class FFIUtil {
     }
 
     static final com.kenai.jffi.Type getFFIType(Type type) {
+        Object jffiType;
 
-        if (type instanceof Type.Builtin || type instanceof CallbackInfo) {
-
-            return FFIUtil.getFFIType(type.getNativeType());
-        
-        } else if (type instanceof org.jruby.ext.ffi.StructLayout) {
-
-            return FFIUtil.newStruct((org.jruby.ext.ffi.StructLayout) type);
-
-        } else if (type instanceof org.jruby.ext.ffi.StructByValue) {
-
-            return FFIUtil.newStruct(((org.jruby.ext.ffi.StructByValue) type).getStructLayout());
-
-        } else if (type instanceof org.jruby.ext.ffi.Type.Array) {
-
-            return FFIUtil.newArray((org.jruby.ext.ffi.Type.Array) type);
-
-        } else if (type instanceof org.jruby.ext.ffi.MappedType) {
-
-            return FFIUtil.getFFIType(((org.jruby.ext.ffi.MappedType) type).getRealType());
-
-        } else {
-            return null;
+        if ((jffiType = type.getFFIHandle()) instanceof com.kenai.jffi.Type) {
+            return (com.kenai.jffi.Type) jffiType;
         }
+
+        return cacheFFIType(type);
+    }
+
+    private static com.kenai.jffi.Type cacheFFIType(Type type) {
+        Object ffiType;
+        synchronized (type) {
+
+            if ((ffiType = type.getFFIHandle()) instanceof com.kenai.jffi.Type) {
+                return (com.kenai.jffi.Type) ffiType;
+            }
+
+            if (type instanceof Type.Builtin || type instanceof CallbackInfo) {
+
+                ffiType = FFIUtil.getFFIType(type.getNativeType());
+
+            } else if (type instanceof org.jruby.ext.ffi.StructLayout) {
+
+                ffiType = FFIUtil.newStruct((org.jruby.ext.ffi.StructLayout) type);
+
+            } else if (type instanceof org.jruby.ext.ffi.StructByValue) {
+
+                ffiType = FFIUtil.newStruct(((org.jruby.ext.ffi.StructByValue) type).getStructLayout());
+
+            } else if (type instanceof org.jruby.ext.ffi.Type.Array) {
+
+                ffiType = FFIUtil.newArray((org.jruby.ext.ffi.Type.Array) type);
+
+            } else if (type instanceof org.jruby.ext.ffi.MappedType) {
+
+                ffiType = FFIUtil.getFFIType(((org.jruby.ext.ffi.MappedType) type).getRealType());
+
+            } else {
+                return null;
+            }
+
+            type.setFFIHandle(ffiType);
+        }
+
+        return (com.kenai.jffi.Type) ffiType;
     }
 
     static final com.kenai.jffi.Type getFFIType(NativeType type) {
@@ -90,37 +112,74 @@ public final class FFIUtil {
      * @param layout The structure layout
      * @return A new Struct descriptor.
      */
-    static final com.kenai.jffi.Struct newStruct(org.jruby.ext.ffi.StructLayout layout) {
-        Collection<StructLayout.Member> structMembers = layout.getMembers();
-        com.kenai.jffi.Type[] fields = new com.kenai.jffi.Type[structMembers.size()];
+    static final com.kenai.jffi.Aggregate newStruct(org.jruby.ext.ffi.StructLayout layout) {
 
-        int i = 0;
-        for (StructLayout.Member m : structMembers) {
-            com.kenai.jffi.Type fieldType;
-            fieldType = FFIUtil.getFFIType(m.type());
-            if (fieldType == null) {
-                throw layout.getRuntime().newTypeError("unsupported Struct field type " + m);
+        if (layout.isUnion()) {
+
+            //
+            // The jffi union type is broken, so emulate a union with a Struct type, containing
+            // an array of elements of the correct alignment.
+            //
+            com.kenai.jffi.Type[] alignmentTypes = {
+                    com.kenai.jffi.Type.SINT8,
+                    com.kenai.jffi.Type.SINT16,
+                    com.kenai.jffi.Type.SINT32,
+                    com.kenai.jffi.Type.SINT64,
+                    com.kenai.jffi.Type.FLOAT,
+                    com.kenai.jffi.Type.DOUBLE,
+                    com.kenai.jffi.Type.LONGDOUBLE,
+            };
+
+            com.kenai.jffi.Type alignmentType = null;
+            for (com.kenai.jffi.Type t : alignmentTypes) {
+                if (t.alignment() == layout.getNativeAlignment()) {
+                    alignmentType = t;
+                    break;
+                }
             }
-            fields[i++] = fieldType;
-        }
+            if (alignmentType == null) {
+                throw layout.getRuntime().newRuntimeError("cannot discern base alignment type for union of alignment "
+                        + layout.getNativeAlignment());
+            }
 
-        return new com.kenai.jffi.Struct(fields);
+            com.kenai.jffi.Type[] fields = new com.kenai.jffi.Type[layout.getNativeSize() / alignmentType.size()];
+            Arrays.fill(fields, alignmentType);
+
+            return com.kenai.jffi.Struct.newStruct(fields);
+
+        } else {
+
+            Collection<StructLayout.Member> structMembers = layout.getMembers();
+            com.kenai.jffi.Type[] fields = new com.kenai.jffi.Type[structMembers.size()];
+
+            int i = 0;
+            for (StructLayout.Member m : structMembers) {
+                com.kenai.jffi.Type fieldType;
+                fieldType = FFIUtil.getFFIType(m.type());
+                if (fieldType == null) {
+                    throw layout.getRuntime().newTypeError("unsupported Struct field type " + m);
+                }
+                fields[i++] = fieldType;
+            }
+
+            return com.kenai.jffi.Struct.newStruct(fields);
+        }
     }
 
     /**
      * Creates a new JFFI type descriptor for an array
      *
-     * @param layout The structure layout
+     * @param arrayType The structure layout
      * @return A new Struct descriptor.
      */
-    static final com.kenai.jffi.Array newArray(org.jruby.ext.ffi.Type.Array arrayType) {
+    static com.kenai.jffi.Array newArray(org.jruby.ext.ffi.Type.Array arrayType) {
         com.kenai.jffi.Type componentType = FFIUtil.getFFIType(arrayType.getComponentType());
 
         if (componentType == null) {
             throw arrayType.getRuntime().newTypeError("unsupported array element type " + arrayType.getComponentType());
         }
 
-        return new com.kenai.jffi.Array(componentType, arrayType.length());
+        return com.kenai.jffi.Array.newArray(componentType, arrayType.length());
     }
 
     /**
