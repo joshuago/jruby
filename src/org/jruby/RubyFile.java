@@ -399,7 +399,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
     @JRubyMethod
     public IRubyObject mtime(ThreadContext context) {
         checkClosed(context);
-        return getLastModified(context.getRuntime(), path);
+        return context.getRuntime().newFileStat(path, false).mtime();
     }
 
     @JRubyMethod(meta = true, compat = RUBY1_9)
@@ -585,7 +585,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
     public static IRubyObject dirname(ThreadContext context, IRubyObject recv, IRubyObject arg) {
         RubyString filename = get_path(context, arg);
         
-        String jfilename = filename.getUnicodeValue();
+        String jfilename = filename.asJavaString();
         
         String name = jfilename.replace('\\', '/');
         int minPathLength = 1;
@@ -851,7 +851,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
 
     @JRubyMethod(name = "mtime", required = 1, meta = true)
     public static IRubyObject mtime(ThreadContext context, IRubyObject recv, IRubyObject filename) {
-        return getLastModified(context.getRuntime(), get_path(context, filename).getUnicodeValue());
+        return context.getRuntime().newFileStat(get_path(context, filename).getUnicodeValue(), false).mtime();
     }
     
     @JRubyMethod(required = 2, meta = true)
@@ -1069,7 +1069,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         RubyString filename = get_path(context, args[0]);
         runtime.checkSafeString(filename);
 
-        path = adjustRootPathOnWindows(runtime, filename.getUnicodeValue(), runtime.getCurrentDirectory());
+        path = adjustRootPathOnWindows(runtime, filename.asJavaString(), runtime.getCurrentDirectory());
 
         String modeString = "r";
         IOOptions modes = newIOOptions(runtime, modeString);
@@ -1083,7 +1083,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
                 modes = parseIOOptions19(args[1]);
 
                 if (args[1] instanceof RubyFixnum) {
-                    perm = getFilePermissions(args);
+                    perm = RubyNumeric.num2int(args[1]);
                 } else {
                     modeString = args[1].convertToString().toString();
                 }
@@ -1114,7 +1114,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         RubyString filename = get_path(runtime.getCurrentContext(), args[0]);
         runtime.checkSafeString(filename);
 
-        path = adjustRootPathOnWindows(runtime, filename.getUnicodeValue(), runtime.getCurrentDirectory());
+        path = adjustRootPathOnWindows(runtime, filename.asJavaString(), runtime.getCurrentDirectory());
 
         String modeString;
         IOOptions modes;
@@ -1315,7 +1315,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
             return JRubyFile.create(runtime.getCurrentDirectory(), ((RubyFile) pathOrFile).getPath());
         } else {
             RubyString pathStr = get_path(runtime.getCurrentContext(), pathOrFile);
-            String path = pathStr.getUnicodeValue();
+            String path = pathStr.asJavaString();
             String[] pathParts = splitURI(path);
             if (pathParts != null && pathParts[0].equals("file:")) {
                 path = pathParts[1];
@@ -1460,17 +1460,6 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         }
 
         return timeval;
-    }
-
-    // Fast path since JNA stat is about 10x slower than this
-    private static IRubyObject getLastModified(Ruby runtime, String path) {
-        FileResource file = JRubyFile.createResource(runtime.getCurrentDirectory(), path);
-        
-        if (!file.exists()) {
-            throw runtime.newErrnoENOENTError(path);
-        }
-        
-        return runtime.newTime(file.lastModified());
     }
 
     private void checkClosed(ThreadContext context) {

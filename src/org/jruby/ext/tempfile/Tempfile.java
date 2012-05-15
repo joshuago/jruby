@@ -266,11 +266,7 @@ public class Tempfile extends org.jruby.RubyTempfile {
 
     @JRubyMethod(name = {"unlink", "delete"})
     public IRubyObject unlink(ThreadContext context) {
-        if (!tmpFile.exists() || tmpFile.delete()) {
-            referenceSet.remove(reaper);
-            reaper.released = true;
-            path = null;
-        }
+        // no-op, since we can't unlink the file without breaking stat et al
         return context.getRuntime().getNil();
     }
 
@@ -319,6 +315,9 @@ public class Tempfile extends org.jruby.RubyTempfile {
         }
     }
 
+    // FIXME This reaper never actually runs; delete it or implement it properly
+    // For JRUBY-6477, I add the finalize above to do basically what this was
+    // intended to do.
     private static final class Reaper extends PhantomReferenceReaper<Tempfile> implements Runnable {
         private volatile boolean released = false;
         private final Ruby runtime;

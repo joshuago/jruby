@@ -30,7 +30,7 @@ import org.jruby.ir.operands.BooleanLiteral;
 import org.jruby.ir.operands.ClosureLocalVariable;
 import org.jruby.ir.operands.CompoundArray;
 import org.jruby.ir.operands.CompoundString;
-import org.jruby.ir.operands.CurrentModule;
+import org.jruby.ir.operands.ScopeModule;
 import org.jruby.ir.operands.CurrentScope;
 import org.jruby.ir.operands.DynamicSymbol;
 import org.jruby.ir.operands.Fixnum;
@@ -77,7 +77,6 @@ public abstract class IRVisitor {
 
     // standard instructions
     public void AliasInstr(AliasInstr aliasinstr) { error(aliasinstr); }
-    public void AllocateBindingInstr(AllocateBindingInstr allocatebindinginstr) { error(allocatebindinginstr); }
     public void AttrAssignInstr(AttrAssignInstr attrassigninstr) { error(attrassigninstr); }
     public void BEQInstr(BEQInstr beqinstr) { error(beqinstr); }
     public void BFalseInstr(BFalseInstr bfalseinstr) { error(bfalseinstr); }
@@ -127,11 +126,13 @@ public abstract class IRVisitor {
     public void NoResultCallInstr(NoResultCallInstr noresultcallinstr) { error(noresultcallinstr); }
     public void NotInstr(NotInstr notinstr) { error(notinstr); }
     public void OptArgMultipleAsgnInstr(OptArgMultipleAsgnInstr optargmultipleasgninstr) { error(optargmultipleasgninstr); }
+    public void PopBindingInstr(PopBindingInstr popbindinginstr) { error(popbindinginstr); }
     public void ProcessModuleBodyInstr(ProcessModuleBodyInstr processmodulebodyinstr) { error(processmodulebodyinstr); }
     public void PutClassVariableInstr(PutClassVariableInstr putclassvariableinstr) { error(putclassvariableinstr); }
     public void PutConstInstr(PutConstInstr putconstinstr) { error(putconstinstr); }
     public void PutFieldInstr(PutFieldInstr putfieldinstr) { error(putfieldinstr); }
     public void PutGlobalVarInstr(PutGlobalVarInstr putglobalvarinstr) { error(putglobalvarinstr); }
+    public void PushBindingInstr(PushBindingInstr pushbindinginstr) { error(pushbindinginstr); }
     public void RaiseArgumentErrorInstr(RaiseArgumentErrorInstr raiseargumenterrorinstr) { error(raiseargumenterrorinstr); }
     public void ReceiveClosureInstr(ReceiveClosureInstr receiveclosureinstr) { error(receiveclosureinstr); }
     public void ReceiveExceptionInstr(ReceiveExceptionInstr receiveexceptioninstr) { error(receiveexceptioninstr); }
@@ -189,7 +190,6 @@ public abstract class IRVisitor {
     public void ClosureLocalVariable(ClosureLocalVariable closurelocalvariable) { error(closurelocalvariable); }
     public void CompoundArray(CompoundArray compoundarray) { error(compoundarray); }
     public void CompoundString(CompoundString compoundstring) { error(compoundstring); }
-    public void CurrentModule(CurrentModule currentmodule) { error(currentmodule); }
     public void CurrentScope(CurrentScope currentscope) { error(currentscope); }
     public void DynamicSymbol(DynamicSymbol dynamicsymbol) { error(dynamicsymbol); }
     public void Fixnum(Fixnum fixnum) { error(fixnum); }
@@ -206,6 +206,7 @@ public abstract class IRVisitor {
     public void ObjectClass(ObjectClass objectclass) { error(objectclass); }
     public void Range(Range range) { error(range); }
     public void Regexp(Regexp regexp) { error(regexp); }
+    public void ScopeModule(ScopeModule scopemodule) { error(scopemodule); }
     public void Self(Self self) { error(self); }
     public void Splat(Splat splat) { error(splat); }
     public void StandardError(StandardError standarderror) { error(standarderror); }

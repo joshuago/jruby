@@ -43,7 +43,6 @@ import org.jruby.ir.operands.BooleanLiteral;
 import org.jruby.ir.operands.ClosureLocalVariable;
 import org.jruby.ir.operands.CompoundArray;
 import org.jruby.ir.operands.CompoundString;
-import org.jruby.ir.operands.CurrentModule;
 import org.jruby.ir.operands.CurrentScope;
 import org.jruby.ir.operands.DynamicSymbol;
 import org.jruby.ir.operands.Fixnum;
@@ -61,6 +60,7 @@ import org.jruby.ir.operands.Operand;
 import org.jruby.ir.operands.Range;
 import org.jruby.ir.operands.Regexp;
 import org.jruby.ir.operands.SValue;
+import org.jruby.ir.operands.ScopeModule;
 import org.jruby.ir.operands.Self;
 import org.jruby.ir.operands.Splat;
 import org.jruby.ir.operands.StandardError;
@@ -75,6 +75,7 @@ import org.jruby.ir.operands.WrappedIRClosure;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Block;
+import org.jruby.runtime.DynamicScope;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -84,10 +85,17 @@ import org.jruby.util.JRubyClassLoader;
 
 import java.util.Map;
 
+import static org.jruby.util.CodegenUtils.ci;
+import static org.jruby.util.CodegenUtils.p;
+import static org.jruby.util.CodegenUtils.sig;
+
 /**
  * Implementation of IRCompiler for the JVM.
  */
 public class JVMVisitor extends IRVisitor {
+
+    public static final String DYNAMIC_SCOPE = "$dynamicScope";
+
     public JVMVisitor() {
         this.jvm = new JVM();
     }
@@ -204,11 +212,6 @@ public class JVMVisitor extends IRVisitor {
         jvm.method().adapter.ldc(((StringLiteral) aliasInstr.getOldName()).string);
         jvm.method().invokeHelper("defineAlias", IRubyObject.class, ThreadContext.class, IRubyObject.class, Object.class, Object.class);
         jvm.method().adapter.pop();
-    }
-
-    @Override
-    public void AllocateBindingInstr(AllocateBindingInstr allocatebindinginstr) {
-        super.AllocateBindingInstr(allocatebindinginstr);    //To change body of overridden methods use File | Settings | File Templates.
     }
 
     @Override
@@ -347,7 +350,7 @@ public class JVMVisitor extends IRVisitor {
         String scopeString = RuntimeHelpers.encodeScope(scope);
 
         // new CompiledIRMethod
-        jvm.method().adapter.newobj(CodegenUtils.p(CompiledIRMethod.class));
+        jvm.method().adapter.newobj(p(CompiledIRMethod.class));
         jvm.method().adapter.dup();
 
         // emit method body and get handle
@@ -384,18 +387,18 @@ public class JVMVisitor extends IRVisitor {
         jvm.method().adapter.aload(0);
         jvm.method().adapter.aload(1);
         jvm.method().adapter.ldc(scopeString);
-        jvm.method().adapter.invokestatic(CodegenUtils.p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
+        jvm.method().adapter.invokestatic(p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
         jvm.method().adapter.swap();
 
         // set into StaticScope
         jvm.method().adapter.dup2();
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(StaticScope.class), "setModule", CodegenUtils.sig(void.class, RubyModule.class));
+        jvm.method().adapter.invokevirtual(p(StaticScope.class), "setModule", sig(void.class, RubyModule.class));
 
-        jvm.method().adapter.getstatic(CodegenUtils.p(Visibility.class), "PUBLIC", CodegenUtils.ci(Visibility.class));
+        jvm.method().adapter.getstatic(p(Visibility.class), "PUBLIC", ci(Visibility.class));
         jvm.method().adapter.swap();
 
         // invoke constructor
-        jvm.method().adapter.invokespecial(CodegenUtils.p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
+        jvm.method().adapter.invokespecial(p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
 
         // store
         jvm.method().storeLocal(jvm.methodData().local(defineclassinstr.getResult()));
@@ -418,11 +421,11 @@ public class JVMVisitor extends IRVisitor {
 
         // preamble for addMethod below
         jvm.method().adapter.aload(0);
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(ThreadContext.class), "getRubyClass", "()Lorg/jruby/RubyModule;");
+        jvm.method().adapter.invokevirtual(p(ThreadContext.class), "getRubyClass", "()Lorg/jruby/RubyModule;");
         jvm.method().adapter.ldc(method.getName());
 
         // new CompiledIRMethod
-        jvm.method().adapter.newobj(CodegenUtils.p(CompiledIRMethod.class));
+        jvm.method().adapter.newobj(p(CompiledIRMethod.class));
         jvm.method().adapter.dup();
 
         // emit method body and get handle
@@ -436,18 +439,18 @@ public class JVMVisitor extends IRVisitor {
         jvm.method().adapter.aload(0);
         jvm.method().adapter.aload(1);
         jvm.method().adapter.ldc(scopeString);
-        jvm.method().adapter.invokestatic(CodegenUtils.p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
+        jvm.method().adapter.invokestatic(p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
 
         jvm.method().adapter.aload(0);
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(ThreadContext.class), "getCurrentVisibility", "()Lorg/jruby/runtime/Visibility;");
+        jvm.method().adapter.invokevirtual(p(ThreadContext.class), "getCurrentVisibility", "()Lorg/jruby/runtime/Visibility;");
         jvm.method().adapter.aload(0);
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(ThreadContext.class), "getRubyClass", "()Lorg/jruby/RubyModule;");
+        jvm.method().adapter.invokevirtual(p(ThreadContext.class), "getRubyClass", "()Lorg/jruby/RubyModule;");
 
         // invoke constructor
-        jvm.method().adapter.invokespecial(CodegenUtils.p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
+        jvm.method().adapter.invokespecial(p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
 
         // add method
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(RubyModule.class), "addMethod", "(Ljava/lang/String;Lorg/jruby/internal/runtime/methods/DynamicMethod;)V");
+        jvm.method().adapter.invokevirtual(p(RubyModule.class), "addMethod", "(Ljava/lang/String;Lorg/jruby/internal/runtime/methods/DynamicMethod;)V");
     }
 
     @Override
@@ -461,7 +464,7 @@ public class JVMVisitor extends IRVisitor {
         String scopeString = RuntimeHelpers.encodeScope(scope);
 
         // new CompiledIRMethod
-        jvm.method().adapter.newobj(CodegenUtils.p(CompiledIRMethod.class));
+        jvm.method().adapter.newobj(p(CompiledIRMethod.class));
         jvm.method().adapter.dup();
 
         // emit method body and get handle
@@ -476,7 +479,7 @@ public class JVMVisitor extends IRVisitor {
         jvm.method().adapter.aload(0);
         jvm.method().adapter.aload(1);
         jvm.method().adapter.ldc(scopeString);
-        jvm.method().adapter.invokestatic(CodegenUtils.p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
+        jvm.method().adapter.invokestatic(p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
 
         // get singleton class
         jvm.method().pushRuntime();
@@ -485,13 +488,13 @@ public class JVMVisitor extends IRVisitor {
 
         // set into StaticScope
         jvm.method().adapter.dup2();
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(StaticScope.class), "setModule", CodegenUtils.sig(void.class, RubyModule.class));
+        jvm.method().adapter.invokevirtual(p(StaticScope.class), "setModule", sig(void.class, RubyModule.class));
 
-        jvm.method().adapter.getstatic(CodegenUtils.p(Visibility.class), "PUBLIC", CodegenUtils.ci(Visibility.class));
+        jvm.method().adapter.getstatic(p(Visibility.class), "PUBLIC", ci(Visibility.class));
         jvm.method().adapter.swap();
 
         // invoke constructor
-        jvm.method().adapter.invokespecial(CodegenUtils.p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
+        jvm.method().adapter.invokespecial(p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
 
         // store
         jvm.method().storeLocal(jvm.methodData().local(definemetaclassinstr.getResult()));
@@ -508,7 +511,7 @@ public class JVMVisitor extends IRVisitor {
         String scopeString = RuntimeHelpers.encodeScope(scope);
 
         // new CompiledIRMethod
-        jvm.method().adapter.newobj(CodegenUtils.p(CompiledIRMethod.class));
+        jvm.method().adapter.newobj(p(CompiledIRMethod.class));
         jvm.method().adapter.dup();
 
         // emit method body and get handle
@@ -522,24 +525,24 @@ public class JVMVisitor extends IRVisitor {
         jvm.method().adapter.aload(0);
         jvm.method().adapter.aload(1);
         jvm.method().adapter.ldc(scopeString);
-        jvm.method().adapter.invokestatic(CodegenUtils.p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
+        jvm.method().adapter.invokestatic(p(RuntimeHelpers.class), "decodeLocalScope", "(Lorg/jruby/runtime/ThreadContext;Lorg/jruby/parser/StaticScope;Ljava/lang/String;)Lorg/jruby/parser/StaticScope;");
 
         // create module
         jvm.method().loadLocal(0);
         visit(definemoduleinstr.getContainer());
         jvm.method().invokeHelper("checkIsRubyModule", RubyModule.class, ThreadContext.class, Object.class);
         jvm.method().adapter.ldc(newIRModuleBody.getName());
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(RubyModule.class), "defineOrGetModuleUnder", CodegenUtils.sig(RubyModule.class, String.class));
+        jvm.method().adapter.invokevirtual(p(RubyModule.class), "defineOrGetModuleUnder", sig(RubyModule.class, String.class));
 
         // set into StaticScope
         jvm.method().adapter.dup2();
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(StaticScope.class), "setModule", CodegenUtils.sig(void.class, RubyModule.class));
+        jvm.method().adapter.invokevirtual(p(StaticScope.class), "setModule", sig(void.class, RubyModule.class));
 
-        jvm.method().adapter.getstatic(CodegenUtils.p(Visibility.class), "PUBLIC", CodegenUtils.ci(Visibility.class));
+        jvm.method().adapter.getstatic(p(Visibility.class), "PUBLIC", ci(Visibility.class));
         jvm.method().adapter.swap();
 
         // invoke constructor
-        jvm.method().adapter.invokespecial(CodegenUtils.p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
+        jvm.method().adapter.invokespecial(p(CompiledIRMethod.class), "<init>", "(Ljava/lang/invoke/MethodHandle;Ljava/lang/String;Ljava/lang/String;ILorg/jruby/parser/StaticScope;Lorg/jruby/runtime/Visibility;Lorg/jruby/RubyModule;)V");
 
         // store
         jvm.method().storeLocal(jvm.methodData().local(definemoduleinstr.getResult()));
@@ -640,7 +643,42 @@ public class JVMVisitor extends IRVisitor {
 
     @Override
     public void LoadLocalVarInstr(LoadLocalVarInstr loadlocalvarinstr) {
-        super.LoadLocalVarInstr(loadlocalvarinstr);    //To change body of overridden methods use File | Settings | File Templates.
+        jvm.method().loadLocal(jvm.methodData().local(DYNAMIC_SCOPE));
+        int depth = loadlocalvarinstr.getLocalVar().getScopeDepth();
+        // TODO should not have to subtract 1
+        int location = loadlocalvarinstr.getLocalVar().getLocation() - 1;
+        // TODO if we can avoid loading nil unnecessarily, it could be a big win
+        switch (depth) {
+            case 0:
+                switch (location) {
+                    case 0:
+                        jvm.method().pushNil();
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "getValueZeroDepthZeroOrNil", sig(IRubyObject.class, IRubyObject.class));
+                        return;
+                    case 1:
+                        jvm.method().pushNil();
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "getValueOneDepthZeroOrNil", sig(IRubyObject.class, IRubyObject.class));
+                        return;
+                    case 2:
+                        jvm.method().pushNil();
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "getValueTwoDepthZeroOrNil", sig(IRubyObject.class, IRubyObject.class));
+                        return;
+                    case 3:
+                        jvm.method().pushNil();
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "getValueThreeDepthZeroOrNil", sig(IRubyObject.class, IRubyObject.class));
+                        return;
+                    default:
+                        jvm.method().adapter.pushInt(location);
+                        jvm.method().pushNil();
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "getValueDepthZeroOrNil", sig(IRubyObject.class, int.class, IRubyObject.class));
+                        return;
+                }
+            default:
+                jvm.method().adapter.pushInt(location);
+                jvm.method().adapter.pushInt(depth);
+                jvm.method().pushNil();
+                jvm.method().adapter.invokevirtual(p(DynamicScope.class), "getValueOrNil", sig(IRubyObject.class, int.class, int.class, IRubyObject.class));
+        }
     }
 
     @Override
@@ -708,11 +746,25 @@ public class JVMVisitor extends IRVisitor {
     }
 
     @Override
+    public void PopBindingInstr(PopBindingInstr popbindinginstr) {
+        // TODO pop
+    }
+
+    @Override
     public void ProcessModuleBodyInstr(ProcessModuleBodyInstr processmodulebodyinstr) {
         jvm.method().loadLocal(0);
         visit(processmodulebodyinstr.getModuleBody());
         jvm.method().invokeHelper("invokeModuleBody", IRubyObject.class, ThreadContext.class, CompiledIRMethod.class);
         jvm.method().storeLocal(jvm.methodData().local(processmodulebodyinstr.getResult()));
+    }
+
+    @Override
+    public void PushBindingInstr(PushBindingInstr pushbindinginstr) {
+        jvm.method().loadStaticScope();
+        jvm.method().adapter.invokestatic(p(DynamicScope.class), "newDynamicScope", sig(DynamicScope.class, StaticScope.class));
+        jvm.method().storeLocal(jvm.methodData().local(DYNAMIC_SCOPE));
+
+        // TODO push
     }
 
     @Override
@@ -723,10 +775,10 @@ public class JVMVisitor extends IRVisitor {
     @Override
     public void PutConstInstr(PutConstInstr putconstinstr) {
         visit(putconstinstr.getTarget());
-        jvm.method().adapter.checkcast(CodegenUtils.p(RubyModule.class));
+        jvm.method().adapter.checkcast(p(RubyModule.class));
         jvm.method().adapter.ldc(putconstinstr.getRef());
         visit(putconstinstr.getValue());
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(RubyModule.class), "setConstant", CodegenUtils.sig(IRubyObject.class, String.class, IRubyObject.class));
+        jvm.method().adapter.invokevirtual(p(RubyModule.class), "setConstant", sig(IRubyObject.class, String.class, IRubyObject.class));
         jvm.method().adapter.pop();
     }
 
@@ -750,12 +802,13 @@ public class JVMVisitor extends IRVisitor {
 
     @Override
     public void ReceiveClosureInstr(ReceiveClosureInstr receiveclosureinstr) {
-        // block parameter is always $block and always present
+        jvm.method().loadLocal(jvm.methodData().local("$block"));
+        jvm.method().storeLocal(jvm.methodData().local(receiveclosureinstr.getResult()));
     }
 
     @Override
     public void ReceiveExceptionInstr(ReceiveExceptionInstr receiveexceptioninstr) {
-        super.ReceiveExceptionInstr(receiveexceptioninstr);    //To change body of overridden methods use File | Settings | File Templates.
+        // TODO implement
     }
 
     @Override
@@ -814,7 +867,47 @@ public class JVMVisitor extends IRVisitor {
 
     @Override
     public void StoreLocalVarInstr(StoreLocalVarInstr storelocalvarinstr) {
-        super.StoreLocalVarInstr(storelocalvarinstr);    //To change body of overridden methods use File | Settings | File Templates.
+        jvm.method().loadLocal(jvm.methodData().local(DYNAMIC_SCOPE));
+        int depth = storelocalvarinstr.getLocalVar().getScopeDepth();
+        // TODO should not have to subtract 1
+        int location = storelocalvarinstr.getLocalVar().getLocation() - 1;
+        switch (depth) {
+            case 0:
+                switch (location) {
+                    case 0:
+                        storelocalvarinstr.getValue().visit(this);
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "setValueZeroDepthZero", sig(IRubyObject.class, IRubyObject.class));
+                        jvm.method().adapter.pop();
+                        return;
+                    case 1:
+                        storelocalvarinstr.getValue().visit(this);
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "setValueOneDepthZero", sig(IRubyObject.class, IRubyObject.class));
+                        jvm.method().adapter.pop();
+                        return;
+                    case 2:
+                        storelocalvarinstr.getValue().visit(this);
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "setValueTwoDepthZero", sig(IRubyObject.class, IRubyObject.class));
+                        jvm.method().adapter.pop();
+                        return;
+                    case 3:
+                        storelocalvarinstr.getValue().visit(this);
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "setValueThreeDepthZero", sig(IRubyObject.class, IRubyObject.class));
+                        jvm.method().adapter.pop();
+                        return;
+                    default:
+                        storelocalvarinstr.getValue().visit(this);
+                        jvm.method().adapter.pushInt(location);
+                        jvm.method().adapter.invokevirtual(p(DynamicScope.class), "setValueDepthZero", sig(IRubyObject.class, IRubyObject.class, int.class));
+                        jvm.method().adapter.pop();
+                        return;
+                }
+            default:
+                jvm.method().adapter.pushInt(depth);
+                storelocalvarinstr.getValue().visit(this);
+                jvm.method().adapter.pushInt(location);
+                jvm.method().adapter.invokevirtual(p(DynamicScope.class), "setValue", sig(IRubyObject.class, int.class, IRubyObject.class, int.class));
+                jvm.method().adapter.pop();
+        }
     }
 
     @Override
@@ -824,7 +917,7 @@ public class JVMVisitor extends IRVisitor {
 
     @Override
     public void ThrowExceptionInstr(ThrowExceptionInstr throwexceptioninstr) {
-        super.ThrowExceptionInstr(throwexceptioninstr);    //To change body of overridden methods use File | Settings | File Templates.
+        // TODO implement
     }
 
     @Override
@@ -850,13 +943,13 @@ public class JVMVisitor extends IRVisitor {
 
         jvm.method().loadLocal(0);
         if (yieldinstr.getYieldArg() == UndefinedValue.UNDEFINED) {
-            jvm.method().adapter.invokevirtual(CodegenUtils.p(Block.class), "yieldSpecific", CodegenUtils.sig(IRubyObject.class, ThreadContext.class));
+            jvm.method().adapter.invokevirtual(p(Block.class), "yieldSpecific", sig(IRubyObject.class, ThreadContext.class));
         } else {
             visit(yieldinstr.getYieldArg());
 
             // TODO: if yielding array, call yieldArray
 
-            jvm.method().adapter.invokevirtual(CodegenUtils.p(Block.class), "yield", CodegenUtils.sig(IRubyObject.class, ThreadContext.class, IRubyObject.class));
+            jvm.method().adapter.invokevirtual(p(Block.class), "yield", sig(IRubyObject.class, ThreadContext.class, IRubyObject.class));
         }
 
         jvm.method().storeLocal(jvm.methodData().local(yieldinstr.getResult()));
@@ -905,10 +998,10 @@ public class JVMVisitor extends IRVisitor {
         // TODO: This is suboptimal, not caching ivar offset at all
         jvm.method().pushRuntime();
         visit(hasinstancevarinstr.getObject());
-        jvm.method().adapter.invokeinterface(CodegenUtils.p(IRubyObject.class), "getInstanceVariables", CodegenUtils.sig(InstanceVariables.class));
+        jvm.method().adapter.invokeinterface(p(IRubyObject.class), "getInstanceVariables", sig(InstanceVariables.class));
         jvm.method().adapter.ldc(hasinstancevarinstr.getName().string);
-        jvm.method().adapter.invokeinterface(CodegenUtils.p(InstanceVariables.class), "hasInstanceVariable", CodegenUtils.sig(boolean.class, String.class));
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(Ruby.class), "newBoolean", CodegenUtils.sig(RubyBoolean.class, boolean.class));
+        jvm.method().adapter.invokeinterface(p(InstanceVariables.class), "hasInstanceVariable", sig(boolean.class, String.class));
+        jvm.method().adapter.invokevirtual(p(Ruby.class), "newBoolean", sig(RubyBoolean.class, boolean.class));
         jvm.method().storeLocal(jvm.methodData().local(hasinstancevarinstr.getResult()));
     }
 
@@ -1032,12 +1125,6 @@ public class JVMVisitor extends IRVisitor {
     }
 
     @Override
-    public void CurrentModule(CurrentModule currentmodule) {
-        jvm.method().adapter.aload(1);
-        jvm.method().adapter.invokevirtual(CodegenUtils.p(StaticScope.class), "getModule", CodegenUtils.sig(RubyModule.class));
-    }
-
-    @Override
     public void CurrentScope(CurrentScope currentscope) {
         jvm.method().adapter.aload(1);
     }
@@ -1118,6 +1205,12 @@ public class JVMVisitor extends IRVisitor {
     }
 
     @Override
+    public void ScopeModule(ScopeModule scopemodule) {
+        jvm.method().adapter.aload(1);
+        jvm.method().adapter.invokevirtual(p(StaticScope.class), "getModule", sig(RubyModule.class));
+    }
+
+    @Override
     public void Self(Self self) {
         super.Self(self);    //To change body of overridden methods use File | Settings | File Templates.
     }
@@ -1154,7 +1247,7 @@ public class JVMVisitor extends IRVisitor {
 
     @Override
     public void TemporaryVariable(TemporaryVariable temporaryvariable) {
-        super.TemporaryVariable(temporaryvariable);    //To change body of overridden methods use File | Settings | File Templates.
+        jvm.method().loadLocal(jvm.methodData().local(temporaryvariable));
     }
 
     @Override

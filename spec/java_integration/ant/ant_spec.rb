@@ -84,7 +84,11 @@ describe Ant do
   end
 
   it "should define methods corresponding to ant tasks" do
-    @ant.methods.should include("java", "antcall", "property", "import", "path", "patternset")
+    if RUBY_VERSION =~ /\A1\.8/
+      @ant.methods.should include("java", "antcall", "property", "import", "path", "patternset")
+    else
+      @ant.methods.should include(:java, :antcall, :property, :import, :path, :patternset)
+    end
   end
 
   it "should execute the default target" do
@@ -117,5 +121,17 @@ describe Ant do
     end
     @ant.run
     @ant.properties["msg"].should == "hello"
+  end
+end
+
+describe Ant, '.ant' do
+  it "prefers $ANT_HOME to $PATH" do
+    if ENV['ANT_HOME']
+      hide_ant_from_path
+      lambda { Ant.ant(:basedir => File.join(File.dirname(__FILE__), '..', '..', '..')) }.
+        should_not raise_error
+    else
+      pending '$ANT_HOME is not set'
+    end
   end
 end

@@ -68,7 +68,9 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.CodingErrorAction;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 import org.jcodings.Encoding;
 import org.jcodings.EncodingDB;
@@ -383,9 +385,14 @@ public class RubyString extends RubyObject implements EncodingCapable {
     public RubyString(Ruby runtime, RubyClass rubyClass, CharSequence value) {
         super(runtime, rubyClass);
         assert value != null;
-        byte[] bytes = RubyEncoding.encodeUTF8(value);
-        this.value = new ByteList(bytes, false);
-        this.value.setEncoding(UTF8);
+        Charset charset = null;
+        Encoding defaultEncoding = runtime.getEncodingService().getLocaleEncoding();
+        if (defaultEncoding == null) defaultEncoding = UTF8;
+
+        charset = defaultEncoding.getCharset();
+        byte[] bytes = RubyEncoding.encode(value, charset);
+
+        this.value = new ByteList(bytes, defaultEncoding, false);
     }
 
     public RubyString(Ruby runtime, RubyClass rubyClass, byte[] value) {
@@ -7464,8 +7471,33 @@ public class RubyString extends RubyObject implements EncodingCapable {
                 getEncoding(runtime, toEncoding), opts));
     }
 
+    // Java seems to find these specific Java charsets but they seem to trancode
+    // some strings a little differently than MRI.  Since Java Charset transcoding
+    // is a temporary implementation for us, having this gruesome hack is ok
+    // for the time being.
+    private static Set<String> BAD_TRANSCODINGS_HACK = new HashSet<String>() {{
+        add("ISO-2022-JP-2");
+        add("CP50220");
+        add("CP50221");
+    }};
+
     private static Charset lookupCharsetFor(Ruby runtime, Encoding encoding, String fromName, String toName) {
         Charset from = null;
+        String realEncodingName = new String(encoding.getName());
+        
+        // Doing a manual forName over and over sucks, but this is only meant
+        // to be a transitional impl.  The reason for this extra mechanism is 
+        // that jcodings is representing these encodings with an alias.  So,
+        // for example, IBM866 ends up being associated with ISO-8859-1 which
+        // will not know how to trancsode higher than ascii values properly.
+        if (!realEncodingName.equals(encoding.getCharsetName()) && !BAD_TRANSCODINGS_HACK.contains(realEncodingName)) {
+            try {
+                from = Charset.forName(realEncodingName);
+                if (from != null) {
+                    return from;
+                }
+            } catch (Exception e) {}
+        }
         try {
             from = encoding.getCharset();
             if (from != null) return from;

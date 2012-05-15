@@ -16,6 +16,9 @@ import org.jruby.util.ByteList;
 
 import java.nio.charset.Charset;
 import java.nio.charset.UnsupportedCharsetException;
+import java.util.Iterator;
+import org.jruby.RubyFixnum;
+import org.jruby.ext.nkf.RubyNKF;
 
 public final class EncodingService {
     private final CaseInsensitiveBytesHash<Entry> encodings;
@@ -250,10 +253,28 @@ public final class EncodingService {
         Encoding encoding = null;
         if (arg instanceof RubyEncoding) {
             encoding = ((RubyEncoding) arg).getEncoding();
+        } else if (arg instanceof RubyFixnum && RubyNKF.NKFCharsetMap.containsKey((int)arg.convertToInteger().getLongValue())) {
+            return getEncodingFromNKFId(arg);
         } else if (!arg.isNil()) {
             encoding = arg.convertToString().toEncoding(runtime);
         }
         return encoding;
+    }
+    
+    private Encoding getEncodingFromNKFId(IRubyObject id) {
+        String name = RubyNKF.NKFCharsetMap.get((int)id.convertToInteger().getLongValue());
+        HashEntryIterator hei = encodings.entryIterator();
+        while (hei.hasNext()) {
+            CaseInsensitiveBytesHash.CaseInsensitiveBytesHashEntry<Entry> e = 
+                ((CaseInsensitiveBytesHash.CaseInsensitiveBytesHashEntry<Entry>)hei.next());
+            EncodingDB.Entry ee = e.value;
+            String className = ee.getEncodingClass();
+            if (className.equals(name)) {
+                Encoding enc = ee.getEncoding();
+                return enc;
+            }
+        }
+        return null;   
     }
 
     public Encoding getEncodingFromString(String string) {
@@ -394,7 +415,6 @@ public final class EncodingService {
     /**
      * Find a non-special encoding Entry, raising argument error if it does not exist.
      *
-     * @param runtime current Ruby instance
      * @param name the name of the encoding to look up
      * @return the EncodingDB.Entry object found, or raises ArgumentError
      */
