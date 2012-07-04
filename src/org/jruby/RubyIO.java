@@ -165,7 +165,7 @@ public class RubyIO extends RubyObject {
         
         // We only want IO objects with valid streams (better to error now). 
         if (channel == null) {
-            throw runtime.newRuntimeError("Opening null channelpo");
+            throw runtime.newRuntimeError("Opening null channel");
         }
         
         openFile = new OpenFile();
@@ -622,13 +622,21 @@ public class RubyIO extends RubyObject {
         IRubyObject result = getlineInner(runtime, separator, limit, cache);
 
         if (runtime.is1_9() && !result.isNil()) {
-            Encoding internal = getInternalEncoding(runtime);
+            Encoding internal = internalEncoding;
+            Encoding external = externalEncoding;
 
-            if (internal != null) {
-                result = RubyString.newStringNoCopy(runtime,
-                        RubyString.transcode(runtime.getCurrentContext(),
-                        ((RubyString) result).getByteList(), getExternalEncoding(runtime), internal,
-                        runtime.getNil()));
+            if (internal != external) {
+                ByteList transcoded = RubyString.transcode(
+                        runtime.getCurrentContext(),
+                        ((RubyString) result).getByteList(),
+                        external, internal,
+                        runtime.getNil());
+
+                RubyString newResult = RubyString.newStringNoCopy(runtime, transcoded);
+
+                newResult.infectBy(result);
+
+                result = newResult;
             }
         }
 
@@ -659,7 +667,7 @@ public class RubyIO extends RubyObject {
                 return str;
             } else if (limit == 0) {
                 if (runtime.is1_9()) {
-                    return RubyString.newEmptyString(runtime, getExternalEncoding(runtime));
+                    return RubyString.newEmptyString(runtime, externalEncoding);
                 } else {
                     return RubyString.newEmptyString(runtime);
                 }
@@ -3288,7 +3296,7 @@ public class RubyIO extends RubyObject {
         runtime.checkSafeString(filename);
 
         RubyIO io = (RubyIO)RubyFile.open(context, runtime.getFile(), new IRubyObject[] { filename }, Block.NULL_BLOCK);
-        
+
         ByteListCache cache = new ByteListCache();
         if (!io.isNil()) {
             try {

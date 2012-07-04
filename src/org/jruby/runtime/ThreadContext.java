@@ -41,6 +41,7 @@ import org.jruby.runtime.profile.IProfileData;
 import java.util.ArrayList;
 import org.jruby.runtime.profile.ProfileData;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.jruby.runtime.scope.ManyVarsDynamicScope;
 
@@ -61,6 +62,7 @@ import org.jruby.runtime.backtrace.TraceType;
 import org.jruby.runtime.backtrace.TraceType.Gather;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.RecursiveComparator;
+import org.jruby.util.RubyDateFormat;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
@@ -87,11 +89,10 @@ public final class ThreadContext {
     // Is this thread currently with in a function trace?
     private boolean isWithinTrace;
     
-    // Is this thread currently doing an defined? defined should set things like $!
-    private boolean isWithinDefined;
-    
     private RubyThread thread;
     private Fiber fiber;
+    // Cache format string because it is expensive to create on demand
+    private RubyDateFormat dateFormat;
     
     private RubyModule[] parentStack = new RubyModule[INITIAL_SIZE];
     private int parentIndex = -1;
@@ -280,6 +281,12 @@ public final class ThreadContext {
     
     public RubyThread getThread() {
         return thread;
+    }
+    
+    public RubyDateFormat getRubyDateFormat() {
+        if (dateFormat == null) dateFormat = new RubyDateFormat("-", Locale.US, runtime.is1_9());
+        
+        return dateFormat;
     }
     
     public void setThread(RubyThread thread) {
@@ -695,7 +702,7 @@ public final class ThreadContext {
     }
     
     /**
-     * Create an Array with backtrace information.
+     * Create an Array with backtrace information for Kernel#caller
      * @param runtime
      * @param level
      * @return an Array with the backtrace
@@ -703,7 +710,7 @@ public final class ThreadContext {
     public IRubyObject createCallerBacktrace(Ruby runtime, int level) {
         runtime.incrementCallerCount();
         
-        RubyStackTraceElement[] trace = gatherCallerBacktrace(level);
+        RubyStackTraceElement[] trace = gatherCallerBacktrace();
         
         RubyArray newTrace = runtime.newArray(trace.length - level);
 
@@ -715,8 +722,23 @@ public final class ThreadContext {
         
         return newTrace;
     }
+
+    /**
+     * Create an Array with backtrace information for a built-in warning
+     * @param runtime
+     * @return an Array with the backtrace
+     */
+    public RubyStackTraceElement[] createWarningBacktrace(Ruby runtime) {
+        runtime.incrementWarningCount();
+
+        RubyStackTraceElement[] trace = gatherCallerBacktrace();
+
+        if (RubyInstanceConfig.LOG_WARNINGS) TraceType.dumpWarning(trace);
+
+        return trace;
+    }
     
-    public RubyStackTraceElement[] gatherCallerBacktrace(int level) {
+    public RubyStackTraceElement[] gatherCallerBacktrace() {
         Thread nativeThread = thread.getNativeThread();
 
         // Future thread or otherwise unforthgiving thread impl.
@@ -1172,24 +1194,6 @@ public final class ThreadContext {
         this.isWithinTrace = isWithinTrace;
     }
     
-    /**
-     * Is this thread actively in defined? at the moment.
-     *
-     * @return true if within defined?
-     */
-    public boolean isWithinDefined() {
-        return isWithinDefined;
-    }
-    
-    /**
-     * Set whether we are actively within defined? or not.
-     *
-     * @param isWithinDefined true if so
-     */
-    public void setWithinDefined(boolean isWithinDefined) {
-        this.isWithinDefined = isWithinDefined;
-    }
-
     /**
      * Return a binding representing the current call's state
      * @return the current binding

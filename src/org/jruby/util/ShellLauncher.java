@@ -75,6 +75,7 @@ import org.jruby.util.io.IOOptions;
  * Runtime.getRuntime().exec(). Thanks dude, that really helped.
  * @author nicksieger
  */
+@SuppressWarnings("deprecation")
 public class ShellLauncher {
     private static final boolean DEBUG = false;
 
@@ -210,31 +211,43 @@ public class ShellLauncher {
         }
     }
 
-    private static String[] getCurrentEnv(Ruby runtime) {
+    public static String[] getCurrentEnv(Ruby runtime) {
         return getCurrentEnv(runtime, null);
     }
 
     private static String[] getCurrentEnv(Ruby runtime, Map mergeEnv) {
-        RubyHash hash = (RubyHash)runtime.getObject().getConstant("ENV");
-        String[] ret;
-        
-        if (mergeEnv != null && !mergeEnv.isEmpty()) {
-            ret = new String[hash.size() + mergeEnv.size()];
-        } else {
-            ret = new String[hash.size()];
-        }
+        ThreadContext context = runtime.getCurrentContext();
 
-        int i=0;
-        for(Map.Entry e : (Set<Map.Entry>)hash.directEntrySet()) {
-            ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
-            i++;
-        }
-        if (mergeEnv != null) for(Map.Entry e : (Set<Map.Entry>)mergeEnv.entrySet()) {
-            ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
-            i++;
-        }
+        // disable tracing for the dup call below
+        boolean traceEnabled = context.isEventHooksEnabled();
+        context.setEventHooksEnabled(false);
 
-        return ret;
+        try {
+            // dup for JRUBY-6603 (avoid concurrent modification while we walk it)
+            RubyHash hash = (RubyHash)runtime.getObject().getConstant("ENV").dup();
+            String[] ret;
+
+            if (mergeEnv != null && !mergeEnv.isEmpty()) {
+                ret = new String[hash.size() + mergeEnv.size()];
+            } else {
+                ret = new String[hash.size()];
+            }
+
+            int i=0;
+            for(Map.Entry e : (Set<Map.Entry>)hash.directEntrySet()) {
+                ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
+                i++;
+            }
+            if (mergeEnv != null) for(Map.Entry e : (Set<Map.Entry>)mergeEnv.entrySet()) {
+                ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
+                i++;
+            }
+
+            return ret;
+
+        } finally {
+            context.setEventHooksEnabled(traceEnabled);
+        }
     }
 
     private static boolean filenameIsPathSearchable(String fname, boolean forExec) {
@@ -964,8 +977,8 @@ public class ShellLauncher {
         }
     }
 
-    private static class LaunchConfig {
-        LaunchConfig(Ruby runtime, IRubyObject[] rawArgs, boolean doExecutableSearch) {
+    public static class LaunchConfig {
+        public LaunchConfig(Ruby runtime, IRubyObject[] rawArgs, boolean doExecutableSearch) {
             this.runtime = runtime;
             this.rawArgs = rawArgs;
             this.doExecutableSearch = doExecutableSearch;
@@ -977,7 +990,7 @@ public class ShellLauncher {
          * Only run an in-process script if the script name has "ruby", ".rb",
          * or "irb" in the name.
          */
-        private boolean shouldRunInProcess() {
+        public boolean shouldRunInProcess() {
             if (!runtime.getInstanceConfig().isRunRubyInProcess()
                     || RubyInstanceConfig.hasLoadedNativeExtensions()) {
                 return false;
@@ -1048,7 +1061,7 @@ public class ShellLauncher {
          * In that case it's better to try passing the bare arguments to runtime.exec.
          * On all other platforms we'll always run the command in the shell.
          */
-        private boolean shouldRunInShell() {
+        public boolean shouldRunInShell() {
             if (rawArgs.length != 1) {
                 // this is the case when exact executable and its parameters passed,
                 // in such cases MRI just executes it, without any shell.
@@ -1096,7 +1109,7 @@ public class ShellLauncher {
             return false;
         }
 
-        private void verifyExecutableForShell() {
+        public void verifyExecutableForShell() {
             String cmdline = rawArgs[0].toString().trim();
             if (doExecutableSearch && shouldVerifyPathExecutable(cmdline) && !cmdBuiltin) {
                 verifyExecutable();
@@ -1116,7 +1129,7 @@ public class ShellLauncher {
             }
         }
 
-        private void verifyExecutableForDirect() {
+        public void verifyExecutableForDirect() {
             verifyExecutable();
             execArgs = args;
             try {
@@ -1138,7 +1151,7 @@ public class ShellLauncher {
             }
         }
 
-        private String[] getExecArgs() {
+        public String[] getExecArgs() {
             return execArgs;
         }
 
@@ -1261,15 +1274,17 @@ public class ShellLauncher {
                         runtime, cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
                 ipScript.start();
                 return ipScript;
-            } else if (cfg.shouldRunInShell()) {
-                log(runtime, "Launching with shell");
-                // execute command with sh -c
-                // this does shell expansion of wildcards
-                cfg.verifyExecutableForShell();
-                aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
             } else {
-                log(runtime, "Launching directly (no shell)");
-                cfg.verifyExecutableForDirect();
+                if (cfg.shouldRunInShell()) {
+                    log(runtime, "Launching with shell");
+                    // execute command with sh -c
+                    // this does shell expansion of wildcards
+                    cfg.verifyExecutableForShell();
+                } else {
+                    log(runtime, "Launching directly (no shell)");
+                    cfg.verifyExecutableForDirect();
+                }
+
                 aProcess = buildProcess(runtime, cfg.getExecArgs(), getCurrentEnv(runtime), pwd);
             }
         } catch (SecurityException se) {
@@ -1360,6 +1375,7 @@ public class ShellLauncher {
             synchronized (waitLock) {
                 waitLock.notify();
             }
+            stop();
         }
     }
 
@@ -1411,6 +1427,7 @@ public class ShellLauncher {
         public void quit() {
             interrupt();
             this.quit = true;
+            stop();
         }
     }
 
@@ -1446,6 +1463,14 @@ public class ShellLauncher {
         // Note: On some platforms, even interrupt might not
         // have an effect if the thread is IO blocked.
         try { t3.interrupt(); } catch (SecurityException se) {}
+
+        // finally, forcibly stop the threads. Yeah, I know.
+        t1.stop();
+        t2.stop();
+        t3.stop();
+        try { t1.join(); } catch (InterruptedException ie) {}
+        try { t2.join(); } catch (InterruptedException ie) {}
+        try { t3.join(); } catch (InterruptedException ie) {}
     }
 
     private static void handleStreamsNonblocking(Ruby runtime, Process p, OutputStream out, OutputStream err) throws IOException {
@@ -1463,23 +1488,50 @@ public class ShellLauncher {
     private static String[] parseCommandLine(ThreadContext context, Ruby runtime, IRubyObject[] rawArgs) {
         String[] args;
         if (rawArgs.length == 1) {
-            synchronized (runtime.getLoadService()) {
-                runtime.getLoadService().require("jruby/path_helper");
-            }
-            RubyModule pathHelper = runtime.getClassFromPath("JRuby::PathHelper");
-            RubyArray parts = (RubyArray) RuntimeHelpers.invoke(
-                    context, pathHelper, "smart_split_command", rawArgs);
-            args = new String[parts.getLength()];
-            for (int i = 0; i < parts.getLength(); i++) {
-                args[i] = parts.entry(i).toString();
+            if (hasLeadingArgvArray(rawArgs)) {
+                // can't make use of it, discard the argv[0] entry
+                args = new String[] { getPathEntry((RubyArray) rawArgs[0]) };
+            } else {
+                synchronized (runtime.getLoadService()) {
+                    runtime.getLoadService().require("jruby/path_helper");
+                }
+                RubyModule pathHelper = runtime.getClassFromPath("JRuby::PathHelper");
+                RubyArray parts = (RubyArray) RuntimeHelpers.invoke(
+                                                                    context, pathHelper, "smart_split_command", rawArgs);
+                args = new String[parts.getLength()];
+                for (int i = 0; i < parts.getLength(); i++) {
+                    args[i] = parts.entry(i).toString();
+                }
             }
         } else {
             args = new String[rawArgs.length];
-            for (int i = 0; i < rawArgs.length; i++) {
+            int start = 0;
+            if (hasLeadingArgvArray(rawArgs)) {
+                start = 1;
+                args[0] = getPathEntry((RubyArray) rawArgs[0]);
+            }
+            for (int i = start; i < rawArgs.length; i++) {
                 args[i] = rawArgs[i].toString();
             }
         }
         return args;
+    }
+
+    /** Takes an argument array suitable for Kernel#exec or similar,
+     * and indicates whether it has a leading two-element array giving
+     * the path and argv[0] entries separately.
+     *
+     * We can't use the argv[0] entry through ProcessBuilder, so
+     * we discard it.
+     */
+    private static boolean hasLeadingArgvArray(IRubyObject[] rawArgs) {
+        return (rawArgs.length >= 1
+                && (rawArgs[0] instanceof RubyArray)
+                && (((RubyArray) rawArgs[0]).getLength() == 2));
+    }
+
+    private static String getPathEntry(RubyArray initArray) {
+        return initArray.entry(0).toString();
     }
 
     private static String getShell(Ruby runtime) {

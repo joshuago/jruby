@@ -46,6 +46,7 @@ import static org.jruby.CompatVersion.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.security.AccessControlException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -56,6 +57,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+
 import org.jruby.anno.AnnotationBinder;
 
 import org.jruby.anno.JRubyClass;
@@ -1094,7 +1097,7 @@ public class RubyModule extends RubyObject {
         return entry;
     }
     
-    protected DynamicMethod searchMethodInner(String name) {
+    public DynamicMethod searchMethodInner(String name) {
         DynamicMethod method = getMethods().get(name);
         
         if (method != null) return method;
@@ -2345,19 +2348,19 @@ public class RubyModule extends RubyObject {
         return this;
     }
 
-    @JRubyMethod(name = {"module_eval", "class_eval"}, frame = true)
+    @JRubyMethod(name = {"module_eval", "class_eval"})
     public IRubyObject module_eval(ThreadContext context, Block block) {
         return specificEval(context, this, block);
     }
-    @JRubyMethod(name = {"module_eval", "class_eval"}, frame = true)
+    @JRubyMethod(name = {"module_eval", "class_eval"})
     public IRubyObject module_eval(ThreadContext context, IRubyObject arg0, Block block) {
         return specificEval(context, this, arg0, block);
     }
-    @JRubyMethod(name = {"module_eval", "class_eval"}, frame = true)
+    @JRubyMethod(name = {"module_eval", "class_eval"})
     public IRubyObject module_eval(ThreadContext context, IRubyObject arg0, IRubyObject arg1, Block block) {
         return specificEval(context, this, arg0, arg1, block);
     }
-    @JRubyMethod(name = {"module_eval", "class_eval"}, frame = true)
+    @JRubyMethod(name = {"module_eval", "class_eval"})
     public IRubyObject module_eval(ThreadContext context, IRubyObject arg0, IRubyObject arg1, IRubyObject arg2, Block block) {
         return specificEval(context, this, arg0, arg1, arg2, block);
     }
@@ -2366,7 +2369,7 @@ public class RubyModule extends RubyObject {
         return specificEval(context, this, args, block);
     }
 
-    @JRubyMethod(name = {"module_exec", "class_exec"}, frame = true)
+    @JRubyMethod(name = {"module_exec", "class_exec"})
     public IRubyObject module_exec(ThreadContext context, Block block) {
         if (block.isGiven()) {
             return yieldUnder(context, this, IRubyObject.NULL_ARRAY, block);
@@ -2375,7 +2378,7 @@ public class RubyModule extends RubyObject {
         }
     }
 
-    @JRubyMethod(name = {"module_exec", "class_exec"}, rest = true, frame = true)
+    @JRubyMethod(name = {"module_exec", "class_exec"}, rest = true)
     public IRubyObject module_exec(ThreadContext context, IRubyObject[] args, Block block) {
         if (block.isGiven()) {
             return yieldUnder(context, this, args, block);
@@ -3304,14 +3307,59 @@ public class RubyModule extends RubyObject {
     //
 
     protected Map<String, IRubyObject> getClassVariables() {
-        if (classVariables == Collections.EMPTY_MAP) {
+        if (CLASSVARS_UPDATER == null) {
+            return getClassVariablesForWriteSynchronized();
+        } else {
+            return getClassVariablesForWriteAtomic();
+        }
+    }
+
+    /**
+     * Get the class variables for write. If it is not set or not of the right size,
+     * synchronize against the object and prepare it accordingly.
+     *
+     * @return the class vars map, ready for assignment
+     */
+    private Map<String,IRubyObject> getClassVariablesForWriteSynchronized() {
+        Map myClassVars = classVariables;
+        if (myClassVars == Collections.EMPTY_MAP) {
             synchronized (this) {
-                if (classVariables == Collections.EMPTY_MAP) {
-                    classVariables = new ConcurrentHashMap<String, IRubyObject>(4, 0.75f, 2);
+                myClassVars = classVariables;
+
+                if (myClassVars == Collections.EMPTY_MAP) {
+                    return classVariables = new ConcurrentHashMap<String, IRubyObject>(4, 0.75f, 2);
+                } else {
+                    return myClassVars;
                 }
             }
         }
-        return classVariables;
+
+        return myClassVars;
+    }
+
+
+    /**
+     * Get the class variables for write. If it is not set or not of the right size,
+     * atomically update it with an appropriate value.
+     *
+     * @return the class vars map, ready for assignment
+     */
+    private Map<String,IRubyObject> getClassVariablesForWriteAtomic() {
+        while (true) {
+            Map myClassVars = classVariables;
+            Map newClassVars;
+
+            if (myClassVars == Collections.EMPTY_MAP) {
+                newClassVars = new ConcurrentHashMap<String, IRubyObject>(4, 0.75f, 2);
+            } else {
+                return myClassVars;
+            }
+
+            // proceed with atomic update of table, or retry
+            if (CLASSVARS_UPDATER.compareAndSet(this, myClassVars, newClassVars)) {
+                return newClassVars;
+            }
+        }
     }
 
     protected Map<String, IRubyObject> getClassVariablesForRead() {
@@ -3837,6 +3885,22 @@ public class RubyModule extends RubyObject {
     public int index;
 
     private volatile Map<String, IRubyObject> classVariables = Collections.EMPTY_MAP;
+
+    private static final AtomicReferenceFieldUpdater CLASSVARS_UPDATER;
+
+    static {
+        AtomicReferenceFieldUpdater updater = null;
+        try {
+            updater = AtomicReferenceFieldUpdater.newUpdater(RubyModule.class, Map.class, "classVariables");
+        } catch (RuntimeException re) {
+            if (re.getCause() instanceof AccessControlException) {
+                // security prevented creation; fall back on synchronized assignment
+            } else {
+                throw re;
+            }
+        }
+        CLASSVARS_UPDATER = updater;
+    }
     
     // Invalidator used for method caches
     protected final Invalidator methodInvalidator;

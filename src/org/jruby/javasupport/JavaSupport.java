@@ -40,6 +40,7 @@ import java.lang.reflect.Member;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -49,9 +50,11 @@ import org.jruby.RubyModule;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.exceptions.Unrescuable;
 import org.jruby.java.proxies.ProxyCache;
+import org.jruby.javasupport.proxy.JavaProxyClass;
 import org.jruby.javasupport.util.ObjectProxyCache;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.WeakIdentityHashMap;
+import org.jruby.util.cli.Options;
 
 public class JavaSupport {
     private static final Map<String,Class> PRIMITIVE_CLASSES = new HashMap<String,Class>();
@@ -87,19 +90,27 @@ public class JavaSupport {
     
     static {
         Constructor<? extends ProxyCache> constructor = null;
-        try {
-            // try to load the ClassValue class. If it succeeds, we can use our
-            // ClassValue-based cache.
-            Class.forName("java.lang.ClassValue");
-            constructor = (Constructor<ProxyCache>)Class.forName("org.jruby.java.proxies.ClassValueProxyCache").getConstructor(Ruby.class);
+
+        if (Options.INVOKEDYNAMIC_CLASS_VALUES.load()) {
+            try {
+                // try to load the ClassValue class. If it succeeds, we can use our
+                // ClassValue-based cache.
+                Class.forName("java.lang.ClassValue");
+                constructor = (Constructor<ProxyCache>)Class.forName("org.jruby.java.proxies.ClassValueProxyCache").getConstructor(Ruby.class);
+            }
+            catch (Exception ex) {
+                // fall through to Map version
+            }
         }
-        catch (Exception ex) {
+
+        if (constructor == null) {
             try {
                 constructor = MapBasedProxyCache.class.getConstructor(Ruby.class);
             } catch (Exception ex2) {
                 throw new RuntimeException(ex2);
             }
         }
+
         PROXY_CACHE_CONSTRUCTOR = constructor;
     }
 
@@ -124,6 +135,9 @@ public class JavaSupport {
     private final Map<String, JavaClass> nameClassMap = new HashMap<String, JavaClass>();
 
     private final Map<Object, Object[]> javaObjectVariables = new WeakIdentityHashMap();
+
+    // A cache of all JavaProxyClass objects created for this runtime
+    private Map<Set<?>, JavaProxyClass> javaProxyClassCache = Collections.synchronizedMap(new HashMap<Set<?>, JavaProxyClass>());
     
     public JavaSupport(Ruby ruby) {
         this.runtime = ruby;
@@ -340,6 +354,10 @@ public class JavaSupport {
         RubyClass clazz;
         if ((clazz = javaConstructorClass) != null) return clazz;
         return javaConstructorClass = getJavaModule().getClass("JavaConstructor");
+    }
+
+    public Map<Set<?>, JavaProxyClass> getJavaProxyClassCache() {
+        return this.javaProxyClassCache;
     }
 
 }

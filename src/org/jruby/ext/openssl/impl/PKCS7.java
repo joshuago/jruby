@@ -29,7 +29,6 @@ package org.jruby.ext.openssl.impl;
 
 import java.io.IOException;
 import java.math.BigInteger;
-import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -65,7 +64,6 @@ import org.bouncycastle.asn1.DERUTCTime;
 import org.bouncycastle.asn1.pkcs.IssuerAndSerialNumber;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.X509Name;
-import org.jruby.ext.openssl.OpenSSLReal;
 import org.jruby.ext.openssl.x509store.Name;
 import org.jruby.ext.openssl.x509store.Store;
 import org.jruby.ext.openssl.x509store.StoreContext;
@@ -79,6 +77,9 @@ import org.jruby.ext.openssl.x509store.X509Utils;
  * @author <a href="mailto:ola.bini@gmail.com">Ola Bini</a>
  */
 public class PKCS7 {
+    // OpenSSL behavior: PKCS#7 ObjectId for "ITU-T" + "0"
+    private static final String EMPTY_PKCS7_OID = "0.0";
+    
 	/* content as defined by the type */
 	/* all encryption/message digests are applied to the 'contents',
 	 * leaving out the 'type' field. */
@@ -112,22 +113,27 @@ public class PKCS7 {
      * ContentType ::= OBJECT IDENTIFIER
      */
     public static PKCS7 fromASN1(DEREncodable obj) throws PKCS7Exception {
-        int size = ((ASN1Sequence)obj).size();
-        if(size == 0) {
-            return new PKCS7();
-        }
-
-        DERObjectIdentifier contentType = (DERObjectIdentifier)(((ASN1Sequence)obj).getObjectAt(0));
-        int nid = ASN1Registry.obj2nid(contentType);
-        
-        DEREncodable content = size == 1 ? (DEREncodable)null : ((ASN1Sequence)obj).getObjectAt(1);
-
-        if(content != null && content instanceof DERTaggedObject && ((DERTaggedObject)content).getTagNo() == 0) {
-            content = ((DERTaggedObject)content).getObject();
-        }
-        
         PKCS7 p7 = new PKCS7();
-        p7.initiateWith(nid, content);
+
+        int size = ((ASN1Sequence) obj).size();
+        if (size == 0) {
+            return p7;
+        }
+
+        DERObjectIdentifier contentType = (DERObjectIdentifier) (((ASN1Sequence) obj).getObjectAt(0));
+        if (EMPTY_PKCS7_OID.equals(contentType.getId())) {
+            // OpenSSL behavior
+            p7.setType(ASN1Registry.NID_undef);
+        } else {
+            Integer nid = ASN1Registry.obj2nid(contentType);
+
+            DEREncodable content = size == 1 ? (DEREncodable) null : ((ASN1Sequence) obj).getObjectAt(1);
+
+            if (content != null && content instanceof DERTaggedObject && ((DERTaggedObject) content).getTagNo() == 0) {
+                content = ((DERTaggedObject) content).getObject();
+            }
+            p7.initiateWith(nid, content);
+        }
         return p7;
     }
 
@@ -141,10 +147,17 @@ public class PKCS7 {
 
     public ASN1Encodable asASN1() {
         ASN1EncodableVector vector = new ASN1EncodableVector();
-        DERObjectIdentifier contentType = ASN1Registry.nid2obj(getType());
+        DERObjectIdentifier contentType;
+        if (data == null) {
+            // OpenSSL behavior
+            contentType = new DERObjectIdentifier(EMPTY_PKCS7_OID);
+        } else {
+            contentType = ASN1Registry.nid2obj(getType());
+        }
         vector.add(contentType);
-        vector.add(new DERTaggedObject(0, data.asASN1()));
-
+        if (data != null) {
+            vector.add(new DERTaggedObject(0, data.asASN1()));
+        }
         return new DERSequence(vector);
     }
 
@@ -228,7 +241,7 @@ public class PKCS7 {
             throw new PKCS7Exception(F_PKCS7_SIGNATUREVERIFY, R_WRONG_PKCS7_TYPE);
         }
 
-        int md_type = ASN1Registry.obj2nid(si.getDigestAlgorithm().getObjectId());
+        int md_type = ASN1Registry.obj2nid(si.getDigestAlgorithm().getObjectId()).intValue();
         BIO btmp = bio;
         MessageDigest mdc = null;
 
@@ -498,6 +511,9 @@ public class PKCS7 {
      */
     public void setType(int type) throws PKCS7Exception {
         switch(type) {
+        case ASN1Registry.NID_undef:
+            this.data = null;
+            break;
         case ASN1Registry.NID_pkcs7_signed:
             this.data = new PKCS7DataSigned();
             break;
@@ -660,7 +676,7 @@ public class PKCS7 {
             dataBody = getSignedAndEnveloped().getEncData().getEncData().getOctets();
             encAlg = getSignedAndEnveloped().getEncData().getAlgorithm();
             try {
-                evpCipher = getCipher(encAlg.getObjectId());
+                evpCipher = EVP.getCipher(encAlg.getAlgorithm());
             } catch(Exception e) {
                 e.printStackTrace(System.err);
                 throw new PKCS7Exception(F_PKCS7_DATADECODE, R_UNSUPPORTED_CIPHER_TYPE, e);
@@ -671,7 +687,7 @@ public class PKCS7 {
             dataBody = getEnveloped().getEncData().getEncData().getOctets();
             encAlg = getEnveloped().getEncData().getAlgorithm();
             try {
-                evpCipher = getCipher(encAlg.getObjectId());
+                evpCipher = EVP.getCipher(encAlg.getAlgorithm());
             } catch(Exception e) {
                 e.printStackTrace(System.err);
                 throw new PKCS7Exception(F_PKCS7_DATADECODE, R_UNSUPPORTED_CIPHER_TYPE, e);
@@ -685,7 +701,7 @@ public class PKCS7 {
         if(mdSk != null) {
             for(AlgorithmIdentifier xa : mdSk) {
                 try {
-                    MessageDigest evpMd = EVP.getDigest(xa.getObjectId());
+                    MessageDigest evpMd = EVP.getDigest(xa.getAlgorithm());
                     btmp = BIO.mdFilter(evpMd);
                     if(out == null) {
                         out = btmp;
@@ -753,20 +769,21 @@ public class PKCS7 {
 
             DEREncodable params = encAlg.getParameters();
             try {
+                String algo = org.jruby.ext.openssl.Cipher.Algorithm.getAlgorithmBase(evpCipher);
                 if(params != null && params instanceof ASN1OctetString) {
-                    if (evpCipher.getAlgorithm().startsWith("RC2")) {
+                    if (algo.startsWith("RC2")) {
                         // J9's IBMJCE needs this exceptional RC2 support.
                         // Giving IvParameterSpec throws 'Illegal parameter' on IBMJCE.
-                        SecretKeySpec sks = new SecretKeySpec(tmp, evpCipher.getAlgorithm());
+                        SecretKeySpec sks = new SecretKeySpec(tmp, algo);
                         RC2ParameterSpec s = new RC2ParameterSpec(tmp.length * 8, ((ASN1OctetString) params).getOctets());
                         evpCipher.init(Cipher.DECRYPT_MODE, sks, s);
                     } else {
-                        SecretKeySpec sks = new SecretKeySpec(tmp, evpCipher.getAlgorithm());
+                        SecretKeySpec sks = new SecretKeySpec(tmp, algo);
                         IvParameterSpec iv = new IvParameterSpec(((ASN1OctetString) params).getOctets());
                         evpCipher.init(Cipher.DECRYPT_MODE, sks, iv);
                     }
                 } else {
-                    evpCipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(tmp, evpCipher.getAlgorithm()));
+                    evpCipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(tmp, algo));
                 }
             } catch(Exception e) {
                 e.printStackTrace(System.err);
@@ -794,17 +811,6 @@ public class PKCS7 {
         out.push(bio);
         bio = null;
         return out;
-    }
-
-    // Without Java Cryptography Extension (JCE) Unlimited Strength Jurisdiction Policy Files,
-    // getting Cipher object via OID(1.2.840.113549.3.7 - DES-EDE3-CBC) causes 'Illegal Key Length'
-    // exception. To avoid this, we get Cipher object via algo name(DESede/cbc/PKCS5Padding).
-    private static Cipher getCipher(DERObjectIdentifier oid) throws GeneralSecurityException {
-        // check DES-EDE3-CBC
-        if (oid.getId().equals("1.2.840.113549.3.7")) {
-            return OpenSSLReal.getCipherBC("DESede/cbc/PKCS5Padding");
-        }
-        return EVP.getCipher(oid);
     }
 
     /** c: PKCS7_dataInit

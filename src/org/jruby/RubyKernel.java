@@ -277,9 +277,17 @@ public class RubyKernel {
         Ruby runtime = context.getRuntime();
 
         if (arg.startsWith("|")) {
-            String command = arg.substring(1);
+            IRubyObject command = runtime.newString(arg.substring(1));
+
+            final IRubyObject[] popenArgs;
+            if (args.length >= 2) {
+                popenArgs = new IRubyObject[] { command, args[1] };
+            } else {
+                popenArgs = new IRubyObject[] { command };
+            }
+
             // exec process, create IO with process
-            return RubyIO.popen(context, runtime.getIO(), new IRubyObject[] {runtime.newString(command)}, block);
+            return RubyIO.popen(context, runtime.getIO(), popenArgs, block);
         } 
 
         return RubyFile.open(context, runtime.getFile(), args, block);
@@ -1789,7 +1797,7 @@ public class RubyKernel {
         return ((RubyBasicObject)self).type();
     }
 
-    @JRubyMethod(name = "type")
+    @JRubyMethod(name = "type", compat = RUBY1_8)
     public static RubyClass type_deprecated(IRubyObject self) {
         return ((RubyBasicObject)self).type_deprecated();
     }

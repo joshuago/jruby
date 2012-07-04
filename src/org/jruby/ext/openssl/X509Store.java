@@ -43,7 +43,6 @@ import org.jruby.ext.openssl.x509store.StoreContext;
 import org.jruby.ext.openssl.x509store.X509Utils;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
-import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 
 /**
@@ -59,15 +58,13 @@ public class X509Store extends RubyObject {
     };
     
     public static void createX509Store(Ruby runtime, RubyModule mX509) {
-        ThreadContext context = runtime.getCurrentContext();
         RubyClass cX509Store = mX509.defineClassUnder("Store",runtime.getObject(),X509STORE_ALLOCATOR);
         RubyClass openSSLError = runtime.getModule("OpenSSL").getClass("OpenSSLError");
         mX509.defineClassUnder("StoreError",openSSLError,openSSLError.getAllocator());
-        cX509Store.addReadWriteAttribute(context, "verify_callback");
-        cX509Store.addReadWriteAttribute(context, "error");
-        cX509Store.addReadWriteAttribute(context, "error_string");
-        cX509Store.addReadWriteAttribute(context, "chain");
-
+        cX509Store.addReadWriteAttribute(runtime.getCurrentContext(), "verify_callback");
+        cX509Store.addReadWriteAttribute(runtime.getCurrentContext(), "error");
+        cX509Store.addReadWriteAttribute(runtime.getCurrentContext(), "error_string");
+        cX509Store.addReadWriteAttribute(runtime.getCurrentContext(), "chain");
         cX509Store.defineAnnotatedMethods(X509Store.class);
 
         X509StoreCtx.createX509StoreCtx(runtime, mX509);
