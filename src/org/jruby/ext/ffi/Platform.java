@@ -40,6 +40,7 @@ import org.jruby.util.SafePropertyAccessor;
  *
  */
 public class Platform {
+    private static final java.util.Locale LOCALE = java.util.Locale.ENGLISH;
     public static final CPU_TYPE CPU = determineCPU();
     public static final OS_TYPE OS = determineOS();
 
@@ -70,7 +71,7 @@ public class Platform {
 
         UNKNOWN;
         @Override
-        public String toString() { return name().toLowerCase(); }
+        public String toString() { return name().toLowerCase(LOCALE); }
     }
 
     public enum CPU_TYPE {
@@ -83,7 +84,7 @@ public class Platform {
         S390X,
         UNKNOWN;
         @Override
-        public String toString() { return name().toLowerCase(); }
+        public String toString() { return name().toLowerCase(LOCALE); }
     }
 
     private static final class SingletonHolder {
@@ -91,18 +92,18 @@ public class Platform {
     }
 
     private static final OS_TYPE determineOS() {
-        String osName = System.getProperty("os.name").split(" ")[0].toLowerCase();
-        if (osName.startsWith("mac") || osName.startsWith("darwin") || osName.equalsIgnoreCase("darwin")) {
-            return OS.DARWIN;
-        } else if (osName.startsWith("sunos") || osName.startsWith("solaris")) {
-            return OS.SOLARIS;
+        String osName = System.getProperty("os.name").split(" ")[0];
+        if (startsWithIgnoreCase(osName, "mac") || startsWithIgnoreCase(osName, "darwin")) {
+            return OS_TYPE.DARWIN;
+        } else if (startsWithIgnoreCase(osName, "sunos") || startsWithIgnoreCase(osName, "solaris")) {
+            return OS_TYPE.SOLARIS;
         }
-        for (OS_TYPE os : OS.values()) {
-            if (osName.startsWith(os.toString().toLowerCase())) {
+        for (OS_TYPE os : OS_TYPE.values()) {
+            if (startsWithIgnoreCase(osName, os.toString())) {
                 return os;
             }
         }
-        return OS.UNKNOWN;
+        return OS_TYPE.UNKNOWN;
     }
 
     private static final Platform determinePlatform(OS_TYPE os) {
@@ -123,7 +124,7 @@ public class Platform {
     }
 
     private static final CPU_TYPE determineCPU() {
-        String archString = System.getProperty("os.arch").toLowerCase();
+        String archString = System.getProperty("os.arch").toLowerCase(LOCALE);
         if ("x86".equals(archString) || "i386".equals(archString) || "i86pc".equals(archString)) {
             return CPU.I386;
         } else if ("x86_64".equals(archString) || "amd64".equals(archString)) {
@@ -306,27 +307,27 @@ public class Platform {
     }
     @JRubyMethod(name = "windows?", module=true)
     public static IRubyObject windows_p(ThreadContext context, IRubyObject recv) {
-        return context.getRuntime().newBoolean(OS == OS.WINDOWS);
+        return context.runtime.newBoolean(OS == OS.WINDOWS);
     }
     @JRubyMethod(name = "mac?", module=true)
     public static IRubyObject mac_p(ThreadContext context, IRubyObject recv) {
-        return context.getRuntime().newBoolean(OS == OS.DARWIN);
+        return context.runtime.newBoolean(OS == OS.DARWIN);
     }
     @JRubyMethod(name = "unix?", module=true)
     public static IRubyObject unix_p(ThreadContext context, IRubyObject recv) {
-        return context.getRuntime().newBoolean(Platform.getPlatform().isUnix());
+        return context.runtime.newBoolean(Platform.getPlatform().isUnix());
     }
     @JRubyMethod(name = "bsd?", module=true)
     public static IRubyObject bsd_p(ThreadContext context, IRubyObject recv) {
-        return context.getRuntime().newBoolean(Platform.getPlatform().isBSD());
+        return context.runtime.newBoolean(Platform.getPlatform().isBSD());
     }
     @JRubyMethod(name = "linux?", module=true)
     public static IRubyObject linux_p(ThreadContext context, IRubyObject recv) {
-        return context.getRuntime().newBoolean(OS == OS.LINUX);
+        return context.runtime.newBoolean(OS == OS.LINUX);
     }
     @JRubyMethod(name = "solaris?", module=true)
     public static IRubyObject solaris_p(ThreadContext context, IRubyObject recv) {
-        return context.getRuntime().newBoolean(OS == OS.SOLARIS);
+        return context.runtime.newBoolean(OS == OS.SOLARIS);
     }
     /**
      * An extension over <code>System.getProperty</code> method.
@@ -470,5 +471,11 @@ public class Platform {
         public Windows() {
             super(OS.WINDOWS);
         }
+    }
+
+    private static boolean startsWithIgnoreCase(String s1, String s2) {
+        return s1.startsWith(s2)
+            || s1.toUpperCase(LOCALE).startsWith(s2.toUpperCase(LOCALE))
+            || s1.toLowerCase(LOCALE).startsWith(s2.toLowerCase(LOCALE));
     }
 }

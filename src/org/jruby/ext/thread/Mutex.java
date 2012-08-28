@@ -49,8 +49,8 @@ public class Mutex extends RubyObject {
 
     @JRubyMethod(name = "new", rest = true, meta = true)
     public static Mutex newInstance(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Mutex result = new Mutex(context.getRuntime(), (RubyClass) recv);
-        result.callInit(args, block);
+        Mutex result = new Mutex(context.runtime, (RubyClass) recv);
+        result.callInit(context, args, block);
         return result;
     }
 
@@ -71,7 +71,7 @@ public class Mutex extends RubyObject {
 
     @JRubyMethod(name = "locked?")
     public synchronized RubyBoolean locked_p(ThreadContext context) {
-        return context.getRuntime().newBoolean(lock.isLocked());
+        return context.runtime.newBoolean(lock.isLocked());
     }
 
     @JRubyMethod
@@ -91,7 +91,7 @@ public class Mutex extends RubyObject {
                 context.getThread().lockInterruptibly(lock);
             } catch (InterruptedException ex) {
                 context.pollThreadEvents();
-                throw context.getRuntime().newConcurrencyError("interrupted waiting for mutex: " + ex.getMessage());
+                throw context.runtime.newConcurrencyError("interrupted waiting for mutex: " + ex.getMessage());
             }
         } finally {
             context.getThread().exitSleep();
@@ -101,7 +101,7 @@ public class Mutex extends RubyObject {
 
     @JRubyMethod
     public synchronized IRubyObject unlock(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         if (!lock.isLocked()) {
             throw runtime.newThreadError("Mutex is not locked");
         }
@@ -154,7 +154,7 @@ public class Mutex extends RubyObject {
 
     private void checkRelocking(ThreadContext context) {
         if (lock.isHeldByCurrentThread()) {
-            throw context.getRuntime().newThreadError("Mutex relocking by same thread");
+            throw context.runtime.newThreadError("Mutex relocking by same thread");
         }
     }
     

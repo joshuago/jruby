@@ -1,5 +1,6 @@
 package org.jruby.ir.instructions;
 
+import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyMethod;
 import org.jruby.RubyProc;
@@ -98,7 +99,7 @@ public abstract class CallBase extends Instr implements Specializeable {
     private static CallSite getCallSiteFor(CallType callType, MethAddr methAddr) {
         assert callType != null: "Calltype should never be null";
         
-        String name = methAddr.toString();
+        String name = methAddr.getName();
         
         switch (callType) {
             case NORMAL: return MethodIndex.getCallSite(name);
@@ -285,8 +286,8 @@ public abstract class CallBase extends Instr implements Specializeable {
 
     @Override
     public String toString() {
-        return "" + getOperation() + "(" + getMethodAddr() + ", " + receiver +
-                ", " + Arrays.toString(getCallArgs()) + 
+        return "" + getOperation()  + "(" + callType + ", " + getMethodAddr() + ", " + receiver +
+                ", " + Arrays.toString(getCallArgs()) +
                 (closure == null ? "" : ", &" + closure) + ")";
     }
 
@@ -376,7 +377,7 @@ public abstract class CallBase extends Instr implements Specializeable {
         } else if ((value instanceof IRubyObject) && ((IRubyObject)value).isNil()) {
             block = Block.NULL_BLOCK;
         } else if (value instanceof IRubyObject) {
-            block = ((RubyProc)TypeConverter.convertToType((IRubyObject)value, context.getRuntime().getProc(), "to_proc", true)).getBlock();
+            block = ((RubyProc)TypeConverter.convertToType((IRubyObject)value, context.runtime.getProc(), "to_proc", true)).getBlock();
         } else {
             throw new RuntimeException("Unhandled case in CallInstr:prepareBlock.  Got block arg: " + value);
         }

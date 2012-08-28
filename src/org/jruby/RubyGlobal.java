@@ -419,7 +419,7 @@ public class RubyGlobal {
         private RubyString getCorrectKey(IRubyObject key, ThreadContext context) {
             RubyString originalKey = key.convertToString();
             RubyString actualKey = originalKey;
-            Ruby runtime = context.getRuntime();
+            Ruby runtime = context.runtime;
             if (Platform.IS_WINDOWS) {
                 // this is a rather ugly hack, but similar to MRI. See hash.c:ruby_setenv and similar in MRI
                 // we search all keys for a case-insensitive match, and use that
@@ -642,20 +642,13 @@ public class RubyGlobal {
 
         @Override
         public IRubyObject get() {
-            return runtime.newFixnum(runtime.getSafeLevel());
+            return RubyFixnum.zero(runtime);
         }
 
         @Override
         public IRubyObject set(IRubyObject value) {
-//            int level = RubyNumeric.fix2int(value);
-//            if (level < runtime.getSafeLevel()) {
-//            	throw runtime.newSecurityError("tried to downgrade safe level from " + 
-//            			runtime.getSafeLevel() + " to " + level);
-//            }
-//            runtime.setSafeLevel(level);
-            // thread.setSafeLevel(level);
             runtime.getWarnings().warn(ID.SAFE_NOT_SUPPORTED, "SAFE levels are not supported in JRuby");
-            return RubyFixnum.newFixnum(runtime, runtime.getSafeLevel());
+            return RubyFixnum.zero(runtime);
         }
     }
 

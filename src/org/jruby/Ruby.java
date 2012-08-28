@@ -112,7 +112,9 @@ import org.jruby.runtime.load.Library;
 import org.jruby.runtime.load.LoadService;
 import org.jruby.runtime.opto.Invalidator;
 import org.jruby.runtime.opto.OptoFactory;
-import org.jruby.runtime.profile.IProfileData;
+import org.jruby.runtime.profile.ProfileData;
+import org.jruby.runtime.profile.ProfilePrinter;
+import org.jruby.runtime.profile.ProfiledMethod;
 import org.jruby.runtime.scope.ManyVarsDynamicScope;
 import org.jruby.threading.DaemonThreadFactory;
 import org.jruby.util.ByteList;
@@ -688,8 +690,8 @@ public final class Ruby {
 
     private void handeCompileError(Node node, Throwable t) {
         if (config.isJitLoggingVerbose() || config.isDebug()) {
-            LOG.debug("warning: could not compile: {}; full trace follows", node.getPosition().getFile());
-            LOG.debug(t.getMessage(), t);
+            LOG.error("warning: could not compile: {}; full trace follows", node.getPosition().getFile());
+            LOG.error(t.getMessage(), t);
         }
     }
 
@@ -1046,40 +1048,11 @@ public final class Ruby {
         IRubyObject module = objectClass.getConstantAt(name);
         if (module == null) {
             module = defineModule(name);
-        } else if (getSafeLevel() >= 4) {
-            throw newSecurityError("Extending module prohibited.");
         } else if (!module.isModule()) {
             throw newTypeError(name + " is not a Module");
         }
 
         return (RubyModule) module;
-    }
-
-
-    /** 
-     * Retrieve the current safe level.
-     * 
-     * @see org.jruby.Ruby#setSafeLevel
-     */
-    public int getSafeLevel() {
-        return this.safeLevel;
-    }
-
-
-    /** 
-     * Set the current safe level:
-     * 
-     * 0 - strings from streams/environment/ARGV are tainted (default)
-     * 1 - no dangerous operation by tainted value
-     * 2 - process/file operations prohibited
-     * 3 - all generated objects are tainted
-     * 4 - no global (non-tainted) variable modification/no direct output
-     * 
-     * The safe level is set using $SAFE in Ruby code. It is not supported
-     * in JRuby.
-    */
-    public void setSafeLevel(int safeLevel) {
-        this.safeLevel = safeLevel;
     }
 
     public KCode getKCode() {
@@ -1088,29 +1061,6 @@ public final class Ruby {
 
     public void setKCode(KCode kcode) {
         this.kcode = kcode;
-    }
-
-    public void secure(int level) {
-        if (level <= safeLevel) {
-            throw newSecurityError("Insecure operation '" + getCurrentContext().getFrameName() + "' at level " + safeLevel);
-        }
-    }
-
-    // FIXME moved this here to get what's obviously a utility method out of IRubyObject.
-    // perhaps security methods should find their own centralized home at some point.
-    public void checkSafeString(IRubyObject object) {
-        if (getSafeLevel() > 0 && object.isTaint()) {
-            ThreadContext tc = getCurrentContext();
-            if (tc.getFrameName() != null) {
-                throw newSecurityError("Insecure operation - " + tc.getFrameName());
-            }
-            throw newSecurityError("Insecure operation: -r");
-        }
-        secure(4);
-        if (!(object instanceof RubyString)) {
-            throw newTypeError(
-                "wrong argument type " + object.getMetaClass().getName() + " (expected String)");
-        }
     }
 
     /** rb_define_global_const
@@ -1131,8 +1081,6 @@ public final class Ruby {
      * loaded.
      */
     private void init() {
-        safeLevel = config.getSafeLevel();
-        
         // Construct key services
         loadService = config.createLoadService(this);
         posix = POSIXFactory.getPOSIX(new JRubyPOSIXHandler(this), config.isNativeEnabled());
@@ -1185,7 +1133,13 @@ public final class Ruby {
         initRubyKernel();
         
         if(config.isProfiling()) {
+            // additional twiddling for profiled mode
             getLoadService().require("jruby/profiler/shutdown_hook");
+
+            // recache core methods, since they'll have profiling wrappers now
+            kernelModule.invalidateCacheDescendants(); // to avoid already-cached methods
+            RubyKernel.recacheBuiltinMethods(this);
+            RubyBasicObject.recacheBuiltinMethods(this);
         }
 
         if (config.getLoadGemfile()) {
@@ -1646,14 +1600,6 @@ public final class Ruby {
             loadService.addBuiltinLibrary(name,lib);
         }
     }
-
-    public Object getRespondToMethod() {
-        return respondToMethod;
-    }
-
-    public void setRespondToMethod(Object rtm) {
-        this.respondToMethod = rtm;
-    }
     
     public IRManager getIRManager() {
         return irManager;
@@ -1729,41 +1675,65 @@ public final class Ruby {
         this.kernelModule = kernelModule;
     }
 
+    ///////////////////////////////////////////////////////////////////////////
+    // Cached DynamicMethod objects, used for direct dispatch or for short
+    // circuiting dynamic invocation logic.
+    ///////////////////////////////////////////////////////////////////////////
+
     public DynamicMethod getPrivateMethodMissing() {
         return privateMethodMissing;
     }
+
     public void setPrivateMethodMissing(DynamicMethod method) {
         privateMethodMissing = method;
     }
+
     public DynamicMethod getProtectedMethodMissing() {
         return protectedMethodMissing;
     }
+
     public void setProtectedMethodMissing(DynamicMethod method) {
         protectedMethodMissing = method;
     }
+
     public DynamicMethod getVariableMethodMissing() {
         return variableMethodMissing;
     }
+
     public void setVariableMethodMissing(DynamicMethod method) {
         variableMethodMissing = method;
     }
+
     public DynamicMethod getSuperMethodMissing() {
         return superMethodMissing;
     }
+
     public void setSuperMethodMissing(DynamicMethod method) {
         superMethodMissing = method;
     }
+
     public DynamicMethod getNormalMethodMissing() {
         return normalMethodMissing;
     }
+
     public void setNormalMethodMissing(DynamicMethod method) {
         normalMethodMissing = method;
     }
+
     public DynamicMethod getDefaultMethodMissing() {
         return defaultMethodMissing;
     }
+
     public void setDefaultMethodMissing(DynamicMethod method) {
         defaultMethodMissing = method;
+    }
+
+    public DynamicMethod getRespondToMethod() {
+        return respondTo;
+    }
+
+    public void setRespondToMethod(DynamicMethod rtm) {
+        this.respondTo = rtm;
     }
     
     public RubyClass getDummy() {
@@ -2590,8 +2560,6 @@ public final class Ruby {
         String file = context.getFile();
         
         try {
-            secure(4); /* should alter global state */
-
             ThreadContext.pushBacktrace(context, "(root)", file, 0);
             context.preNodeEval(objectClass, self, scriptName);
 
@@ -2615,8 +2583,6 @@ public final class Ruby {
         InputStream readStream = in;
         
         try {
-            secure(4); /* should alter global state */
-
             Script script = null;
             String className = null;
 
@@ -2685,8 +2651,6 @@ public final class Ruby {
         ThreadContext context = getCurrentContext();
 
         try {
-            secure(4); /* should alter global state */
-            
             script.load(context, self, wrap);
         } catch (JumpException.ReturnJump rj) {
             return;
@@ -2706,8 +2670,6 @@ public final class Ruby {
         ThreadContext context = getCurrentContext();
 
         try {
-            secure(4); /* should alter global state */
-
             context.preExtensionLoad(self);
 
             extension.basicLoad(this);
@@ -2963,15 +2925,27 @@ public final class Ruby {
         if (config.isProfilingEntireRun()) {
             // not using logging because it's formatted
             System.err.println("\nmain thread profile results:");
-            IProfileData profileData = (IProfileData) threadService.getMainThread().getContext().getProfileData();
-            config.makeDefaultProfilePrinter(profileData).printProfile(System.err);
+            ProfileData profileData = threadService.getMainThread().getContext().getProfileData();
+            printProfileData(profileData, System.err);
         }
 
         if (systemExit && status != 0) {
             throw newSystemExit(status);
         }
     }
-
+    
+    /**
+     * Print the gathered profiling data.
+     * @param profileData
+     * @param out
+     * @see RubyInstanceConfig#getProfilingMode()
+     */
+    public void printProfileData(ProfileData profileData, PrintStream out) {
+        ProfilePrinter profilePrinter = ProfilePrinter.newPrinter(config.getProfilingMode(), profileData);
+        if (profilePrinter != null) profilePrinter.printProfile(out);
+        else out.println("\nno printer for profile mode: " + config.getProfilingMode() + " !");
+    }
+    
     // new factory methods ------------------------------------------------------------------------
 
     public RubyArray newEmptyArray() {
@@ -3133,6 +3107,10 @@ public final class Ruby {
 
     public RaiseException newArgumentError(int got, int expected) {
         return newRaiseException(getArgumentError(), "wrong number of arguments (" + got + " for " + expected + ")");
+    }
+
+    public RaiseException newArgumentError(String name, int got, int expected) {
+        return newRaiseException(getArgumentError(), "wrong number of arguments calling `" + name + "` (" + got + " for " + expected + ")");
     }
 
     public RaiseException newErrnoEBADFError() {
@@ -3317,7 +3295,10 @@ public final class Ruby {
     }
 
     public RaiseException newErrnoFromLastPOSIXErrno() {
-        return newRaiseException(getErrno(getPosix().errno()), null);
+        RubyClass errnoClass = getErrno(getPosix().errno());
+        if (errnoClass == null) errnoClass = systemCallError;
+
+        return newRaiseException(errnoClass, null);
     }
 
     public RaiseException newErrnoFromInt(int errno, String message) {
@@ -3402,7 +3383,7 @@ public final class Ruby {
     }
 
     public RaiseException newNameError(String message, String name, Throwable origException) {
-        return newNameError(message, name, origException, true);
+        return newNameError(message, name, origException, false);
     }
 
     public RaiseException newNameError(String message, String name, Throwable origException, boolean printWhenVerbose) {
@@ -4070,46 +4051,41 @@ public final class Ruby {
     }
 
     /**
-     * Get the list of method names being profiled
+     * Get the list of method holders for methods being profiled.
      */
-    public String[] getProfiledNames() {
-        return profiledNames;
-    }
-
-    /**
-     * Get the list of method objects for methods being profiled
-     */
-    public DynamicMethod[] getProfiledMethods() {
+    public ProfiledMethod[] getProfiledMethods() {
         return profiledMethods;
     }
-
+    
     /**
-     * Add a method and its name to the profiling arrays, so it can be printed out
-     * later.
+     * Add a method, so it can be printed out later.
      *
      * @param name the name of the method
      * @param method
      */
-    public synchronized void addProfiledMethod(String name, DynamicMethod method) {
+    void addProfiledMethod(final String name, final DynamicMethod method) {
         if (!config.isProfiling()) return;
         if (method.isUndefined()) return;
-        if (method.getSerialNumber() > MAX_PROFILE_METHODS) return;
 
-        int index = (int)method.getSerialNumber();
-        if (profiledMethods.length <= index) {
-            int newSize = Math.min((int)index * 2 + 1, MAX_PROFILE_METHODS);
-            String[] newProfiledNames = new String[newSize];
-            System.arraycopy(profiledNames, 0, newProfiledNames, 0, profiledNames.length);
-            profiledNames = newProfiledNames;
-            DynamicMethod[] newProfiledMethods = new DynamicMethod[newSize];
-            System.arraycopy(profiledMethods, 0, newProfiledMethods, 0, profiledMethods.length);
-            profiledMethods = newProfiledMethods;
+        final int index = (int) method.getSerialNumber();
+
+        if (index >= config.getProfileMaxMethods()) {
+            warnings.warnOnce(ID.PROFILE_MAX_METHODS_EXCEEDED, "method count exceeds max of " + config.getProfileMaxMethods() + "; no new methods will be profiled");
+            return;
         }
 
-        // only add the first one we encounter, since others will probably share the original
-        if (profiledNames[index] == null) {
-            profiledNames[index] = name;
-            profiledMethods[index] = method;
+        synchronized(this) {
+            if (profiledMethods.length <= index) {
+                int newSize = Math.min((int) index * 2 + 1, config.getProfileMaxMethods());
+                ProfiledMethod[] newProfiledMethods = new ProfiledMethod[newSize];
+                System.arraycopy(profiledMethods, 0, newProfiledMethods, 0, profiledMethods.length);
+                profiledMethods = newProfiledMethods;
+            }
+    
+            // only add the first one we encounter, since others will probably share the original
+            if (profiledMethods[index] == null) {
+                profiledMethods[index] = new ProfiledMethod(name, method);
+            }
         }
     }
     
@@ -4233,6 +4209,23 @@ public final class Ruby {
         this.ffi = ffi;
     }
 
+    @Deprecated
+    public int getSafeLevel() {
+        return 0;
+    }
+
+    @Deprecated
+    public void setSafeLevel(int safeLevel) {
+    }
+
+    @Deprecated
+    public void checkSafeString(IRubyObject object) {
+    }
+
+    @Deprecated
+    public void secure(int level) {
+    }
+
     private final Invalidator constantInvalidator;
     private final ThreadService threadService;
     
@@ -4251,8 +4244,6 @@ public final class Ruby {
     private final Set<Script> jittedMethods = Collections.synchronizedSet(new WeakHashSet<Script>());
     
     private long globalState = 1;
-    
-    private int safeLevel = -1;
 
     // Default objects
     private IRubyObject topSelf;
@@ -4303,7 +4294,7 @@ public final class Ruby {
             procSysModule, precisionModule, errnoModule;
 
     private DynamicMethod privateMethodMissing, protectedMethodMissing, variableMethodMissing,
-            superMethodMissing, normalMethodMissing, defaultMethodMissing;
+            superMethodMissing, normalMethodMissing, defaultMethodMissing, respondTo;
     
     // record separator var, to speed up io ops that use it
     private GlobalVariable recordSeparatorVar;
@@ -4384,8 +4375,6 @@ public final class Ruby {
     // Weak map of all Modules in the system (and by extension, all Classes
     private final Set<RubyModule> allModules = new WeakHashSet<RubyModule>();
 
-    private Object respondToMethod;
-
     private final Map<String, DateTimeZone> timeZoneCache = new HashMap<String,DateTimeZone>();
     /**
      * A list of "external" finalizers (the ones, registered via ObjectSpace),
@@ -4425,15 +4414,9 @@ public final class Ruby {
 
     // A global cache for Java-to-Ruby calls
     private final RuntimeCache runtimeCache;
-
-    // The maximum number of methods we will track for profiling purposes
-    private static final int MAX_PROFILE_METHODS = 100000;
-
-    // The list of method names associated with method serial numbers
-    public String[] profiledNames = new String[0];
-
+    
     // The method objects for serial numbers
-    public DynamicMethod[] profiledMethods = new DynamicMethod[0];
+    private ProfiledMethod[] profiledMethods = new ProfiledMethod[0];
     
     // Message for Errno exceptions that will not generate a backtrace
     public static final String ERRNO_BACKTRACE_MESSAGE = "errno backtraces disabled; run with -Xerrno.backtrace=true to enable";

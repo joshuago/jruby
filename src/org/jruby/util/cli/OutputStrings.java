@@ -3,6 +3,7 @@ package org.jruby.util.cli;
 import java.util.Arrays;
 import jnr.posix.util.Platform;
 import org.jruby.CompatVersion;
+import org.jruby.RubyInstanceConfig;
 import org.jruby.runtime.Constants;
 import org.jruby.util.SafePropertyAccessor;
 
@@ -24,6 +25,7 @@ public class OutputStrings {
                 .append("  -e 'command'    one line of script. Several -e's allowed. Omit [programfile]\n")
                 .append("  -Eex[:in]       specify the default external and internal character encodings\n")
                 .append("  -Fpattern       split() pattern for autosplit (-a)\n")
+                .append("  -G              load a Bundler Gemspec before executing any user code\n")
                 .append("  -i[extension]   edit ARGV files in place (make backup if extension supplied)\n")
                 .append("  -Idirectory     specify $LOAD_PATH directory (may be used more than once)\n")
                 .append("  -J[java option] pass an option on to the JVM (e.g. -J-Xmx512m)\n")
@@ -111,7 +113,7 @@ public class OutputStrings {
 
     public static String getVersionString(CompatVersion compatVersion) {
         String ver;
-        String patchDelimeter = "-p";
+        String patchDelimeter = "p";
         int patchlevel;
         String versionString = "";
         switch (compatVersion) {
@@ -123,20 +125,24 @@ public class OutputStrings {
         case RUBY1_9:
             ver = Constants.RUBY1_9_VERSION;
             patchlevel = Constants.RUBY1_9_PATCHLEVEL;
-            versionString = String.format("ruby-%s%s%d", ver, patchDelimeter, patchlevel);
+            versionString = String.format("%s%s%d", ver, patchDelimeter, patchlevel);
             break;
         case RUBY2_0:
-            versionString = String.format("ruby-%s", Constants.RUBY2_0_VERSION);
+            versionString = String.format("%s", Constants.RUBY2_0_VERSION);
             break;
         }
 
         String fullVersion = String.format(
-                "jruby %s (%s) (%s %s) (%s %s) [%s-%s-java]",
-                Constants.VERSION, versionString,
-                Constants.COMPILE_DATE, Constants.REVISION,
-                System.getProperty("java.vm.name"), System.getProperty("java.version"),
+                "jruby %s (%s) %s %s on %s %s%s [%s-%s]",
+                Constants.VERSION,
+                versionString,
+                Constants.COMPILE_DATE,
+                Constants.REVISION,
+                SafePropertyAccessor.getProperty("java.vm.name", "Unknown JVM"),
+                SafePropertyAccessor.getProperty("java.runtime.version", SafePropertyAccessor.getProperty("java.version", "Unknown version")),
+                RubyInstanceConfig.USE_INVOKEDYNAMIC ? " +indy" : "",
                 Platform.getOSName(),
-                SafePropertyAccessor.getProperty("os.arch", "unknown")
+                SafePropertyAccessor.getProperty("os.arch", "Unknown arch")
                 );
 
         return fullVersion;

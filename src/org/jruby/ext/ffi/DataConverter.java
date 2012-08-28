@@ -19,17 +19,21 @@ public class DataConverter {
         return result;
     }
 
-    @JRubyMethod(name = "native_type", module=true, optional = 1)
-    public static IRubyObject native_type(ThreadContext context, IRubyObject self, IRubyObject[] args) {
-        if (!(self instanceof RubyModule)) {
-            throw context.getRuntime().newRuntimeError("not a module");
+    private static RubyModule module(IRubyObject obj) {
+        if (!(obj instanceof RubyModule)) {
+            throw obj.getRuntime().newTypeError("not a module");
         }
 
-        RubyModule m = (RubyModule) self;
+        return (RubyModule) obj;
+    }
+
+    @JRubyMethod(name = "native_type", module=true, optional = 1)
+    public static IRubyObject native_type(ThreadContext context, IRubyObject self, IRubyObject[] args) {
+        RubyModule m = module(self);
 
         if (args.length == 0) {
             if (!m.hasInternalVariable("native_type")) {
-                throw context.getRuntime().newNotImplementedError("native_type method not overridden and no native_type set");
+                throw context.runtime.newNotImplementedError("native_type method not overridden and no native_type set");
             }
 
             return (Type) m.getInternalVariable("native_type");
@@ -42,7 +46,7 @@ public class DataConverter {
             return type;
 
         } else {
-            throw context.getRuntime().newArgumentError("incorrect arguments");
+            throw context.runtime.newArgumentError("incorrect arguments");
         }
     }
 
@@ -55,5 +59,17 @@ public class DataConverter {
     @JRubyMethod(name = "from_native", module=true)
     public static IRubyObject from_native(ThreadContext context, IRubyObject self, IRubyObject value, IRubyObject ctx) {
         return value;
+    }
+
+    @JRubyMethod(name = "reference_required?", module=true)
+    public static IRubyObject reference_required_p(ThreadContext context, IRubyObject self) {
+        Object ref = module(self).getInternalVariable("reference_required");
+        return context.runtime.newBoolean(!(ref instanceof IRubyObject) || ((IRubyObject) ref).isTrue());
+    }
+
+    @JRubyMethod(name = "reference_required", module=true, optional = 1)
+    public static IRubyObject reference_required(ThreadContext context, IRubyObject self, IRubyObject[] args) {
+        module(self).setInternalVariable("reference_required", context.runtime.newBoolean(args.length < 1 || args[0].isTrue()));
+        return self;
     }
 }

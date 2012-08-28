@@ -1,8 +1,7 @@
 package org.jruby.ext.fiber;
 
 import java.util.concurrent.Exchanger;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
+
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
 import org.jruby.RubyLocalJumpError.Reason;
@@ -80,7 +79,7 @@ public class ThreadFiber extends Fiber {
                     throw context.runtime.newRuntimeError("BUG: resume before fiber is started");
                 case YIELDED:
                     if (!transfer && transferredTo != null) {
-                        throw context.getRuntime().newFiberError("double resume");
+                        throw context.runtime.newFiberError("double resume");
                     }
 
                     // update transfer fibers
@@ -111,11 +110,11 @@ public class ThreadFiber extends Fiber {
                     if (transfer && context.getFiber() == this) {
                         return arg;
                     }
-                    throw context.getRuntime().newFiberError("double resume");
+                    throw context.runtime.newFiberError("double resume");
                 case FINISHED:
-                    throw context.getRuntime().newFiberError("dead fiber called");
+                    throw context.runtime.newFiberError("dead fiber called");
                 default:
-                    throw context.getRuntime().newFiberError("fiber in an unknown state");
+                    throw context.runtime.newFiberError("fiber in an unknown state");
             }
         } catch (OutOfMemoryError oome) {
             if (oome.getMessage().equals("unable to create new native thread")) {

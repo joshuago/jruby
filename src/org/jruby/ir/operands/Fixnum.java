@@ -38,12 +38,12 @@ public class Fixnum extends ImmutableLiteral {
     
     @Override
     public Object createCacheObject(ThreadContext context) {
-        return context.getRuntime().newFixnum(value);
+        return context.runtime.newFixnum(value);
     }    
 
     @Override
     public String toString() { 
-        return value + ":fixnum";
+        return "Fixnum:" + value;
     }
 
 // ---------- These methods below are used during compile-time optimizations ------- 

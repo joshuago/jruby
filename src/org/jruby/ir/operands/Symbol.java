@@ -17,12 +17,12 @@ public class Symbol extends Reference {
 
     @Override
     public Object retrieve(ThreadContext context, IRubyObject self, DynamicScope currDynScope, Object[] temp) {
-        return context.getRuntime().newSymbol(getName());
+        return context.runtime.newSymbol(getName());
     }
 
     @Override
     public String toString() {
-        return ":" + getName();
+        return ":'" + getName() + "'";
     }
 
     @Override

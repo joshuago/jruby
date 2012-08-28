@@ -33,6 +33,7 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.javasupport;
 
+import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
@@ -206,7 +207,7 @@ public class JavaUtil {
     }
 
     public static Object convertProcToInterface(ThreadContext context, RubyBasicObject rubyObject, Class target) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         RubyModule javaInterfaceModule = (RubyModule)Java.get_interface_module(runtime, JavaClass.get(runtime, target));
         if (!((RubyModule) javaInterfaceModule).isInstance(rubyObject)) {
             javaInterfaceModule.callMethod(context, "extend_object", rubyObject);
@@ -223,7 +224,7 @@ public class JavaUtil {
                 @Override
                 public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
                     if (!(self instanceof RubyProc)) {
-                        throw context.getRuntime().newTypeError("interface impl method_missing for block used with non-Proc object");
+                        throw context.runtime.newTypeError("interface impl method_missing for block used with non-Proc object");
                     }
                     RubyProc proc = (RubyProc)self;
                     IRubyObject[] newArgs;
@@ -921,6 +922,8 @@ public class JavaUtil {
         NUMERIC_CONVERTERS.put(Double.class, NUMERIC_TO_DOUBLE);
         NUMERIC_CONVERTERS.put(BigInteger.class, NUMERIC_TO_BIGINTEGER);
         NUMERIC_CONVERTERS.put(Object.class, NUMERIC_TO_OBJECT);
+        NUMERIC_CONVERTERS.put(Number.class, NUMERIC_TO_OBJECT);
+        NUMERIC_CONVERTERS.put(Serializable.class, NUMERIC_TO_OBJECT);
         NUMERIC_CONVERTERS.put(void.class, NUMERIC_TO_VOID);
     }
     

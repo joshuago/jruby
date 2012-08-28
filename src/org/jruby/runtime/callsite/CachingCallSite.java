@@ -55,11 +55,11 @@ public abstract class CachingCallSite extends CallSite {
     }
 
     public IRubyObject call(ThreadContext context, IRubyObject caller, IRubyObject self, long fixnum) {
-        return call(context, caller, self, RubyFixnum.newFixnum(context.getRuntime(), fixnum));
+        return call(context, caller, self, RubyFixnum.newFixnum(context.runtime, fixnum));
     }
 
     public IRubyObject call(ThreadContext context, IRubyObject caller, IRubyObject self, double flote) {
-        return call(context, caller, self, RubyFloat.newFloat(context.getRuntime(), flote));
+        return call(context, caller, self, RubyFloat.newFloat(context.runtime, flote));
     }
 
     public IRubyObject call(ThreadContext context, IRubyObject caller, IRubyObject self, IRubyObject... args) {
@@ -427,6 +427,6 @@ public abstract class CachingCallSite extends CallSite {
     }
 
     private static RaiseException retryJumpError(ThreadContext context) {
-        return context.getRuntime().newLocalJumpError(RubyLocalJumpError.Reason.RETRY, context.getRuntime().getNil(), "retry outside of rescue not supported");
+        return context.runtime.newLocalJumpError(RubyLocalJumpError.Reason.RETRY, context.runtime.getNil(), "retry outside of rescue not supported");
     }
 }

@@ -13,7 +13,6 @@ import org.jruby.anno.JRubyConstant;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.ext.ffi.DirectMemoryIO;
 import org.jruby.ext.ffi.InvalidMemoryIO;
-import org.jruby.ext.ffi.NullMemoryIO;
 import org.jruby.ext.ffi.Pointer;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
@@ -66,10 +65,10 @@ public class DynamicLibrary extends RubyObject {
             if (library == null) {
                 throw new UnsatisfiedLinkError(Library.getLastError());
             }
-            return new DynamicLibrary(context.getRuntime(), (RubyClass) recv, 
+            return new DynamicLibrary(context.runtime, (RubyClass) recv,
                     libName, library);
         } catch (UnsatisfiedLinkError ex) {
-            throw context.getRuntime().newLoadError(String.format("Could not open library '%s' : %s",
+            throw context.runtime.newLoadError(String.format("Could not open library '%s' : %s",
                     libName != null ? libName : "current process", ex.getMessage()));
         }
     }
@@ -78,10 +77,10 @@ public class DynamicLibrary extends RubyObject {
         final String sym = symbolName.toString();
         final long address = library.getSymbolAddress(sym);
         if (address == 0L) {
-            return context.getRuntime().getNil();
+            return context.runtime.getNil();
         }
 
-        return new Symbol(context.getRuntime(), this, sym, new DataSymbolMemoryIO(context.getRuntime(), this, address));
+        return new Symbol(context.runtime, this, sym, new DataSymbolMemoryIO(context.runtime, this, address));
     }
 
     @JRubyMethod(name = {  "find_function" })
@@ -89,14 +88,14 @@ public class DynamicLibrary extends RubyObject {
         final String sym = symbolName.toString();
         final long address = library.getSymbolAddress(sym);
         if (address == 0L) {
-            return context.getRuntime().getNil();
+            return context.runtime.getNil();
         }
-        return new Symbol(context.getRuntime(), this, sym, 
-                new TextSymbolMemoryIO(context.getRuntime(), this, address));
+        return new Symbol(context.runtime, this, sym,
+                new TextSymbolMemoryIO(context.runtime, this, address));
     }
     @JRubyMethod(name = "name")
     public IRubyObject name(ThreadContext context) {
-        return name != null ? RubyString.newString(context.getRuntime(), name) : context.getRuntime().getNil();
+        return name != null ? RubyString.newString(context.runtime, name) : context.runtime.getNil();
     }
     public static final class Symbol extends Pointer {
         private final DynamicLibrary library;
@@ -116,7 +115,7 @@ public class DynamicLibrary extends RubyObject {
         
         @JRubyMethod(name = "inspect")
         public IRubyObject inspect(ThreadContext context) {
-            return RubyString.newString(context.getRuntime(),
+            return RubyString.newString(context.runtime,
                 String.format("#<%s library=%s symbol=%s address=%#x>", 
                     getMetaClass().getName(), library.name, name, getAddress()));
         }
@@ -124,7 +123,7 @@ public class DynamicLibrary extends RubyObject {
         @Override
         @JRubyMethod(name = "to_s", optional = 1)
         public IRubyObject to_s(ThreadContext context, IRubyObject[] args) {
-            return RubyString.newString(context.getRuntime(), name);
+            return RubyString.newString(context.runtime, name);
         }
 
         @Override

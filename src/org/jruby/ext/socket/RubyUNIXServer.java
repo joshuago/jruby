@@ -66,14 +66,14 @@ public class RubyUNIXServer extends RubyUNIXSocket {
 
     @JRubyMethod(visibility = Visibility.PRIVATE)
     public IRubyObject initialize(ThreadContext context, IRubyObject path) {
-        init_unixsock(context.getRuntime(), path, true);
+        init_unixsock(context.runtime, path, true);
 
         return this;
     }
 
     @JRubyMethod
     public IRubyObject accept(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         try {
 
@@ -92,7 +92,7 @@ public class RubyUNIXServer extends RubyUNIXSocket {
                     sock.channel = socketChannel;
                     sock.fpath = "";
 
-                    sock.init_sock(context.getRuntime());
+                    sock.init_sock(context.runtime);
 
                     return sock;
                 }
@@ -123,7 +123,7 @@ public class RubyUNIXServer extends RubyUNIXSocket {
                     sock.channel = socketChannel;
                     sock.fpath = "";
 
-                    sock.init_sock(context.getRuntime());
+                    sock.init_sock(context.runtime);
 
                     return sock;
 
@@ -148,7 +148,7 @@ public class RubyUNIXServer extends RubyUNIXSocket {
     @JRubyMethod
     public IRubyObject listen(ThreadContext context, IRubyObject log) {
         // TODO listen backlog
-        return context.getRuntime().newFixnum(0);
+        return context.runtime.newFixnum(0);
     }
 
     @JRubyMethod

@@ -440,6 +440,16 @@ public class RubyBigDecimal extends RubyNumeric {
         if (args.length == 0) { 
             decimal = new BigDecimal(0);
         } else {
+            MathContext context = MathContext.UNLIMITED;
+
+            if (args.length == 2) {
+                context = new MathContext((int)args[1].convertToInteger().getLongValue());
+            }
+
+            if (args[0] instanceof RubyFloat && runtime.is1_9()) {
+                return new RubyBigDecimal(runtime, new BigDecimal(((RubyFloat)args[0]).getDoubleValue(), context));
+            }
+
             String strValue = args[0].convertToString().toString();
             strValue = strValue.trim();
             if ("NaN".equals(strValue)) {
@@ -466,7 +476,7 @@ public class RubyBigDecimal extends RubyNumeric {
             strValue = NUMBER_PATTERN.matcher(strValue).replaceFirst("$1");
 
             try {
-                decimal = new BigDecimal(strValue);
+                decimal = new BigDecimal(strValue, context);
             } catch(NumberFormatException e) {
                 if (isOverflowExceptionMode(runtime)) {
                     throw runtime.newFloatDomainError("exponent overflow");
@@ -539,7 +549,7 @@ public class RubyBigDecimal extends RubyNumeric {
     @JRubyMethod(name = {"%", "modulo"}, required = 1, compat = CompatVersion.RUBY1_8)
     public IRubyObject op_mod(ThreadContext context, IRubyObject arg) {
         // TODO: full-precision remainder is 1000x slower than MRI!
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         if (isInfinity() || isNaN()) {
             return newNaN(runtime);
         }
@@ -563,7 +573,7 @@ public class RubyBigDecimal extends RubyNumeric {
     @JRubyMethod(name = {"%", "modulo"}, required = 1, compat = CompatVersion.RUBY1_9)
     public IRubyObject op_mod19(ThreadContext context, IRubyObject other) {
         // TODO: full-precision divmod is 1000x slower than MRI!
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         RubyBigDecimal val = getVpValue(other, false);
         if (val == null) {
             return callCoerced(context, "%", other, true);
@@ -572,7 +582,7 @@ public class RubyBigDecimal extends RubyNumeric {
             return newNaN(runtime);
         }
         if (val.isZero()) {
-            throw context.getRuntime().newZeroDivisionError();
+            throw context.runtime.newZeroDivisionError();
         }
         if (isInfinity()) {
             return newNaN(runtime);
@@ -597,7 +607,7 @@ public class RubyBigDecimal extends RubyNumeric {
     @JRubyMethod(name = "remainder", required = 1)
     public IRubyObject remainder(ThreadContext context, IRubyObject arg) {
         // TODO: full-precision remainder is 1000x slower than MRI!
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         if (isInfinity() || isNaN()) {
             return newNaN(runtime);
         }
@@ -621,7 +631,7 @@ public class RubyBigDecimal extends RubyNumeric {
 
     @JRubyMethod(name = "mult", required = 2)
     public IRubyObject mult2(ThreadContext context, IRubyObject b, IRubyObject n) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         RubyBigDecimal val = getVpValue(b,false);
         if(val == null) {
@@ -764,7 +774,7 @@ public class RubyBigDecimal extends RubyNumeric {
     }
 
     private IRubyObject addInternal(ThreadContext context, IRubyObject b, String op, IRubyObject digits) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         int prec = getPositiveInt(context, digits);
 
         RubyBigDecimal val = getVpValue(b, false);
@@ -788,7 +798,7 @@ public class RubyBigDecimal extends RubyNumeric {
     }
 
     private int getPositiveInt(ThreadContext context, IRubyObject arg) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         if (arg instanceof RubyFixnum) {
             int value = RubyNumeric.fix2int(arg);
@@ -987,7 +997,7 @@ public class RubyBigDecimal extends RubyNumeric {
     public IRubyObject op_div19(ThreadContext context, IRubyObject other, IRubyObject digits) {
         RubyBigDecimal val = getVpValue(other, false);
         if (isNaN() || val.isNaN()) {
-            throw context.getRuntime().newFloatDomainError("Computation results to 'NaN'");
+            throw context.runtime.newFloatDomainError("Computation results to 'NaN'");
         }
         
         return op_div(context, other, digits);
@@ -1151,7 +1161,7 @@ public class RubyBigDecimal extends RubyNumeric {
     @JRubyMethod(name = "divmod", required = 1, compat = CompatVersion.RUBY1_8)
     public IRubyObject divmod(ThreadContext context, IRubyObject other) {
         // TODO: full-precision divmod is 1000x slower than MRI!
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         if (isInfinity() || isNaN()) {
             return RubyArray.newArray(runtime, newNaN(runtime), newNaN(runtime));
         }
@@ -1183,7 +1193,7 @@ public class RubyBigDecimal extends RubyNumeric {
     @JRubyMethod(name = "divmod", required = 1, compat = CompatVersion.RUBY1_9)
     public IRubyObject divmod19(ThreadContext context, IRubyObject other) {
         // TODO: full-precision divmod is 1000x slower than MRI!
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         RubyBigDecimal val = getVpValue(other, false);
         if (val == null) {
             return callCoerced(context, "divmod", other, true);
@@ -1192,7 +1202,7 @@ public class RubyBigDecimal extends RubyNumeric {
             return RubyArray.newArray(runtime, newNaN(runtime), newNaN(runtime));
         }
         if (val.isZero()) {
-            throw context.getRuntime().newZeroDivisionError();
+            throw context.runtime.newZeroDivisionError();
         }
         if (isInfinity()) {
             int sign = (infinitySign == val.value.signum()) ? 1 : -1;

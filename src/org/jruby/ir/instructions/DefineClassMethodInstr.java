@@ -50,12 +50,8 @@ public class DefineClassMethodInstr extends Instr {
     @Override
     public Object interpret(ThreadContext context, DynamicScope currDynScope, IRubyObject self, Object[] temp, Block block) {
         String name = method.getName();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         RubyObject obj = (RubyObject) container.retrieve(context, self, currDynScope, temp);
-
-        if (runtime.getSafeLevel() >= 4 && !obj.isTaint()) {
-            throw runtime.newSecurityError("Insecure; can't define singleton method.");
-        }
 
         if (obj instanceof RubyFixnum || obj instanceof RubySymbol) {
             throw runtime.newTypeError("can't define singleton method \"" + name + "\" for " + obj.getMetaClass().getBaseName());
@@ -64,9 +60,6 @@ public class DefineClassMethodInstr extends Instr {
         if (obj.isFrozen()) throw runtime.newFrozenError("object");
 
         RubyClass rubyClass = obj.getSingletonClass();
-        if (runtime.getSafeLevel() >= 4 && rubyClass.getMethods().get(name) != null) {
-            throw runtime.newSecurityError("redefining method prohibited.");
-        }
 
         rubyClass.addMethod(name, new InterpretedIRMethod(method, Visibility.PUBLIC, rubyClass));
         obj.callMethod(context, "singleton_method_added", runtime.fastNewSymbol(name));

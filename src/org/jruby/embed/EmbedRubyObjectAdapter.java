@@ -12,7 +12,7 @@
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
- * Copyright (C) 2009 Yoko Harada <yokolet@gmail.com>
+ * Copyright (C) 2009-2012 Yoko Harada <yokolet@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -170,4 +170,18 @@ public interface EmbedRubyObjectAdapter extends RubyObjectAdapter {
      * @return is the type we want it to convert to
      */
     <T> T callSuper(Object receiver, Object[] args, Block block, Class<T> returnType);
+    
+    /**
+     * Executes a method defined in Ruby script.
+     *
+     * @param returnType is the type we want it to convert to
+     * @param receiver is an instance that will receive this method call. The receiver
+     *                 can be null or other Java objects. The null will be converted to
+     *                 RubyNil or wrapped in RubyObject.
+     * @param methodName is a method name to be called
+     * @param block is an optional Block object.  Send null for no block.
+     * @param args is an array of method arguments
+     * @return an instance of requested Java type
+     */
+    <T> T runRubyMethod(Class<T> returnType, Object receiver, String methodName, Block block, Object... args);
 }

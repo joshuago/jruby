@@ -14,7 +14,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
-import org.jruby.MetaClass;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
@@ -102,7 +101,7 @@ public class JavaProxy extends RubyObject {
     }
     
     public static RubyClass createJavaProxy(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         RubyClass javaProxy = runtime.defineClass("JavaProxy", runtime.getObject(), new ObjectAllocator() {
             public IRubyObject allocate(Ruby runtime, RubyClass klazz) {
@@ -211,7 +210,7 @@ public class JavaProxy extends RubyObject {
             String key = entry.getKey();
             if (key.equals(field.getName())) {
                 if (Ruby.isSecurityRestricted() && !Modifier.isPublic(field.getModifiers())) {
-                    throw context.getRuntime().newSecurityError("Cannot change accessibility on fields in a restricted mode: field '" + field.getName() + "'");
+                    throw context.runtime.newSecurityError("Cannot change accessibility on fields in a restricted mode: field '" + field.getName() + "'");
                 }
                 
                 String asName = entry.getValue();
@@ -219,13 +218,17 @@ public class JavaProxy extends RubyObject {
                 if (Modifier.isStatic(field.getModifiers())) {
                     if (asReader) module.getSingletonClass().addMethod(asName, new StaticFieldGetter(key, module, field));
                     if (asWriter) {
-                        if (isFinal) throw context.getRuntime().newSecurityError("Cannot change final field '" + field.getName() + "'");
+                        if (isFinal) {
+                            throw context.runtime.newSecurityError("Cannot change final field '" + field.getName() + "'");
+                        }
                         module.getSingletonClass().addMethod(asName + "=", new StaticFieldSetter(key, module, field));
                     }
                 } else {
                     if (asReader) module.addMethod(asName, new InstanceFieldGetter(key, module, field));
                     if (asWriter) {
-                        if (isFinal) throw context.getRuntime().newSecurityError("Cannot change final field '" + field.getName() + "'");
+                        if (isFinal) {
+                            throw context.runtime.newSecurityError("Cannot change final field '" + field.getName() + "'");
+                        }
                         module.addMethod(asName + "=", new InstanceFieldSetter(key, module, field));
                     }
                 }
@@ -254,7 +257,7 @@ public class JavaProxy extends RubyObject {
         
         // We could not find all of them print out first one (we could print them all?)
         if (!fieldMap.isEmpty()) {
-            throw JavaClass.undefinedFieldError(context.getRuntime(),
+            throw JavaClass.undefinedFieldError(context.runtime,
                     topModule.getName(), fieldMap.keySet().iterator().next());
         }
 
@@ -264,26 +267,26 @@ public class JavaProxy extends RubyObject {
     public static IRubyObject field_accessor(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         findFields(context, (RubyModule) recv, args, true, true);
 
-        return context.getRuntime().getNil();
+        return context.runtime.getNil();
     }
 
     @JRubyMethod(meta = true, rest = true)
     public static IRubyObject field_reader(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         findFields(context, (RubyModule) recv, args, true, false);
 
-        return context.getRuntime().getNil();
+        return context.runtime.getNil();
     }
     
     @JRubyMethod(meta = true, rest = true)
     public static IRubyObject field_writer(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         findFields(context, (RubyModule) recv, args, false, true);
 
-        return context.getRuntime().getNil();
+        return context.runtime.getNil();
     }
 
     @JRubyMethod(name = "equal?")
     public IRubyObject equal_p(ThreadContext context, IRubyObject other) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         if (other instanceof JavaProxy) {
             boolean equal = getObject() == ((JavaProxy)other).getObject();
             return runtime.newBoolean(equal);
@@ -294,7 +297,7 @@ public class JavaProxy extends RubyObject {
     @JRubyMethod
     public IRubyObject java_send(ThreadContext context, IRubyObject rubyName) {
         String name = rubyName.asJavaString();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         JavaMethod method = new JavaMethod(runtime, getMethod(name));
         return method.invokeDirect(getObject());
@@ -304,7 +307,7 @@ public class JavaProxy extends RubyObject {
     public IRubyObject java_send(ThreadContext context, IRubyObject rubyName, IRubyObject argTypes) {
         String name = rubyName.asJavaString();
         RubyArray argTypesAry = argTypes.convertToArray();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         if (argTypesAry.size() != 0) {
             Class[] argTypesClasses = (Class[])argTypesAry.toArray(new Class[argTypesAry.size()]);
@@ -319,7 +322,7 @@ public class JavaProxy extends RubyObject {
     public IRubyObject java_send(ThreadContext context, IRubyObject rubyName, IRubyObject argTypes, IRubyObject arg0) {
         String name = rubyName.asJavaString();
         RubyArray argTypesAry = argTypes.convertToArray();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         if (argTypesAry.size() != 1) {
             Class[] argTypesClasses = (Class[])argTypesAry.toArray(new Class[argTypesAry.size()]);
@@ -334,7 +337,7 @@ public class JavaProxy extends RubyObject {
 
     @JRubyMethod(required = 4, rest = true)
     public IRubyObject java_send(ThreadContext context, IRubyObject[] args) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         String name = args[0].asJavaString();
         RubyArray argTypesAry = args[1].convertToArray();
@@ -395,15 +398,15 @@ public class JavaProxy extends RubyObject {
         try {
             ByteList byteList = str.convertToString().getByteList();
             ByteArrayInputStream bais = new ByteArrayInputStream(byteList.getUnsafeBytes(), byteList.getBegin(), byteList.getRealSize());
-            ObjectInputStream ois = new JRubyObjectInputStream(context.getRuntime(), bais);
+            ObjectInputStream ois = new JRubyObjectInputStream(context.runtime, bais);
 
             object = ois.readObject();
 
             return this;
         } catch (IOException ioe) {
-            throw context.getRuntime().newIOErrorFromException(ioe);
+            throw context.runtime.newIOErrorFromException(ioe);
         } catch (ClassNotFoundException cnfe) {
-            throw context.getRuntime().newTypeError("Class not found unmarshaling Java type: " + cnfe.getLocalizedMessage());
+            throw context.runtime.newTypeError("Class not found unmarshaling Java type: " + cnfe.getLocalizedMessage());
         }
     }
 

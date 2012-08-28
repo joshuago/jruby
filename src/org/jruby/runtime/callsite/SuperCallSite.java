@@ -38,12 +38,12 @@ public class SuperCallSite extends CallSite {
     }
 
     public IRubyObject call(ThreadContext context, IRubyObject caller, IRubyObject self, long fixnum) {
-        return call(context, caller, self, RubyFixnum.newFixnum(context.getRuntime(), fixnum));
+        return call(context, caller, self, RubyFixnum.newFixnum(context.runtime, fixnum));
     }
     
     @Override
     public IRubyObject call(ThreadContext context, IRubyObject caller, IRubyObject self, double flote) {
-        return call(context, caller, self, RubyFloat.newFloat(context.getRuntime(), flote));
+        return call(context, caller, self, RubyFloat.newFloat(context.runtime, flote));
     }
 
     public IRubyObject call(ThreadContext context, IRubyObject caller, IRubyObject self, IRubyObject... args) {
@@ -459,9 +459,9 @@ public class SuperCallSite extends CallSite {
     protected static void checkSuperDisabledOrOutOfMethod(ThreadContext context, RubyModule frameClass, String frameName) {
         if (frameClass == null) {
             if (frameName != null) {
-                throw context.getRuntime().newNameError("superclass method '" + frameName + "' disabled", frameName);
+                throw context.runtime.newNameError("superclass method '" + frameName + "' disabled", frameName);
             } else {
-                throw context.getRuntime().newNoMethodError("super called outside of method", null, context.getRuntime().getNil());
+                throw context.runtime.newNoMethodError("super called outside of method", null, context.runtime.getNil());
             }
         }
     }
@@ -474,6 +474,6 @@ public class SuperCallSite extends CallSite {
     }
 
     protected static RaiseException retryJumpError(ThreadContext context) {
-        return context.getRuntime().newLocalJumpError(RubyLocalJumpError.Reason.RETRY, context.getRuntime().getNil(), "retry outside of rescue not supported");
+        return context.runtime.newLocalJumpError(RubyLocalJumpError.Reason.RETRY, context.runtime.getNil(), "retry outside of rescue not supported");
     }
 }

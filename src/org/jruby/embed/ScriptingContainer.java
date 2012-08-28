@@ -12,7 +12,7 @@
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
- * Copyright (C) 2009-2011 Yoko Harada <yokolet@gmail.com>
+ * Copyright (C) 2009-2012 Yoko Harada <yokolet@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -254,7 +254,6 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
         if (home != null) {
         	provider.getRubyInstanceConfig().setJRubyHome(home);
         }
-        provider.getRubyInstanceConfig().setCompileMode(CompileMode.OFF);
         provider.getRubyInstanceConfig().setScriptFileName("<script>");
     }
 
@@ -1090,7 +1089,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      *         map contains no mapping for the key
      */
     public Object get(String key) {
-        return provider.getVarMap().get(provider.getRuntime().getTopSelf(), key);
+        return provider.getVarMap().get(key);
     }
 
     /**
@@ -1121,7 +1120,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      *         no mapping for this key.
      */
     public Object put(String key, Object value) {
-        return provider.getVarMap().put(provider.getRuntime().getTopSelf(), key, value);
+        return provider.getVarMap().put(key, value);
     }
 
     /**
@@ -1153,7 +1152,7 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      *         no mapping for this key.
      */
     public Object remove(String key) {
-        return remove(provider.getRuntime().getTopSelf(), key);
+        return provider.getVarMap().remove(key);
     }
 
     /**
@@ -1358,7 +1357,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * Executes a method defined in Ruby script. This method is used when a Ruby
      * method does not have any argument.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param args is an array of method arguments
      * @return an instance of requested Java type
@@ -1372,6 +1373,8 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * method does not have any argument.
      *
      * @param receiver is an instance that will receive this method call
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param block is a block to be executed in this method
      * @param args is an array of method arguments
@@ -1385,7 +1388,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * Executes a method defined in Ruby script. This method is used when a Ruby
      * method does not have any argument.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param returnType is the type we want it to convert to
      * @return an instance of requested Java type
@@ -1398,7 +1403,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * Executes a method defined in Ruby script. This method is used when a Ruby
      * method have only one argument.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param singleArg is an method argument
      * @param returnType returnType is the type we want it to convert to
@@ -1412,7 +1419,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * Executes a method defined in Ruby script. This method is used when a Ruby
      * method have multiple arguments.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param args is an array of method arguments
      * @param returnType is the type we want it to convert to
@@ -1426,7 +1435,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * Executes a method defined in Ruby script. This method is used when a Ruby
      * method have multiple arguments, one of which is a block.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param args is an array of method arguments except a block
      * @param block is a block to be executed in this method
@@ -1442,7 +1453,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * method does not have any argument, and users want to inject Ruby's local
      * variables' values from Java.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param returnType is the type we want it to convert to
      * @param unit is parsed unit
@@ -1457,7 +1470,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * method have multiple arguments, and users want to inject Ruby's local
      * variables' values from Java.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param args is an array of method arguments
      * @param returnType is the type we want it to convert to
@@ -1473,7 +1488,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      * method have multiple arguments, one of which is a block, and users want to
      * inject Ruby's local variables' values from Java.
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param methodName is a method name to be called
      * @param args is an array of method arguments except a block
      * @param block is a block to be executed in this method
@@ -1487,7 +1504,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
 
     /**
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param args is an array of method arguments
      * @param returnType is the type we want it to convert to
      * @return is the type we want it to convert to
@@ -1498,7 +1517,9 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
 
     /**
      *
-     * @param receiver is an instance that will receive this method call
+     * @param receiver is an instance that will receive this method call.
+     *                 Ruby's self object will be used if no appropriate receiver
+     *                 is given.
      * @param args is an array of method arguments except a block
      * @param block is a block to be executed in this method
      * @param returnType is the type we want it to convert to
@@ -1506,6 +1527,41 @@ public class ScriptingContainer implements EmbedRubyInstanceConfigAdapter {
      */
     public <T> T callSuper(Object receiver, Object[] args, Block block, Class<T> returnType) {
         return objectAdapter.callSuper(receiver, args, block, returnType);
+    }
+    
+    /**
+     * Executes a method defined in Ruby script. This method is used when a Ruby
+     * method does not have any argument.
+     *
+     * @param returnType is the type we want it to convert to
+     * @param receiver is an instance that will receive this method call. The receiver
+     *                 can be null or other Java objects as well as RubyObject.
+     *                 The null will be converted to RubyNil. Java objects will be
+     *                 wrapped in RubyObject.
+     * @param methodName is a method name to be called
+     * @param args is an array of method arguments
+     * @return an instance of requested Java type
+     */
+    public <T> T runRubyMethod(Class<T> returnType, Object receiver, String methodName, Object... args) {
+        return objectAdapter.runRubyMethod(returnType, receiver, methodName, null, args);
+    }
+
+    /**
+     * Executes a method defined in Ruby script. This method is used when a Ruby
+     * method does not have any argument.
+     *
+     * @param returnType is the type we want it to convert to
+     * @param receiver is an instance that will receive this method call. The receiver
+     *                 can be null or other Java objects as well as RubyObject.
+     *                 The null will be converted to RubyNil. Java objects will be
+     *                 wrapped in RubyObject.
+     * @param methodName is a method name to be called
+     * @param block is an optional Block object.  Send null for no block.
+     * @param args is an array of method arguments
+     * @return an instance of requested Java type
+     */
+    public <T> T runRubyMethod(Class<T> returnType, Object receiver, String methodName, Block block, Object... args) {
+        return objectAdapter.runRubyMethod(returnType, receiver, methodName, block, args);
     }
 
     /**

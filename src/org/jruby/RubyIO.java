@@ -44,7 +44,6 @@ import org.jruby.util.StringSupport;
 import org.jruby.util.io.EncodingOption;
 import org.jruby.util.io.ModeFlags;
 import org.jruby.util.io.SelectBlob;
-import org.jcodings.exception.EncodingException;
 import jnr.constants.platform.Fcntl;
 import java.io.EOFException;
 import java.io.FileDescriptor;
@@ -98,12 +97,13 @@ import org.jruby.util.io.OpenFile;
 import org.jruby.util.io.ChannelDescriptor;
 
 import org.jcodings.specific.ASCIIEncoding;
-import org.jcodings.specific.USASCIIEncoding;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.Arity;
 
 import static org.jruby.CompatVersion.*;
 import static org.jruby.RubyEnumerator.enumeratorize;
+import org.jruby.runtime.encoding.EncodingService;
+import org.jruby.util.CharsetTranscoder;
 
 /**
  * 
@@ -540,7 +540,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "reopen", required = 1, optional = 1)
     public IRubyObject reopen(ThreadContext context, IRubyObject[] args) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
     	IRubyObject tmp = TypeConverter.convertToTypeWithCheck(args[0], runtime.getIO(), "to_io");
         
     	if (!tmp.isNil()) {
@@ -578,14 +578,12 @@ public class RubyIO extends RubyObject {
             separatorValue.convertToString().getByteList();
 
         if (separator != null) {
-            if (separator.getRealSize() == 0) separator = Stream.PARAGRAPH_DELIMETER;
+            if (separator.getRealSize() == 0) return Stream.PARAGRAPH_DELIMETER;
 
             if (runtime.is1_9()) {
-                Encoding internal = getInternalEncoding(runtime);
-
-                if (internal != null) {
-                    separator = RubyString.transcode(runtime.getCurrentContext(), separator,
-                            internal, getExternalEncoding(runtime), runtime.getNil());
+                if (separator.getEncoding() != getReadEncoding(runtime)) {
+                    separator = CharsetTranscoder.transcode(runtime.getCurrentContext(), separator,
+                            getInputEncoding(runtime), getReadEncoding(runtime), runtime.getNil());
                 }
             }
         }
@@ -619,35 +617,32 @@ public class RubyIO extends RubyObject {
     }
 
     private IRubyObject getline(Ruby runtime, ByteList separator, long limit, ByteListCache cache) {
-        IRubyObject result = getlineInner(runtime, separator, limit, cache);
-
-        if (runtime.is1_9() && !result.isNil()) {
-            Encoding internal = internalEncoding;
-            Encoding external = externalEncoding;
-
-            if (internal != external) {
-                ByteList transcoded = RubyString.transcode(
-                        runtime.getCurrentContext(),
-                        ((RubyString) result).getByteList(),
-                        external, internal,
-                        runtime.getNil());
-
-                RubyString newResult = RubyString.newStringNoCopy(runtime, transcoded);
-
-                newResult.infectBy(result);
-
-                result = newResult;
-            }
-        }
-
-        return result;
+        return getlineInner(runtime, separator, limit, cache);
     }
+    
+    private IRubyObject getlineEmptyString(Ruby runtime) {
+        if (runtime.is1_9()) return RubyString.newEmptyString(runtime, getReadEncoding(runtime));
+
+        return RubyString.newEmptyString(runtime);
+    }
+    
+    private IRubyObject getlineAll(Ruby runtime, OpenFile myOpenFile) throws IOException, BadDescriptorException {
+        RubyString str = readAll();
+
+        if (str.getByteList().length() == 0) return runtime.getNil();
+        incrementLineno(runtime, myOpenFile);
+        
+        return str;
+    }
+    
     /**
      * getline using logic of gets.  If limit is -1 then read unlimited amount.
-     *
+     * mri: rb_io_getline_1 (mostly)
      */
     private IRubyObject getlineInner(Ruby runtime, ByteList separator, long limit, ByteListCache cache) {
         try {
+            boolean is19 = runtime.is1_9();
+            
             OpenFile myOpenFile = getOpenFileChecked();
 
             myOpenFile.checkReadable(runtime);
@@ -659,31 +654,37 @@ public class RubyIO extends RubyObject {
             if (isParagraph) swallow('\n');
             
             if (separator == null && limit < 0) {
-                RubyString str = readAll();
-                if (str.getByteList().length() == 0) {
-                    return runtime.getNil();
-                }
-                incrementLineno(runtime, myOpenFile);
-                return str;
+                return getlineAll(runtime, myOpenFile);
             } else if (limit == 0) {
-                if (runtime.is1_9()) {
-                    return RubyString.newEmptyString(runtime, externalEncoding);
-                } else {
-                    return RubyString.newEmptyString(runtime);
-                }
-            } else if (separator != null && separator.length() == 1 && limit < 0) {
+                return getlineEmptyString(runtime);
+            } else if (separator != null && separator.length() == 1 && limit < 0 && 
+                    (!is19 || (!needsReadConversion() && getReadEncoding(runtime).isAsciiCompatible()))) {
                 return getlineFast(runtime, separator.get(0) & 0xFF, cache);
             } else {
                 Stream readStream = myOpenFile.getMainStreamSafe();
                 int c = -1;
                 int n = -1;
                 int newline = (separator != null) ? (separator.get(separator.length() - 1) & 0xFF) : -1;
+                
+                // FIXME: Change how we consume streams to match MRI (see append_line/more_char/fill_cbuf)
+                // Awful hack.  MRI pre-transcodes lines into read-ahead whereas
+                // we read a single line at a time PRE-transcoded.  To keep our
+                // logic we need to do one additional transcode of the sep to
+                // match the pre-transcoded encoding.  This is gross and we should
+                // mimick MRI.
+                if (is19 && separator != null && separator.getEncoding() != getInputEncoding(runtime)) {
+                    separator = CharsetTranscoder.transcode(runtime.getCurrentContext(), separator, separator.getEncoding(), getInputEncoding(runtime), null);
+                    newline = separator.get(separator.length() - 1) & 0xFF;
+                }
 
                 ByteList buf = cache != null ? cache.allocate(0) : new ByteList(0);
                 try {
+                    ThreadContext context = runtime.getCurrentContext();
                     boolean update = false;
                     boolean limitReached = false;
-
+                    
+                    if (is19) makeReadConversion(context);
+                    
                     while (true) {
                         do {
                             readCheck(readStream);
@@ -721,8 +722,11 @@ public class RubyIO extends RubyObject {
                             update = true;
                         } while (c != newline); // loop until we see the nth separator char
 
+
                         // if we hit EOF or reached limit then we're done
-                        if (n == -1 || limitReached) break;
+                        if (n == -1 || limitReached) {
+                            break;
+                        }
 
                         // if we've found the last char of the separator,
                         // and we've found at least as many characters as separator length,
@@ -732,6 +736,8 @@ public class RubyIO extends RubyObject {
                             break;
                         }
                     }
+                    
+                    if (is19) buf = readTranscoder.transcode(context, buf);
                     
                     if (isParagraph && c != -1) swallow('\n');
                     if (!update) return runtime.getNil();
@@ -755,19 +761,20 @@ public class RubyIO extends RubyObject {
         }
     }
 
-    private Encoding getExternalEncoding(Ruby runtime) {
-        return externalEncoding != null ? externalEncoding : runtime.getDefaultExternalEncoding();
+    // mri: io_read_encoding
+    private Encoding getReadEncoding(Ruby runtime) {
+        return readEncoding != null ? readEncoding : runtime.getDefaultExternalEncoding();
     }
-
-
-    private Encoding getInternalEncoding(Ruby runtime) {
-        return internalEncoding != null ? internalEncoding : runtime.getDefaultInternalEncoding();
+    
+    // mri: io_input_encoding
+    private Encoding getInputEncoding(Ruby runtime) {
+        return writeEncoding != null ? writeEncoding : getReadEncoding(runtime);
     }
 
     private RubyString makeString(Ruby runtime, ByteList buffer, boolean isCached) {
         ByteList newBuf = isCached ? new ByteList(buffer) : buffer;
 
-        if (runtime.is1_9()) newBuf.setEncoding(getExternalEncoding(runtime));
+        if (runtime.is1_9()) newBuf.setEncoding(getReadEncoding(runtime));
 
         RubyString str = RubyString.newString(runtime, newBuf);
         str.setTaint(true);
@@ -861,7 +868,7 @@ public class RubyIO extends RubyObject {
         
         if (block.isGiven()) {
             String className = klass.getName();
-            context.getRuntime().getWarnings().warn(
+            context.runtime.getWarnings().warn(
                     ID.BLOCK_NOT_ACCEPTED,
                     className + "::new() does not take block; use " + className + "::open() instead");
         }
@@ -1043,67 +1050,127 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(compat = RUBY1_9)
     public IRubyObject external_encoding(ThreadContext context) {
-        return externalEncoding != null ?
-            context.getRuntime().getEncodingService().getEncoding(externalEncoding) :
-            context.getRuntime().getNil();
+        EncodingService encodingService = context.runtime.getEncodingService();
+        
+        if (writeEncoding != null) return encodingService.getEncoding(writeEncoding);
+        
+        if (openFile.isWritable()) {
+            return readEncoding == null ? context.runtime.getNil() : encodingService.getEncoding(readEncoding);
+        }
+        
+        return encodingService.getEncoding(getReadEncoding(context.runtime));
     }
 
     @JRubyMethod(compat = RUBY1_9)
     public IRubyObject internal_encoding(ThreadContext context) {
-        return internalEncoding != null ?
-            context.getRuntime().getEncodingService().getEncoding(internalEncoding) :
-            context.getRuntime().getNil();
+        if (writeEncoding == null) return context.runtime.getNil();
+        
+        return context.runtime.getEncodingService().getEncoding(getReadEncoding(context.runtime));
     }
 
     @JRubyMethod(compat=RUBY1_9)
     public IRubyObject set_encoding(ThreadContext context, IRubyObject encodingObj) {
-        if (encodingObj instanceof RubyString) {
-            EncodingOption encodingOption = EncodingOption.getEncodingOptionFromString(context.runtime, encodingObj.convertToString().toString());
-            setEncodingFromOptions(encodingOption);
+        setEncoding(context, encodingObj, context.runtime.getNil(), null);
+
+        return context.runtime.getNil();
+    }
+    
+    // mri: io_encoding_set
+    private void setEncoding(ThreadContext context, IRubyObject external, IRubyObject internal, IRubyObject options) {        
+        if (!internal.isNil()) {
+            Encoding enc;
+            Encoding enc2 = getEncodingCommon(context, external);
+            
+            if (internal instanceof RubyString) {
+                RubyString internalAsString = (RubyString) internal;
+                
+                // No encoding '-'
+                if (internalAsString.size() == 1 && internalAsString.asJavaString().equals("-")) {
+                    enc = enc2;
+                    enc2 = null;
+                } else {
+                    EncodingOption encodingOption = EncodingOption.getEncodingOptionFromString(context.runtime, internalAsString.asJavaString());
+                    enc = encodingOption.getExternalEncoding(); // Not really external... :) and bom handling?
+                }
+                
+                if (enc == enc2) {
+                    context.runtime.getWarnings().warn("Ignoring internal encoding " + 
+                            enc + ": it is identical to external encoding " + enc2);
+                    enc2 = null;
+                }
+            } else {
+                enc = getEncodingCommon(context, internal);
+
+                if (enc2 == enc) {
+                    context.runtime.getWarnings().warn("Ignoring internal encoding " + 
+                            enc2 + ": it is identical to external encoding " + enc);
+                    enc = null;
+                }
+            }
+            transcodingActions = CharsetTranscoder.getCodingErrorActions(context, options);            
+            setupReadWriteEncodings(context, enc, enc2);            
+            
         } else {
-            setExternalEncoding(context, encodingObj);
+            if (external.isNil()) {
+                setupReadWriteEncodings(context, null, null);
+            } else {
+                if (external instanceof RubyString) {
+                    RubyString externalAsString = (RubyString) external;
+                    
+                    // FIXME: I think this can handle a:b syntax and I didn't (also BOM)
+                    setEncodingFromOptions(EncodingOption.getEncodingOptionFromString(context.runtime, externalAsString.asJavaString()));
+                } else {
+                    Encoding enc = getEncodingCommon(context, external);
+                    setupReadWriteEncodings(context, null, enc);
+                }
+                transcodingActions = CharsetTranscoder.getCodingErrorActions(context, options);
+            }
         }
-        return context.getRuntime().getNil();
+
+        validateEncodingBinmode();
+        clearCodeConversion();
+    }
+    
+    private void validateEncodingBinmode() {
+        if (openFile.isReadable() && writeEncoding == null && 
+                !openFile.isBinmode() && readEncoding != null && !readEncoding.isAsciiCompatible()) {
+            throw getRuntime().newArgumentError("ASCII incompatible encoding needs binmode");
+        }
+        
+        // FIXME: Replace false with ecflags equiv when impl'd
+        if (openFile.isBinmode() && false) { // DEFAULT_TEXTMODE & ECONV_DEC_MASK w/ ecflags
+            openFile.setTextMode();
+        }
     }
 
     @JRubyMethod(compat=RUBY1_9)
     public IRubyObject set_encoding(ThreadContext context, IRubyObject encodingString, IRubyObject internalEncoding) {
-        setExternalEncoding(context, encodingString);
-        setInternalEncoding(context, internalEncoding);
-        return context.getRuntime().getNil();
+        if (internalEncoding instanceof RubyHash) {
+            setEncoding(context, encodingString, context.runtime.getNil(), internalEncoding);            
+        } else {
+            setEncoding(context, encodingString, internalEncoding, null);
+        }
+
+        return context.runtime.getNil();
     }
 
     @JRubyMethod(compat = RUBY1_9)
     public IRubyObject set_encoding(ThreadContext context, IRubyObject encodingString, IRubyObject internalEncoding, IRubyObject options) {
-        setExternalEncoding(context, encodingString);
-        setInternalEncoding(context, internalEncoding);
-        return context.getRuntime().getNil();
+        setEncoding(context, encodingString, internalEncoding, options);
+
+        return context.runtime.getNil();
     }
 
-    private void setExternalEncoding(ThreadContext context, IRubyObject encoding) {
-        externalEncoding = getEncodingCommon(context, encoding);
-    }
-
-    private void setInternalEncoding(ThreadContext context, IRubyObject encoding) {
-        Encoding internalEncodingOption = getEncodingCommon(context, encoding);
-
-        if (internalEncodingOption == externalEncoding) {
-            context.getRuntime().getWarnings().warn("Ignoring internal encoding " + encoding
-                    + ": it is identical to external encoding " + external_encoding(context));
-        } else {
-            internalEncoding = internalEncodingOption;
-        }
-    }
 
     private static Encoding getEncodingCommon(ThreadContext context, IRubyObject encoding) {
         if (encoding instanceof RubyEncoding) return ((RubyEncoding) encoding).getEncoding();
-        
-        return context.getRuntime().getEncodingService().getEncodingFromObject(encoding);
+
+        return context.runtime.getEncodingService().getEncodingFromObject(encoding);
     }
 
     @JRubyMethod(required = 1, rest = true, meta = true)
     public static IRubyObject open(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         RubyClass klass = (RubyClass)recv;
         
         RubyIO io = (RubyIO)klass.newInstance(context, args, block);
@@ -1138,7 +1205,7 @@ public class RubyIO extends RubyObject {
     
     @JRubyMethod(name = "sysopen", required = 1, optional = 2, meta = true, compat = CompatVersion.RUBY1_9)
     public static IRubyObject sysopen19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        StringSupport.checkStringSafety(context.getRuntime(), args[0]);
+        StringSupport.checkStringSafety(context.runtime, args[0]);
         IRubyObject pathString;
         if (!(args[0] instanceof RubyString) && args[0].respondsTo("to_path")) {
             pathString = args[0].callMethod(context, "to_path");
@@ -1150,10 +1217,9 @@ public class RubyIO extends RubyObject {
 
     private static IRubyObject sysopenCommon(IRubyObject recv, IRubyObject[] args, Block block, IRubyObject pathString) {
         Ruby runtime = recv.getRuntime();
-        runtime.checkSafeString(pathString);
         String path = pathString.toString();
 
-        IOOptions modes = null;
+        IOOptions modes;
         int perms = -1; // -1 == don't set permissions
 
         if (args.length > 1) {
@@ -1212,22 +1278,23 @@ public class RubyIO extends RubyObject {
     public IRubyObject binmode() {
         if (isClosed()) throw getRuntime().newIOError("closed stream");
 
-        Ruby runtime = getRuntime();
+        // rb_econv_binmode({read/write}_conv) stuff missing
+/*        Ruby runtime = getRuntime();
         if (getExternalEncoding(runtime) == USASCIIEncoding.INSTANCE) {
             externalEncoding = ASCIIEncoding.INSTANCE;
-        }
+        }*/
         openFile.setBinmode();
         return this;
     }
 
     @JRubyMethod(name = "binmode?", compat = RUBY1_9)
     public IRubyObject op_binmode(ThreadContext context) {
-        return RubyBoolean.newBoolean(context.getRuntime(), openFile.isBinmode());
+        return RubyBoolean.newBoolean(context.runtime, openFile.isBinmode());
     }
 
     @JRubyMethod(name = "syswrite", required = 1)
     public IRubyObject syswrite(ThreadContext context, IRubyObject obj) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         try {
             RubyString string = obj.asString();
@@ -1278,14 +1345,14 @@ public class RubyIO extends RubyObject {
         OpenFile myOpenFile = getOpenFileChecked();
 
         try {
-            myOpenFile.checkWritable(context.getRuntime());
+            myOpenFile.checkWritable(context.runtime);
             RubyString str = obj.asString();
             if (str.getByteList().length() == 0) {
-                return context.getRuntime().newFixnum(0);
+                return context.runtime.newFixnum(0);
             }
 
             if (myOpenFile.isWriteBuffered()) {
-                context.getRuntime().getWarnings().warn(ID.SYSWRITE_BUFFERED_IO, "write_nonblock for buffered IO");
+                context.runtime.getWarnings().warn(ID.SYSWRITE_BUFFERED_IO, "write_nonblock for buffered IO");
             }
 
             ChannelStream stream = (ChannelStream)myOpenFile.getWriteStream();
@@ -1299,13 +1366,13 @@ public class RubyIO extends RubyObject {
                 }
             }
 
-            return context.getRuntime().newFixnum(written);
+            return context.runtime.newFixnum(written);
         } catch (IOException ex) {
-            throw context.getRuntime().newIOErrorFromException(ex);
+            throw context.runtime.newIOErrorFromException(ex);
         } catch (BadDescriptorException ex) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (InvalidValueException ex) {
-            throw context.getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         }
     }
     
@@ -1314,9 +1381,7 @@ public class RubyIO extends RubyObject {
      */
     @JRubyMethod(name = "write", required = 1)
     public IRubyObject write(ThreadContext context, IRubyObject obj) {
-        Ruby runtime = context.getRuntime();
-        
-        runtime.secure(4);
+        Ruby runtime = context.runtime;
         
         RubyString str = obj.asString();
 
@@ -1380,6 +1445,10 @@ public class RubyIO extends RubyObject {
         int n, r, l, offset = 0;
         boolean eagain = false;
         Stream writeStream = openFile.getWriteStream();
+        
+        if (getRuntime().is1_9()) {
+            buffer = doWriteConversion(getRuntime().getCurrentContext(), buffer);
+        }
 
         int len = buffer.length();
         
@@ -1485,7 +1554,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "fileno", alias = "to_i")
     public RubyFixnum fileno(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         // map to external fileno
         try {
             return runtime.newFixnum(runtime.getFileno(getOpenFileChecked().getMainStreamSafe().getDescriptor()));
@@ -1500,7 +1569,7 @@ public class RubyIO extends RubyObject {
      */
     @JRubyMethod(name = "lineno")
     public RubyFixnum lineno(ThreadContext context) {
-        return context.getRuntime().newFixnum(getOpenFileChecked().getLineNumber());
+        return context.runtime.newFixnum(getOpenFileChecked().getLineNumber());
     }
 
     /** Sets the current line number.
@@ -1511,7 +1580,7 @@ public class RubyIO extends RubyObject {
     public RubyFixnum lineno_set(ThreadContext context, IRubyObject newLineNumber) {
         getOpenFileChecked().setLineNumber(RubyNumeric.fix2int(newLineNumber));
 
-        return context.getRuntime().newFixnum(getOpenFileChecked().getLineNumber());
+        return context.runtime.newFixnum(getOpenFileChecked().getLineNumber());
     }
 
     /** Returns the current sync mode.
@@ -1521,7 +1590,7 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "sync")
     public RubyBoolean sync(ThreadContext context) {
         try {
-            return context.getRuntime().newBoolean(getOpenFileChecked().getMainStreamSafe().isSync());
+            return context.runtime.newBoolean(getOpenFileChecked().getMainStreamSafe().isSync());
         } catch (BadDescriptorException e) {
             throw context.runtime.newErrnoEBADFError();
         }
@@ -1540,27 +1609,27 @@ public class RubyIO extends RubyObject {
         OpenFile myOpenFile = getOpenFileChecked();
         
         if (myOpenFile.getProcess() == null) {
-            return context.getRuntime().getNil();
+            return context.runtime.getNil();
         }
         
         // Of course this isn't particularly useful.
         long pid = myOpenFile.getPid();
-        
-        return context.getRuntime().newFixnum(pid); 
+
+        return context.runtime.newFixnum(pid);
     }
     
     @JRubyMethod(name = {"pos", "tell"})
     public RubyFixnum pos(ThreadContext context) {
         try {
-            return context.getRuntime().newFixnum(getOpenFileChecked().getMainStreamSafe().fgetpos());
+            return context.runtime.newFixnum(getOpenFileChecked().getMainStreamSafe().fgetpos());
         } catch (InvalidValueException ex) {
-            throw context.getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         } catch (BadDescriptorException bde) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (PipeException e) {
-            throw context.getRuntime().newErrnoESPIPEError();
+            throw context.runtime.newErrnoESPIPEError();
         } catch (IOException e) {
-            throw context.getRuntime().newIOErrorFromException(e);
+            throw context.runtime.newIOErrorFromException(e);
         }
     }
     
@@ -1569,7 +1638,7 @@ public class RubyIO extends RubyObject {
         long offset = RubyNumeric.num2long(newPosition);
 
         if (offset < 0) {
-            throw context.getRuntime().newSystemCallError("Negative seek offset");
+            throw context.runtime.newSystemCallError("Negative seek offset");
         }
         
         OpenFile myOpenFile = getOpenFileChecked();
@@ -1579,16 +1648,16 @@ public class RubyIO extends RubyObject {
         
             myOpenFile.getMainStreamSafe().clearerr();
         } catch (BadDescriptorException e) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (InvalidValueException e) {
-            throw context.getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         } catch (PipeException e) {
-            throw context.getRuntime().newErrnoESPIPEError();
+            throw context.runtime.newErrnoESPIPEError();
         } catch (IOException e) {
-            throw context.getRuntime().newIOErrorFromException(e);
+            throw context.runtime.newIOErrorFromException(e);
         }
-        
-        return context.getRuntime().newFixnum(offset);
+
+        return context.runtime.newFixnum(offset);
     }
     
     /** Print some objects to the stream.
@@ -1604,10 +1673,10 @@ public class RubyIO extends RubyObject {
      */
     public static IRubyObject print(ThreadContext context, IRubyObject maybeIO, IRubyObject[] args) {
         if (args.length == 0) {
-            args = new IRubyObject[] { context.getCurrentScope().getLastLine(context.getRuntime()) };
+            args = new IRubyObject[] { context.getCurrentScope().getLastLine(context.runtime) };
         }
 
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject fs = runtime.getGlobalVariables().get("$,");
         IRubyObject rs = runtime.getGlobalVariables().get("$\\");
 
@@ -1631,7 +1700,7 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "printf", required = 1, rest = true)
     public IRubyObject printf(ThreadContext context, IRubyObject[] args) {
         callMethod(context, "write", RubyKernel.sprintf(context, this, args));
-        return context.getRuntime().getNil();
+        return context.runtime.getNil();
     }
 
     @JRubyMethod(name = "putc", required = 1)
@@ -1646,20 +1715,20 @@ public class RubyIO extends RubyObject {
             RubyIO io = (RubyIO)maybeIO;
             try {
                 OpenFile myOpenFile = io.getOpenFileChecked();
-                myOpenFile.checkWritable(context.getRuntime());
+                myOpenFile.checkWritable(context.runtime);
                 Stream writeStream = myOpenFile.getWriteStream();
                 writeStream.fputc(c);
                 if (myOpenFile.isSync()) myOpenFile.fflush(writeStream);
             } catch (IOException ex) {
-                throw context.getRuntime().newIOErrorFromException(ex);
+                throw context.runtime.newIOErrorFromException(ex);
             } catch (BadDescriptorException e) {
-                throw context.getRuntime().newErrnoEBADFError();
+                throw context.runtime.newErrnoEBADFError();
             } catch (InvalidValueException ex) {
-                throw context.getRuntime().newErrnoEINVALError();
+                throw context.runtime.newErrnoEINVALError();
             }
         } else {
             maybeIO.callMethod(context, "write",
-                    RubyString.newStringNoCopy(context.getRuntime(), new byte[] {(byte)c}));
+                    RubyString.newStringNoCopy(context.runtime, new byte[] {(byte)c}));
         }
 
         return object;
@@ -1700,16 +1769,16 @@ public class RubyIO extends RubyObject {
         
             myOpenFile.getMainStreamSafe().clearerr();
         } catch (BadDescriptorException ex) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (InvalidValueException e) {
-            throw context.getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         } catch (PipeException e) {
-            throw context.getRuntime().newErrnoESPIPEError();
+            throw context.runtime.newErrnoESPIPEError();
         } catch (IOException e) {
-            throw context.getRuntime().newIOErrorFromException(e);
+            throw context.runtime.newIOErrorFromException(e);
         }
-        
-        return RubyFixnum.zero(context.getRuntime());
+
+        return RubyFixnum.zero(context.runtime);
     }
     
     // This was a getOpt with one mandatory arg, but it did not work
@@ -1729,26 +1798,26 @@ public class RubyIO extends RubyObject {
         try {
             
             if (myOpenFile.isReadable() && myOpenFile.isReadBuffered()) {
-                throw context.getRuntime().newIOError("sysseek for buffered IO");
+                throw context.runtime.newIOError("sysseek for buffered IO");
             }
             if (myOpenFile.isWritable() && myOpenFile.isWriteBuffered()) {
-                context.getRuntime().getWarnings().warn(ID.SYSSEEK_BUFFERED_IO, "sysseek for buffered IO");
+                context.runtime.getWarnings().warn(ID.SYSSEEK_BUFFERED_IO, "sysseek for buffered IO");
             }
             
             pos = myOpenFile.getMainStreamSafe().getDescriptor().lseek(offset, whence);
         
             myOpenFile.getMainStreamSafe().clearerr();
         } catch (BadDescriptorException ex) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (InvalidValueException e) {
-            throw context.getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         } catch (PipeException e) {
-            throw context.getRuntime().newErrnoESPIPEError();
+            throw context.runtime.newErrnoESPIPEError();
         } catch (IOException e) {
-            throw context.getRuntime().newIOErrorFromException(e);
+            throw context.runtime.newIOErrorFromException(e);
         }
-        
-        return context.getRuntime().newFixnum(pos);
+
+        return context.runtime.newFixnum(pos);
     }
 
     @JRubyMethod(name = "rewind")
@@ -1764,24 +1833,24 @@ public class RubyIO extends RubyObject {
 //                gets_lineno -= fptr->lineno;
 //            }
         } catch (BadDescriptorException e) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (InvalidValueException e) {
-            throw context.getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         } catch (PipeException e) {
-            throw context.getRuntime().newErrnoESPIPEError();
+            throw context.runtime.newErrnoESPIPEError();
         } catch (IOException e) {
-            throw context.getRuntime().newIOErrorFromException(e);
+            throw context.runtime.newIOErrorFromException(e);
         }
 
         // Must be back on first line on rewind.
         myOpenfile.setLineNumber(0);
-        
-        return RubyFixnum.zero(context.getRuntime());
+
+        return RubyFixnum.zero(context.runtime);
     }
     
     @JRubyMethod(name = "fsync")
     public RubyFixnum fsync(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         try {
             OpenFile myOpenFile = getOpenFileChecked();
@@ -1822,7 +1891,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = {"eof?", "eof"})
     public RubyBoolean eof_p(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         try {
             OpenFile myOpenFile = getOpenFileChecked();
@@ -1867,9 +1936,9 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = {"tty?", "isatty"})
     public RubyBoolean tty_p(ThreadContext context) {
         try {
-            return context.getRuntime().newBoolean(
-                    context.getRuntime().getPosix().isatty(
-                    getOpenFileChecked().getMainStreamSafe().getDescriptor().getFileDescriptor()));
+            return context.runtime.newBoolean(
+                    context.runtime.getPosix().isatty(
+                            getOpenFileChecked().getMainStreamSafe().getDescriptor().getFileDescriptor()));
         } catch (BadDescriptorException e) {
             throw context.runtime.newErrnoEBADFError();
         }
@@ -1958,7 +2027,7 @@ public class RubyIO extends RubyObject {
     
     @JRubyMethod(name = "closed?")
     public RubyBoolean closed_p(ThreadContext context) {
-        return context.getRuntime().newBoolean(isClosed());
+        return context.runtime.newBoolean(isClosed());
     }
 
     /**
@@ -1979,10 +2048,6 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "close")
     public IRubyObject close() {
         Ruby runtime = getRuntime();
-        
-        if (runtime.getSafeLevel() >= 4 && isTaint()) {
-            throw runtime.newSecurityError("Insecure: can't close");
-        }
         
         openFile.checkClosed(runtime);
         return close2(runtime);
@@ -2024,14 +2089,10 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "close_write")
     public IRubyObject close_write(ThreadContext context) {
         try {
-            if (context.getRuntime().getSafeLevel() >= 4 && isTaint()) {
-                throw context.getRuntime().newSecurityError("Insecure: can't close");
-            }
-            
             OpenFile myOpenFile = getOpenFileChecked();
             
             if (myOpenFile.getPipeStream() == null && myOpenFile.isReadable()) {
-                throw context.getRuntime().newIOError("closing non-duplex IO for writing");
+                throw context.runtime.newIOError("closing non-duplex IO for writing");
             }
             
             if (myOpenFile.getPipeStream() == null) {
@@ -2045,7 +2106,7 @@ public class RubyIO extends RubyObject {
                 // if (n != 0) rb_sys_fail(fptr->path);
             }
         } catch (BadDescriptorException bde) {
-            throw context.getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (IOException ioe) {
             // hmmmm
         }
@@ -2054,13 +2115,9 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "close_read")
     public IRubyObject close_read(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
         try {
-            if (runtime.getSafeLevel() >= 4 && isTaint()) {
-                throw runtime.newSecurityError("Insecure: can't close");
-            }
-            
             OpenFile myOpenFile = getOpenFileChecked();
             
             if (myOpenFile.getPipeStream() == null && myOpenFile.isWritable()) {
@@ -2109,7 +2166,7 @@ public class RubyIO extends RubyObject {
      */
     @JRubyMethod(name = "gets", writes = FrameField.LASTLINE, compat = RUBY1_8)
     public IRubyObject gets(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject result = getline(runtime, separator(runtime, runtime.getRecordSeparatorVar().get()));
 
         if (!result.isNil()) context.getCurrentScope().setLastLine(result);
@@ -2119,7 +2176,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "gets", writes = FrameField.LASTLINE, compat = RUBY1_8)
     public IRubyObject gets(ThreadContext context, IRubyObject separatorArg) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject result = getline(runtime, separator(runtime, separatorArg));
 
         if (!result.isNil()) context.getCurrentScope().setLastLine(result);
@@ -2129,7 +2186,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "gets", writes = FrameField.LASTLINE, compat = RUBY1_9)
     public IRubyObject gets19(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject result = getline(runtime, separator(runtime));
 
         if (!result.isNil()) context.getCurrentScope().setLastLine(result);
@@ -2139,7 +2196,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "gets", writes = FrameField.LASTLINE, compat = RUBY1_9)
     public IRubyObject gets19(ThreadContext context, IRubyObject arg) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         ByteList separator;
         long limit = -1;
         if (arg instanceof RubyInteger) {
@@ -2158,7 +2215,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "gets", writes = FrameField.LASTLINE, compat = RUBY1_9)
     public IRubyObject gets19(ThreadContext context, IRubyObject separator, IRubyObject limit_arg) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         long limit = limit_arg.isNil() ? -1 : RubyNumeric.fix2long(limit_arg);
         IRubyObject result = getline(runtime, separator(runtime, separator), limit);
 
@@ -2179,14 +2236,14 @@ public class RubyIO extends RubyObject {
     public IRubyObject fcntl(ThreadContext context, IRubyObject cmd) {
         // TODO: This version differs from ioctl by checking whether fcntl exists
         // and raising notimplemented if it doesn't; perhaps no difference for us?
-        return ctl(context.getRuntime(), cmd, null);
+        return ctl(context.runtime, cmd, null);
     }
 
     @JRubyMethod(name = "fcntl")
     public IRubyObject fcntl(ThreadContext context, IRubyObject cmd, IRubyObject arg) {
         // TODO: This version differs from ioctl by checking whether fcntl exists
         // and raising notimplemented if it doesn't; perhaps no difference for us?
-        return ctl(context.getRuntime(), cmd, arg);
+        return ctl(context.runtime, cmd, arg);
     }
 
     @JRubyMethod(name = "ioctl", required = 1, optional = 1)
@@ -2197,10 +2254,10 @@ public class RubyIO extends RubyObject {
         if (args.length == 2) {
             arg = args[1];
         } else {
-            arg = context.getRuntime().getNil();
+            arg = context.runtime.getNil();
         }
-        
-        return ctl(context.getRuntime(), cmd, arg);
+
+        return ctl(context.runtime, cmd, arg);
     }
 
     public IRubyObject ctl(Ruby runtime, IRubyObject cmd, IRubyObject arg) {
@@ -2271,7 +2328,7 @@ public class RubyIO extends RubyObject {
     }
 
     private static IRubyObject writeSeparator(ThreadContext context, IRubyObject maybeIO) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         assert runtime.getGlobalVariables().getDefaultSeparator() instanceof RubyString;
         RubyString separator = (RubyString) runtime.getGlobalVariables().getDefaultSeparator();
 
@@ -2280,7 +2337,7 @@ public class RubyIO extends RubyObject {
     }
 
     private static IRubyObject putsArray(ThreadContext context, IRubyObject maybeIO, IRubyObject[] args) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         assert runtime.getGlobalVariables().getDefaultSeparator() instanceof RubyString;
         RubyString separator = (RubyString) runtime.getGlobalVariables().getDefaultSeparator();
 
@@ -2308,19 +2365,19 @@ public class RubyIO extends RubyObject {
     }
 
     protected void write(ThreadContext context, ByteList byteList) {
-        callMethod(context, "write", RubyString.newStringShared(context.getRuntime(), byteList));
+        callMethod(context, "write", RubyString.newStringShared(context.runtime, byteList));
     }
 
     protected static void write(ThreadContext context, IRubyObject maybeIO, ByteList byteList) {
-        maybeIO.callMethod(context, "write", RubyString.newStringShared(context.getRuntime(), byteList));
+        maybeIO.callMethod(context, "write", RubyString.newStringShared(context.runtime, byteList));
     }
 
     private static IRubyObject inspectPuts(ThreadContext context, IRubyObject maybeIO, RubyArray array) {
         try {
-            context.getRuntime().registerInspecting(array);
+            context.runtime.registerInspecting(array);
             return putsArray(context, maybeIO, array.toJavaArray());
         } finally {
-            context.getRuntime().unregisterInspecting(array);
+            context.runtime.unregisterInspecting(array);
         }
     }
     
@@ -2360,7 +2417,9 @@ public class RubyIO extends RubyObject {
     public IRubyObject readline(ThreadContext context) {
         IRubyObject line = gets(context);
 
-        if (line.isNil()) throw context.getRuntime().newEOFError();
+        if (line.isNil()) {
+            throw context.runtime.newEOFError();
+        }
         
         return line;
     }
@@ -2369,7 +2428,9 @@ public class RubyIO extends RubyObject {
     public IRubyObject readline(ThreadContext context, IRubyObject separator) {
         IRubyObject line = gets(context, separator);
 
-        if (line.isNil()) throw context.getRuntime().newEOFError();
+        if (line.isNil()) {
+            throw context.runtime.newEOFError();
+        }
 
         return line;
     }
@@ -2395,7 +2456,9 @@ public class RubyIO extends RubyObject {
     public IRubyObject readchar19(ThreadContext context) {
         IRubyObject value = getc19(context);
         
-        if (value.isNil()) throw context.getRuntime().newEOFError();
+        if (value.isNil()) {
+            throw context.runtime.newEOFError();
+        }
         
         return value;
     }
@@ -2414,88 +2477,117 @@ public class RubyIO extends RubyObject {
         
         return context.runtime.newFixnum(c);
     }
+    
+    private IRubyObject getcTranscoded(ThreadContext context, Stream stream, int firstByte) throws IOException, 
+            BadDescriptorException, InvalidValueException {        
+        makeReadConversion(context);
+        
+        Encoding read = getInputEncoding(context.runtime); // MRI has readencoding
+        int cr = 0;
+        ByteList bytes = null;
+        
+        int length = read.length((byte) firstByte);
+        byte[] byteAry = new byte[length];
 
+        byteAry[0] = (byte)firstByte;
+        for (int i = 1; i < length; i++) {
+            int c = (byte) stream.fgetc();
+            
+            if (c == -1) {
+                bytes = new ByteList(byteAry, 0, i - 1, read, false);
+                cr = StringSupport.CR_BROKEN;
+            }
+            
+            byteAry[i] = (byte)c;
+        }
+
+        if (bytes == null) {
+            cr = StringSupport.CR_VALID;
+            bytes = new ByteList(byteAry, read, false);
+        }            
+    
+        bytes = readTranscoder.transcode(context, bytes);
+        
+        return RubyString.newStringNoCopy(context.runtime, bytes, bytes.getEncoding(), cr);
+    }
+    
+    // get a char directly without needing to transcode
+    private IRubyObject getcDirect(ThreadContext context, Stream stream, int firstByte) throws InvalidValueException, 
+            BadDescriptorException, IOException {
+        Encoding encoding = getInputEncoding(context.runtime);
+        ByteList bytes = null;
+        boolean shared = false;
+        int cr = 0;
+
+        if (encoding.isAsciiCompatible() && Encoding.isAscii((byte) firstByte)) {
+            if (encoding == ASCIIEncoding.INSTANCE) {
+                bytes = RubyInteger.SINGLE_CHAR_BYTELISTS[(int) firstByte];
+                shared = true;
+            } else {
+                bytes = new ByteList(new byte[]{(byte) firstByte}, encoding, false);
+                shared = false;
+                cr = StringSupport.CR_7BIT;
+            }
+        } else {
+            // potential MBC
+            int len = encoding.length((byte) firstByte);
+            byte[] byteAry = new byte[len];
+
+            byteAry[0] = (byte) firstByte;
+            for (int i = 1; i < len; i++) {
+                int c = (byte) stream.fgetc();
+                if (c == -1) {
+                    bytes = new ByteList(byteAry, 0, i - 1, encoding, false);
+                    cr = StringSupport.CR_BROKEN;
+                }
+                byteAry[i] = (byte) c;
+            }
+
+            if (bytes == null) {
+                cr = StringSupport.CR_VALID;
+                bytes = new ByteList(byteAry, encoding, false);
+            }
+        }
+
+        if (shared) return RubyString.newStringShared(context.runtime, bytes, cr);
+
+        return RubyString.newStringNoCopy(context.runtime, bytes, encoding, cr);
+    }    
+    
     @JRubyMethod(name = "getc", compat = RUBY1_9)
     public IRubyObject getc19(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
-
         try {
             OpenFile myOpenFile = getOpenFileChecked();
 
-            myOpenFile.checkReadable(getRuntime());
+            myOpenFile.checkReadable(context.runtime);
             myOpenFile.setReadBuffered();
 
             Stream stream = myOpenFile.getMainStreamSafe();
-
+            
             readCheck(stream);
             waitReadable(stream);
             stream.clearerr();
-
+            
             int c = stream.fgetc();
-
+        
             if (c == -1) {
                 // CRuby checks ferror(f) and retry getc for non-blocking IO
                 // read. We checks readability first if possible so retry should
                 // not be needed I believe.
-                return runtime.getNil();
-            }
+                return context.runtime.getNil();
+            }            
+            
+            if (needsReadConversion()) return getcTranscoded(context, stream, c);
 
-            Encoding external = getExternalEncoding(runtime);
-            Encoding internal = getInternalEncoding(runtime);
-            ByteList bytes = null;
-            boolean shared = false;
-            int cr = 0;
-
-            if (Encoding.isAscii(c)) {
-                if (internal == ASCIIEncoding.INSTANCE) {
-                    bytes = RubyInteger.SINGLE_CHAR_BYTELISTS[(int)c];
-                    shared = true;
-                } else {
-                    bytes = new ByteList(new byte[]{(byte)c}, external, false);
-                    shared = false;
-                    cr = StringSupport.CR_7BIT;
-                }
-            } else {
-                // potential MBC
-                int len = external.length((byte)c);
-                byte[] byteAry = new byte[len];
-
-                byteAry[0] = (byte)c;
-                for (int i = 1; i < len; i++) {
-                    c = (byte)stream.fgetc();
-                    if (c == -1) {
-                        bytes = new ByteList(byteAry, 0, i - 1, external, false);
-                        cr = StringSupport.CR_BROKEN;
-                    }
-                    byteAry[i] = (byte)c;
-                }
-
-                if (bytes == null) {
-                    cr = StringSupport.CR_VALID;
-                    bytes = new ByteList(byteAry, external, false);
-                }
-            }
-
-            if (cr != StringSupport.CR_BROKEN && external != internal) {
-                bytes = RubyString.transcode(context, bytes, external, internal, runtime.getNil());
-            }
-
-            if (internal == null) internal = external;
-
-            if (shared) {
-                return RubyString.newStringShared(runtime, bytes, cr);
-            } else {
-                return RubyString.newStringNoCopy(runtime, bytes, internal, cr);
-            }
-
+            return getcDirect(context, stream, c);
         } catch (InvalidValueException ex) {
-            throw getRuntime().newErrnoEINVALError();
+            throw context.runtime.newErrnoEINVALError();
         } catch (BadDescriptorException e) {
-            throw getRuntime().newErrnoEBADFError();
+            throw context.runtime.newErrnoEBADFError();
         } catch (EOFException e) {
-            throw getRuntime().newEOFError();
+            throw context.runtime.newEOFError();
         } catch (IOException e) {
-            throw getRuntime().newIOErrorFromException(e);
+            throw context.runtime.newIOErrorFromException(e);
         }
     }
 
@@ -2524,6 +2616,7 @@ public class RubyIO extends RubyObject {
         }
     }
     
+    // MRI: NEED_NEWLINE_DECORATOR_ON_READ_CHECK
     private void readCheck(Stream stream) {
         if (!stream.readDataBuffered()) {
             openFile.checkClosed(getRuntime());
@@ -2599,12 +2692,14 @@ public class RubyIO extends RubyObject {
     public IRubyObject read_nonblock(ThreadContext context, IRubyObject[] args) {
         IRubyObject value = getPartial(context, args, true);
 
-        if (value.isNil()) throw context.getRuntime().newEOFError();
+        if (value.isNil()) {
+            throw context.runtime.newEOFError();
+        }
 
         if (value instanceof RubyString) {
             RubyString str = (RubyString) value;
             if (str.isEmpty()) {
-                Ruby ruby = context.getRuntime();
+                Ruby ruby = context.runtime;
 
                 if (ruby.is1_9()) {
                     throw ruby.newErrnoEAGAINReadableError("");
@@ -2621,14 +2716,16 @@ public class RubyIO extends RubyObject {
     public IRubyObject readpartial(ThreadContext context, IRubyObject[] args) {
         IRubyObject value = getPartial(context, args, false);
 
-        if (value.isNil()) throw context.getRuntime().newEOFError();
+        if (value.isNil()) {
+            throw context.runtime.newEOFError();
+        }
 
         return value;
     }
 
     // implements io_getpartial in io.c
     private IRubyObject getPartial(ThreadContext context, IRubyObject[] args, boolean isNonblocking) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         // Length to read
         int length = RubyNumeric.fix2int(args[0]);
@@ -2786,7 +2883,7 @@ public class RubyIO extends RubyObject {
     
     @JRubyMethod(name = "read")
     public IRubyObject read(ThreadContext context) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         OpenFile myOpenFile = getOpenFileChecked();
         
         try {
@@ -2863,7 +2960,7 @@ public class RubyIO extends RubyObject {
     
     // implements latter part of io_read in io.c
     private IRubyObject readNotAll(ThreadContext context, OpenFile myOpenFile, int length, RubyString str) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         str.empty();
 
         try {
@@ -2888,7 +2985,7 @@ public class RubyIO extends RubyObject {
 
     // implements latter part of io_read in io.c
     private IRubyObject readNotAll(ThreadContext context, OpenFile myOpenFile, int length) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         try {
             ByteList newBuffer = readNotAllCommon(context, myOpenFile, length);
@@ -2911,7 +3008,7 @@ public class RubyIO extends RubyObject {
     }
 
     private ByteList readNotAllCommon(ThreadContext context, OpenFile myOpenFile, int length) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         try {
             myOpenFile.checkReadable(runtime);
@@ -2969,12 +3066,17 @@ public class RubyIO extends RubyObject {
         return str;
     }
 
-    // implements read_all() in io.c
     protected RubyString readAll() throws BadDescriptorException, EOFException, IOException {
         Ruby runtime = getRuntime();
 
         // TODO: handle writing into original buffer better
         ByteList buf = readAllCommon(runtime);
+        
+        if (runtime.is1_9() && buf != null) {
+            makeReadConversion(runtime.getCurrentContext());
+            
+            buf = readTranscoder.transcode(runtime.getCurrentContext(), buf);
+        }
 
         RubyString str;
         if (buf == null) {
@@ -2986,6 +3088,7 @@ public class RubyIO extends RubyObject {
         return str;
     }
 
+    // mri: read_all
     protected ByteList readAllCommon(Ruby runtime) throws BadDescriptorException, EOFException, IOException {
         ByteList buf = null;
         ChannelDescriptor descriptor = openFile.getMainStreamSafe().getDescriptor();
@@ -3085,9 +3188,9 @@ public class RubyIO extends RubyObject {
     
     @JRubyMethod
     public IRubyObject stat(ThreadContext context) {
-        openFile.checkClosed(context.getRuntime());
+        openFile.checkClosed(context.runtime);
         try {
-            return context.getRuntime().newFileStat(getOpenFileChecked().getMainStreamSafe().getDescriptor().getFileDescriptor());
+            return context.runtime.newFileStat(getOpenFileChecked().getMainStreamSafe().getDescriptor().getFileDescriptor());
         } catch (BadDescriptorException e) {
             throw context.runtime.newErrnoEBADFError();
         }
@@ -3097,7 +3200,7 @@ public class RubyIO extends RubyObject {
      * <p>Invoke a block for each byte.</p>
      */
     public IRubyObject each_byteInternal(ThreadContext context, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         
     	try {
             OpenFile myOpenFile = getOpenFileChecked();
@@ -3133,34 +3236,36 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod
     public IRubyObject each_byte(final ThreadContext context, final Block block) {
-        return block.isGiven() ? each_byteInternal(context, block) : enumeratorize(context.getRuntime(), this, "each_byte");
+        return block.isGiven() ? each_byteInternal(context, block) : enumeratorize(context.runtime, this, "each_byte");
     }
 
     @JRubyMethod(name = "bytes")
     public IRubyObject bytes(final ThreadContext context) {
-        return enumeratorize(context.getRuntime(), this, "each_byte");
+        return enumeratorize(context.runtime, this, "each_byte");
     }
 
     @JRubyMethod(name = "lines", compat = CompatVersion.RUBY1_8)
     public IRubyObject lines(final ThreadContext context, Block block) {
-        return enumeratorize(context.getRuntime(), this, "each_line");
+        return enumeratorize(context.runtime, this, "each_line");
     }
 
     @JRubyMethod(name = "lines", compat = CompatVersion.RUBY1_9)
     public IRubyObject lines19(final ThreadContext context, Block block) {
-        if (!block.isGiven()) return enumeratorize(context.getRuntime(), this, "each_line");
+        if (!block.isGiven()) {
+            return enumeratorize(context.runtime, this, "each_line");
+        }
         return each_lineInternal(context, NULL_ARRAY, block);
     }
 
     public IRubyObject each_charInternal(final ThreadContext context, final Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject ch;
 
         while(!(ch = getc()).isNil()) {
             byte c = (byte)RubyNumeric.fix2int(ch);
             int n = runtime.getKCode().getEncoding().length(c);
             RubyString str = runtime.newString();
-            if (runtime.is1_9()) str.setEncoding(getExternalEncoding(runtime));
+            if (runtime.is1_9()) str.setEncoding(getReadEncoding(runtime));
             str.setTaint(true);
             str.cat(c);
 
@@ -3188,22 +3293,22 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(compat = RUBY1_8)
     public IRubyObject each_char(final ThreadContext context, final Block block) {
-        return block.isGiven() ? each_charInternal(context, block) : enumeratorize(context.getRuntime(), this, "each_char");
+        return block.isGiven() ? each_charInternal(context, block) : enumeratorize(context.runtime, this, "each_char");
     }
 
     @JRubyMethod(name = "each_char", compat = RUBY1_9)
     public IRubyObject each_char19(final ThreadContext context, final Block block) {
-        return block.isGiven() ? each_charInternal19(context, block) : enumeratorize(context.getRuntime(), this, "each_char");
+        return block.isGiven() ? each_charInternal19(context, block) : enumeratorize(context.runtime, this, "each_char");
     }
 
     @JRubyMethod(compat = RUBY1_8)
     public IRubyObject chars(final ThreadContext context, final Block block) {
-        return block.isGiven() ? each_charInternal(context, block) : enumeratorize(context.getRuntime(), this, "chars");
+        return block.isGiven() ? each_charInternal(context, block) : enumeratorize(context.runtime, this, "chars");
     }
 
     @JRubyMethod(name = "chars", compat = RUBY1_9)
     public IRubyObject chars19(final ThreadContext context, final Block block) {
-        return block.isGiven() ? each_charInternal19(context, block) : enumeratorize(context.getRuntime(), this, "chars");
+        return block.isGiven() ? each_charInternal19(context, block) : enumeratorize(context.runtime, this, "chars");
     }
 
     @JRubyMethod
@@ -3217,11 +3322,11 @@ public class RubyIO extends RubyObject {
     }
 
     private IRubyObject eachCharCommon(final ThreadContext context, final Block block, final String methodName) {
-        return block.isGiven() ? each_char(context, block) : enumeratorize(context.getRuntime(), this, methodName);
+        return block.isGiven() ? each_char(context, block) : enumeratorize(context.runtime, this, methodName);
     }
 
     private IRubyObject eachCodePointCommon(final ThreadContext context, final Block block, final String methodName) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         if (!block.isGiven()) return enumeratorize(runtime, this, methodName);
         IRubyObject ch;
 
@@ -3235,7 +3340,7 @@ public class RubyIO extends RubyObject {
      * <p>Invoke a block for each line.</p>
      */
     public RubyIO each_lineInternal(ThreadContext context, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         ByteList separator = getSeparatorForGets(runtime, args);
 
         ByteListCache cache = new ByteListCache();
@@ -3249,17 +3354,17 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(optional = 1)
     public IRubyObject each(final ThreadContext context, IRubyObject[]args, final Block block) {
-        return block.isGiven() ? each_lineInternal(context, args, block) : enumeratorize(context.getRuntime(), this, "each", args);
+        return block.isGiven() ? each_lineInternal(context, args, block) : enumeratorize(context.runtime, this, "each", args);
     }
 
     @JRubyMethod(optional = 1)
     public IRubyObject each_line(final ThreadContext context, IRubyObject[]args, final Block block) {
-        return block.isGiven() ? each_lineInternal(context, args, block) : enumeratorize(context.getRuntime(), this, "each_line", args);
+        return block.isGiven() ? each_lineInternal(context, args, block) : enumeratorize(context.runtime, this, "each_line", args);
     }
 
     @JRubyMethod(optional = 1)
     public RubyArray readlines(ThreadContext context, IRubyObject[] args) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject[] separatorArgs = args.length > 0 ? new IRubyObject[] { args[0] } : IRubyObject.NULL_ARRAY;
         ByteList separator = getSeparatorForGets(runtime, separatorArgs);
         RubyArray result = runtime.newArray();
@@ -3291,9 +3396,8 @@ public class RubyIO extends RubyObject {
     *
     */
     public static IRubyObject foreachInternal(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject filename = args[0].convertToString();
-        runtime.checkSafeString(filename);
 
         RubyIO io = (RubyIO)RubyFile.open(context, runtime.getFile(), new IRubyObject[] { filename }, Block.NULL_BLOCK);
 
@@ -3305,9 +3409,6 @@ public class RubyIO extends RubyObject {
                 while (!str.isNil()) {
                     block.yield(context, str);
                     str = io.getline(runtime, separator, cache);
-                    if (runtime.is1_9()) {
-                        separator = io.getSeparatorFromArgs(runtime, args, 1);
-                    }
                 }
             } finally {
                 io.close();
@@ -3321,11 +3422,9 @@ public class RubyIO extends RubyObject {
     *
     */
     public static IRubyObject foreachInternal19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         IRubyObject filename = args[0].convertToString();
-        runtime.checkSafeString(filename);
 
-        boolean hasOptions = false;
         RubyIO io;
         // FIXME: This is gross; centralize options logic somewhere.
         switch (args.length) {
@@ -3376,7 +3475,9 @@ public class RubyIO extends RubyObject {
     
     @JRubyMethod(required = 1, optional = 1, meta = true, compat = RUBY1_8)
     public static IRubyObject foreach(final ThreadContext context, IRubyObject recv, IRubyObject[] args, final Block block) {
-        if (!block.isGiven()) return enumeratorize(context.getRuntime(), recv, "foreach", args);
+        if (!block.isGiven()) {
+            return enumeratorize(context.runtime, recv, "foreach", args);
+        }
 
         if (!(args[0] instanceof RubyString) && args[0].respondsTo("to_path")) {
             args[0] = args[0].callMethod(context, "to_path");
@@ -3386,7 +3487,9 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "foreach", required = 1, optional = 2, meta = true, compat = RUBY1_9)
     public static IRubyObject foreach19(final ThreadContext context, IRubyObject recv, IRubyObject[] args, final Block block) {
-        if (!block.isGiven()) return enumeratorize(context.getRuntime(), recv, "foreach", args);
+        if (!block.isGiven()) {
+            return enumeratorize(context.runtime, recv, "foreach", args);
+        }
 
         if (!(args[0] instanceof RubyString) && args[0].respondsTo("to_path")) {
             args[0] = args[0].callMethod(context, "to_path");
@@ -3396,12 +3499,12 @@ public class RubyIO extends RubyObject {
 
     public static RubyIO convertToIO(ThreadContext context, IRubyObject obj) {
         if (obj instanceof RubyIO) return (RubyIO)obj;
-        return (RubyIO)TypeConverter.convertToType(obj, context.getRuntime().getIO(), "to_io");
+        return (RubyIO)TypeConverter.convertToType(obj, context.runtime.getIO(), "to_io");
     }
    
     @JRubyMethod(name = "select", required = 1, optional = 3, meta = true)
     public static IRubyObject select(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
-        return select_static(context, context.getRuntime(), args);
+        return select_static(context, context.runtime, args);
     }
 
     public static IRubyObject select_static(ThreadContext context, Ruby runtime, IRubyObject[] args) {
@@ -3410,11 +3513,13 @@ public class RubyIO extends RubyObject {
    
     public static IRubyObject read(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
         switch (args.length) {
-        case 0: throw context.getRuntime().newArgumentError(0, 1);
+        case 0:
+            throw context.runtime.newArgumentError(0, 1);
         case 1: return readStatic(context, recv, args[0]);
         case 2: return readStatic(context, recv, args[0], args[1]);
         case 3: return readStatic(context, recv, args[0], args[1], args[2]);
-        default: throw context.getRuntime().newArgumentError(args.length, 3);
+        default:
+            throw context.runtime.newArgumentError(args.length, 3);
         }
    }
 
@@ -3451,9 +3556,9 @@ public class RubyIO extends RubyObject {
    
     @JRubyMethod(name = "read", meta = true, compat = RUBY1_8)
     public static IRubyObject readStatic(ThreadContext context, IRubyObject recv, IRubyObject path) {
-        StringSupport.checkStringSafety(context.getRuntime(), path);
+        StringSupport.checkStringSafety(context.runtime, path);
         RubyString pathStr = path.convertToString();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         failIfDirectory(runtime, pathStr);
         RubyIO file = newFile(context, recv, pathStr);
 
@@ -3466,9 +3571,9 @@ public class RubyIO extends RubyObject {
    
     @JRubyMethod(name = "read", meta = true, compat = RUBY1_8)
     public static IRubyObject readStatic(ThreadContext context, IRubyObject recv, IRubyObject path, IRubyObject length) {
-        StringSupport.checkStringSafety(context.getRuntime(), path);
+        StringSupport.checkStringSafety(context.runtime, path);
         RubyString pathStr = path.convertToString();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         failIfDirectory(runtime, pathStr);
         RubyIO file = newFile(context, recv, pathStr);
        
@@ -3481,9 +3586,9 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "read", meta = true, compat = RUBY1_8)
     public static IRubyObject readStatic(ThreadContext context, IRubyObject recv, IRubyObject path, IRubyObject length, IRubyObject offset) {
-        StringSupport.checkStringSafety(context.getRuntime(), path);
+        StringSupport.checkStringSafety(context.runtime, path);
         RubyString pathStr = path.convertToString();
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         failIfDirectory(runtime, pathStr);
         RubyIO file = newFile(context, recv, pathStr);
 
@@ -3505,7 +3610,7 @@ public class RubyIO extends RubyObject {
         // FIXME: process options
 
         RubyString pathStr = RubyFile.get_path(context, path);
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         failIfDirectory(runtime, pathStr);
         RubyIO file = newFile19(context, recv, pathStr, options);
 
@@ -3527,7 +3632,7 @@ public class RubyIO extends RubyObject {
         // FIXME: process options
 
         RubyString pathStr = RubyFile.get_path(context, path);
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         failIfDirectory(runtime, pathStr);
         RubyIO file = newFile(context, recv, pathStr, context.runtime.newString("w"));
 
@@ -3550,7 +3655,7 @@ public class RubyIO extends RubyObject {
      */
     @JRubyMethod(meta = true, required = 1, optional = 2, compat = RUBY1_9)
     public static IRubyObject binread(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
-        IRubyObject nil = context.getRuntime().getNil();
+        IRubyObject nil = context.runtime.getNil();
         IRubyObject path = args[0];
         IRubyObject length = nil;
         IRubyObject offset = nil;
@@ -3609,7 +3714,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(meta = true, required = 2, optional = 1, compat = RUBY1_9)
     public static IRubyObject binwrite(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
-        IRubyObject nil = context.getRuntime().getNil();
+        IRubyObject nil = context.runtime.getNil();
         IRubyObject path = args[0];
         IRubyObject str = args[1];
         IRubyObject offset = nil;
@@ -3636,7 +3741,9 @@ public class RubyIO extends RubyObject {
         IRubyObject offset = nil;
         RubyHash options = null;
         if (args.length > 3) {
-            if (!(args[3] instanceof RubyHash)) throw context.getRuntime().newTypeError("Must be a hash");
+            if (!(args[3] instanceof RubyHash)) {
+                throw context.runtime.newTypeError("Must be a hash");
+            }
             options = (RubyHash) args[3];
             offset = args[2];
         } else if (args.length > 2) {
@@ -3666,10 +3773,10 @@ public class RubyIO extends RubyObject {
    
     @JRubyMethod(name = "popen", required = 1, optional = 1, meta = true, compat = RUBY1_8)
     public static IRubyObject popen(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         int mode;
 
-        IRubyObject cmdObj = null;
+        IRubyObject cmdObj;
         if (Platform.IS_WINDOWS) {
             String[] tokens = args[0].convertToString().toString().split(" ", 2);
             String commandString = tokens[0].replace('/', '\\') +
@@ -3678,7 +3785,6 @@ public class RubyIO extends RubyObject {
         } else {
             cmdObj = args[0].convertToString();
         }
-        runtime.checkSafeString(cmdObj);
 
         if ("-".equals(cmdObj.toString())) {
             throw runtime.newNotImplementedError("popen(\"-\") is unimplemented");
@@ -3736,7 +3842,7 @@ public class RubyIO extends RubyObject {
         public Ruby19POpen(Ruby runtime, IRubyObject[] args) {
             IRubyObject[] _cmdPlusArgs = null;
             RubyHash _env = null;
-            IRubyObject _cmd = null;
+            IRubyObject _cmd;
             IRubyObject arg0 = args[0].checkArrayType();
 
             if (args[0] instanceof RubyHash) {
@@ -3787,17 +3893,15 @@ public class RubyIO extends RubyObject {
                 }
             }
 
-            runtime.checkSafeString(_cmd);
-
             this.cmd = (RubyString)_cmd;
             this.cmdPlusArgs = _cmdPlusArgs;
             this.env = _env;
         }
     }
 
-    @JRubyMethod(name = "popen", required = 1, optional = 1, meta = true, compat = RUBY1_9)
+    @JRubyMethod(name = "popen", required = 1, optional = 2, meta = true, compat = RUBY1_9)
     public static IRubyObject popen19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         int mode;
         // yes, I know it's not used. See JRUBY-5942
         RubyHash options = null;
@@ -3869,7 +3973,7 @@ public class RubyIO extends RubyObject {
    
     @JRubyMethod(rest = true, meta = true)
     public static IRubyObject popen3(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         try {
             POpenTuple tuple = popenSpecial(context, args);
@@ -3896,7 +4000,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(rest = true, meta = true)
     public static IRubyObject popen4(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         try {
             POpenTuple tuple = popenSpecial(context, args);
@@ -3944,7 +4048,7 @@ public class RubyIO extends RubyObject {
     }
 
     public static POpenTuple popenSpecial(ThreadContext context, IRubyObject[] args) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         try {
             ShellLauncher.POpenProcess process = ShellLauncher.popen3(runtime, args, false);
@@ -3987,7 +4091,7 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "pipe", meta = true, compat = RUBY1_8)
     public static IRubyObject pipe(ThreadContext context, IRubyObject recv) {
         // TODO: This isn't an exact port of MRI's pipe behavior, so revisit
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         try {
             Pipe pipe = Pipe.open();
 
@@ -4010,13 +4114,16 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "pipe", meta = true, compat = RUBY1_9)
     public static IRubyObject pipe19(ThreadContext context, IRubyObject recv, IRubyObject modes) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
         try {
             Pipe pipe = Pipe.open();
 
             RubyIO source = new RubyIO(runtime, pipe.source());
             source.setEncodingFromOptions(EncodingOption.getEncodingOptionFromString(runtime, modes.toString()));
             RubyIO sink = new RubyIO(runtime, pipe.sink());
+
+//            Encoding ascii8bit = context.runtime.getEncodingService().getAscii8bitEncoding();
+//            sink.setupReadWriteEncodings(context, ascii8bit, ascii8bit);
 
             sink.openFile.getMainStreamSafe().setSync(true);
             return runtime.newArrayNoCopy(new IRubyObject[]{source, sink});
@@ -4036,7 +4143,7 @@ public class RubyIO extends RubyObject {
     @JRubyMethod(name = "copy_stream", meta = true, compat = RUBY1_9)
     public static IRubyObject copy_stream(ThreadContext context, IRubyObject recv, 
             IRubyObject arg1, IRubyObject arg2) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         RubyIO io1 = null;
         RubyIO io2 = null;
@@ -4068,7 +4175,7 @@ public class RubyIO extends RubyObject {
                 long size = 0;
                 if (!d1.isSeekable()) {
                     if (!d2.isSeekable()) {
-                        throw context.getRuntime().newTypeError("only supports to file or from file copy");
+                        throw context.runtime.newTypeError("only supports to file or from file copy");
                     } else {
                         ReadableByteChannel from = (ReadableByteChannel)d1.getChannel();
                         FileChannel to = (FileChannel)d2.getChannel();
@@ -4082,7 +4189,7 @@ public class RubyIO extends RubyObject {
                     size = transfer(from, to);
                 }
 
-                return context.getRuntime().newFixnum(size);
+                return context.runtime.newFixnum(size);
             } catch (IOException ioe) {
                 throw runtime.newIOErrorFromException(ioe);
             }
@@ -4140,7 +4247,7 @@ public class RubyIO extends RubyObject {
 
     @JRubyMethod(name = "try_convert", meta = true, compat = RUBY1_9)
     public static IRubyObject tryConvert(ThreadContext context, IRubyObject recv, IRubyObject arg) {
-        return arg.respondsTo("to_io") ? convertToIO(context, arg) : context.getRuntime().getNil();
+        return arg.respondsTo("to_io") ? convertToIO(context, arg) : context.runtime.getNil();
     }
 
     private static ByteList getNilByteList(Ruby runtime) {
@@ -4217,7 +4324,7 @@ public class RubyIO extends RubyObject {
     protected IOOptions updateIOOptionsFromOptions(ThreadContext context, RubyHash options, IOOptions ioOptions) {
         if (options == null || options.isNil()) return ioOptions;
 
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         if (options.containsKey(runtime.newSymbol("mode"))) {
             ioOptions = parseIOOptions19(options.fastARef(runtime.newSymbol("mode")));
@@ -4248,6 +4355,28 @@ public class RubyIO extends RubyObject {
 
             ioOptions = newIOOptions(runtime, ioOptions, ModeFlags.TEXT);
         }
+        
+        // TODO: Waaaay different than MRI.  They uniformly have all opening logic
+        // do a scan of args before anything opens.  We do this logic in a less
+        // consistent way.  We should consider re-impling all IO/File construction
+        // logic.
+        if (options.containsKey(runtime.newSymbol("open_args"))) {
+            IRubyObject args = options.fastARef(runtime.newSymbol("open_args"));
+            
+            RubyArray openArgs = args.convertToArray();
+            
+            for (int i = 0; i < openArgs.size(); i++) {
+                IRubyObject arg = openArgs.eltInternal(i);
+                
+                if (arg instanceof RubyString) { // Overrides all?
+                    ioOptions = newIOOptions(runtime, arg.asJavaString());
+                } else if (arg instanceof RubyFixnum) {
+                    ioOptions = newIOOptions(runtime, ((RubyFixnum) arg).getLongValue());
+                } else if (arg instanceof RubyHash) {
+                    ioOptions = updateIOOptionsFromOptions(context, (RubyHash) arg, ioOptions);
+                }
+            }
+        }
 
         EncodingOption encodingOption = EncodingOption.getEncodingOptionFromObject(options);
         if (encodingOption != null) {
@@ -4257,26 +4386,21 @@ public class RubyIO extends RubyObject {
         return ioOptions;
     }
 
-    public void setEncodingFromOptions(EncodingOption encodingOption) {
-        Encoding external = null, internal = null;
+    public void setEncodingFromOptions(EncodingOption option) {
+        Encoding internal = null;
 
-        if (encodingOption.hasBom()) {
+        Encoding external;
+        if (option.hasBom()) {
             external = encodingFromBOM();
+        } else if (option.getExternalEncoding() != null) {
+            external = option.getExternalEncoding();
+        } else {
+            external = null;
         }
 
-        if (external == null) {
-            if (encodingOption.getExternalEncoding() != null) {
-                external = encodingOption.getExternalEncoding();
-            }
-        }
+        if (option.getInternalEncoding() != null) internal = option.getInternalEncoding();
 
-        if (encodingOption.getInternalEncoding() != null) {
-            internal = encodingOption.getInternalEncoding();
-        }
-
-        externalEncoding = external;
-        if (internal == externalEncoding) return;
-        internalEncoding = internal;
+        setupReadWriteEncodings(getRuntime().getCurrentContext(), internal, external);
     }
 
     // io_strip_bom
@@ -4564,10 +4688,128 @@ public class RubyIO extends RubyObject {
         return args.length == 0 ? readline(context) : readline(context, args[0]);
     }
     
+    // MRI: do_writeconv
+    private ByteList doWriteConversion(ThreadContext context, ByteList str) {
+        if (!needsWriteConversion(context)) return str;
+        
+        // openFile.setBinmode(); // In MRI this does not affect flags like we do in OpenFile
+        makeWriteConversion(context);
+        
+        return writeTranscoder.transcode(context, str);
+    }
+    
+    // MRI: NEED_READCONF (FIXME: Windows has slightly different version)
+    private boolean needsReadConversion() {
+        return writeEncoding != null || openFile.isTextMode();
+    }
+    
+    // MRI: NEED_WRITECONV (FIXME: Windows has slightly different version)
+    private boolean needsWriteConversion(ThreadContext context) {
+        Encoding ascii8bit = context.runtime.getEncodingService().getAscii8bitEncoding();
+        
+        return (readEncoding != null && readEncoding != ascii8bit) || openFile.isTextMode();
+        // This is basically from MRI and until I understand it better I am leaving it out
+        // ||  ((ecflags & (DECORATOR_MASK|STATEFUL_DECORATOR_MASK)) != 0);
+    }
+    
+    // MRI: make_readconv
+    // Missing flags and doubling readTranscoder as transcoder and whether transcoder has been initializer (ick).
+    private void makeReadConversion(ThreadContext context) {
+        if (readTranscoder != null) return;
+        
+        if (writeEncoding != null) {
+            readTranscoder = new CharsetTranscoder(context, readEncoding, writeEncoding, transcodingActions);
+        } else {
+            Encoding ascii8bit = context.runtime.getEncodingService().getAscii8bitEncoding();
+            
+            readTranscoder = new CharsetTranscoder(context, ascii8bit, ascii8bit, transcodingActions);
+        }
+    }
+    
+    // MRI: make_writeconv
+    // Actually this is quite a bit different and simpler for now.
+    private void makeWriteConversion(ThreadContext context) {
+        if (writeTranscoder != null) return;
+        
+        Encoding ascii8bit = context.runtime.getEncodingService().getAscii8bitEncoding();
+        
+        if (readEncoding == null || (readEncoding == ascii8bit  && writeEncoding == null)) { // No encoding conversion
+            // Leave for extra MRI bittwiddling which is missing from our IO
+            // Hack to initialize transcoder but do no transcoding
+            writeTranscoder = new CharsetTranscoder(context, ascii8bit, ascii8bit, transcodingActions);
+        } else {
+            Encoding fromEncoding = readEncoding;
+            Encoding toEncoding;
+            if (writeEncoding != null) {
+                toEncoding = writeEncoding;
+            } else {
+                fromEncoding = null;
+                toEncoding = readEncoding;
+            }
+            // If no write then default -> readEncoding
+            // If write then writeEncoding -> readEncoding
+            // If no read (see if above)
+            writeTranscoder = new CharsetTranscoder(context, toEncoding, fromEncoding, transcodingActions);
+        }
+    }
+    
+    private void clearCodeConversion() {
+        readTranscoder = null;
+        writeTranscoder = null;
+    }
+    
+    // MRI: rb_io_ext_int_to_encs
+    private void setupReadWriteEncodings(ThreadContext context, Encoding internal, Encoding external) {
+        Encoding ascii8bit = context.runtime.getEncodingService().getAscii8bitEncoding();
+        boolean defaultExternal = false;
+        
+        if (external == null) {
+            external = context.runtime.getDefaultExternalEncoding();
+            defaultExternal = true;
+        }
+        
+        if (internal == null && external != ascii8bit) {
+            internal = context.runtime.getDefaultInternalEncoding();
+        }
+        
+        if (internal == null || internal == external) { // missing internal == nil?
+            readEncoding = (defaultExternal && internal != external) ? null : external;
+            writeEncoding = null;
+        } else {
+            readEncoding = internal;
+            writeEncoding = external;
+        }
+    }
+    
+    protected CharsetTranscoder readTranscoder = null;
+    protected CharsetTranscoder writeTranscoder = null;
     protected OpenFile openFile;
     protected List<RubyThread> blockingThreads;
-    protected Encoding externalEncoding;
-    protected Encoding internalEncoding;
+    
+    /**
+     * readEncoding/writeEncoding deserve a paragraph explanation.  In spite
+     * of appearing to be a better name than enc/enc as is used in MRI, it is
+     * probably a wash.  readEncoding represents the encoding we want the string
+     * to be.  If writeEncoding is not null this represents the source encoding
+     * to use.
+     * 
+     * Reading:
+     * So if we are reading and there is no writeEncoding then we assume that
+     * the io is already readEncoding and read it as such.  If both are set
+     * then we assume readEncoding is external encoding and we transcode to
+     * writeEncoding (internal).
+     * 
+     * Writing:
+     * If writeEncoding is null then we write the bytes as readEncoding.  If
+     * writeEncoding is set then we convert from writeEncoding to readEncoding.
+     * 
+     * Note: This naming is clearly wrong, but it is no worse then enc/enc2 so
+     * I did not feel the need to fix it.
+     */
+    protected Encoding readEncoding; // MRI:enc
+    protected Encoding writeEncoding; // MRI:enc2
+    protected CharsetTranscoder.CodingErrorActions transcodingActions;
+    
     /**
      * If the stream is being used for popen, we don't want to destroy the process
      * when we close the stream.

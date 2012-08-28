@@ -249,16 +249,12 @@ public class LoadService {
                 String rubyDir = jrubyHome + sep + "lib" + sep + "ruby" + sep;
 
                 if (runtime.is1_9()) {
-                    addPath(rubyDir + "site_ruby" + sep + Constants.RUBY1_9_MAJOR_VERSION);
-
                     // shared lib
                     addPath(rubyDir + "shared");
 
                     // MRI standard lib
                     addPath(rubyDir + Constants.RUBY1_9_MAJOR_VERSION);
                 } else {
-                    addPath(rubyDir + "site_ruby" + sep + Constants.RUBY_MAJOR_VERSION);
-
                     // shared lib
                     addPath(rubyDir + "shared");
 
@@ -270,7 +266,7 @@ public class LoadService {
         } catch(SecurityException ignore) {}
 
         // "." dir is used for relative path loads from a given file, as in require '../foo/bar'
-        if (!runtime.is1_9() && runtime.getSafeLevel() == 0) {
+        if (!runtime.is1_9()) {
             addPath(".");
         }
     }
@@ -843,6 +839,10 @@ public class LoadService {
 
                     // trim extension to try other options
                     searchFile = file.substring(0, matcher.start());
+                } else if (file.endsWith(".class")) {
+                    // For JRUBY-6731, treat require 'foo.class' as no other filename than 'foo.class'.
+                    suffixType = SuffixType.Neither;
+                    searchFile = file;
                 } else {
                     // unknown extension, fall back to search with extensions
                     suffixType = SuffixType.Both;

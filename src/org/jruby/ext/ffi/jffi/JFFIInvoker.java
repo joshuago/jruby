@@ -71,17 +71,17 @@ public class JFFIInvoker extends org.jruby.ext.ffi.AbstractInvoker {
     public static IRubyObject newInstance(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
 
         if (!(args[0] instanceof Pointer)) {
-            throw context.getRuntime().newTypeError("Invalid function address "
+            throw context.runtime.newTypeError("Invalid function address "
                     + args[0].getMetaClass().getName() + " (expected FFI::Pointer)");
         }
         
         if (!(args[1] instanceof RubyArray)) {
-            throw context.getRuntime().newTypeError("Invalid parameter array "
+            throw context.runtime.newTypeError("Invalid parameter array "
                     + args[1].getMetaClass().getName() + " (expected Array)");
         }
 
         if (!(args[2] instanceof Type)) {
-            throw context.getRuntime().newTypeError("Invalid return type " + args[2]);
+            throw context.runtime.newTypeError("Invalid return type " + args[2]);
         }
         Pointer ptr = (Pointer) args[0];
         RubyArray paramTypes = (RubyArray) args[1];
@@ -92,10 +92,10 @@ public class JFFIInvoker extends org.jruby.ext.ffi.AbstractInvoker {
         IRubyObject enums = null;
         if (args[3] instanceof RubyHash) {
             RubyHash options = (RubyHash) args[3];
-            convention = options.fastARef(context.getRuntime().newSymbol("convention")).asJavaString();
-            enums = options.fastARef(context.getRuntime().newSymbol("enums"));
+            convention = options.fastARef(context.runtime.newSymbol("convention")).asJavaString();
+            enums = options.fastARef(context.runtime.newSymbol("enums"));
             if (enums != null && !enums.isNil() && !(enums instanceof RubyHash)) {
-                throw context.getRuntime().newTypeError("wrong type for options[:enum] "
+                throw context.runtime.newTypeError("wrong type for options[:enum] "
                         + enums.getMetaClass().getName() + " (expected Hash)");
 
             }
@@ -107,12 +107,12 @@ public class JFFIInvoker extends org.jruby.ext.ffi.AbstractInvoker {
         for (int i = 0; i < parameterTypes.length; ++i) {
             IRubyObject type = paramTypes.entry(i);
             if (!(type instanceof Type)) {
-                throw context.getRuntime().newArgumentError("Invalid parameter type");
+                throw context.runtime.newArgumentError("Invalid parameter type");
             }
             parameterTypes[i] = (Type) paramTypes.entry(i);
         }
         DirectMemoryIO fptr = (DirectMemoryIO) ptr.getMemoryIO();
-        return new JFFIInvoker(context.getRuntime(), (RubyClass) recv, fptr,
+        return new JFFIInvoker(context.runtime, (RubyClass) recv, fptr,
                 (Type) returnType, parameterTypes, 
                 "stdcall".equals(convention) ? CallingConvention.STDCALL : CallingConvention.DEFAULT,
                 enums);

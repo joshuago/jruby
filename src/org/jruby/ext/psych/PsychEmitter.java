@@ -29,7 +29,6 @@ package org.jruby.ext.psych;
 
 import java.io.IOException;
 import java.io.OutputStreamWriter;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.jruby.Ruby;
@@ -44,7 +43,6 @@ import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.IOOutputStream;
-import org.jruby.util.TypeConverter;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.emitter.Emitter;
 import org.yaml.snakeyaml.emitter.EmitterException;
@@ -82,6 +80,23 @@ public class PsychEmitter extends RubyObject {
     public IRubyObject initialize(ThreadContext context, IRubyObject io) {
         options = new DumperOptions();
         options.setIndent(2);
+        emitter = new Emitter(new OutputStreamWriter(new IOOutputStream(io)), options);
+
+        return context.nil;
+    }
+
+    @JRubyMethod(visibility = PRIVATE)
+    public IRubyObject initialize(ThreadContext context, IRubyObject io, IRubyObject rbOptions) {
+        IRubyObject width     = rbOptions.callMethod(context, "line_width");
+        IRubyObject canonical = rbOptions.callMethod(context, "canonical");
+        IRubyObject level     = rbOptions.callMethod(context, "indentation");
+
+        options = new DumperOptions();
+
+        options.setCanonical(canonical.isTrue());
+        options.setIndent((int)level.convertToInteger().getLongValue());
+        options.setWidth((int)width.convertToInteger().getLongValue());
+
         emitter = new Emitter(new OutputStreamWriter(new IOOutputStream(io)), options);
 
         return context.nil;

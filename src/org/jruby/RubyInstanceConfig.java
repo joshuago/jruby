@@ -60,11 +60,6 @@ import org.jruby.exceptions.MainExitException;
 import org.jruby.embed.util.SystemPropertyCatcher;
 import org.jruby.runtime.Constants;
 import org.jruby.runtime.backtrace.TraceType;
-import org.jruby.runtime.profile.IProfileData;
-import org.jruby.runtime.profile.AbstractProfilePrinter;
-import org.jruby.runtime.profile.FlatProfilePrinter;
-import org.jruby.runtime.profile.GraphProfilePrinter;
-import org.jruby.runtime.profile.HtmlProfilePrinter;
 import org.jruby.runtime.load.LoadService;
 import org.jruby.runtime.load.LoadService19;
 import org.jruby.util.ClassCache;
@@ -118,7 +113,7 @@ public class RubyInstanceConfig {
             if (jitModeProperty.equals("OFF")) {
                 compileMode = CompileMode.OFF;
             } else if (jitModeProperty.equals("OFFIR")) {
-                compileMode = compileMode.OFFIR;
+                compileMode = CompileMode.OFFIR;
             } else if (jitModeProperty.equals("JIT")) {
                 compileMode = CompileMode.JIT;
             } else if (jitModeProperty.equals("FORCE")) {
@@ -468,20 +463,6 @@ public class RubyInstanceConfig {
         } else {
             return new ASTCompiler19();
         }
-    }
-    
-    public AbstractProfilePrinter makeDefaultProfilePrinter(IProfileData profileData) {
-        if (profilingMode == ProfilingMode.FLAT) {
-            return new FlatProfilePrinter(profileData.getResults());
-        }
-        else if (profilingMode == ProfilingMode.GRAPH) {
-            return new GraphProfilePrinter(profileData.getResults());
-        }
-        else if (profilingMode == ProfilingMode.HTML){
-            return new HtmlProfilePrinter(profileData.getResults());
-        }
-
-        return null;
     }
     
     ////////////////////////////////////////////////////////////////////////////
@@ -904,13 +885,9 @@ public class RubyInstanceConfig {
     public String getRecordSeparator() {
         return recordSeparator;
     }
-    
-    public void setSafeLevel(int safeLevel) {
-        this.safeLevel = safeLevel;
-    }
 
     public int getSafeLevel() {
-        return safeLevel;
+        return 0;
     }
 
     public ClassCache getClassCache() {
@@ -922,11 +899,6 @@ public class RubyInstanceConfig {
     }
 
     public String getInPlaceBackupExtension() {
-        return inPlaceBackupExtension;
-    }
-
-    @Deprecated
-    public String getInPlaceBackupExtention() {
         return inPlaceBackupExtension;
     }
 
@@ -1142,6 +1114,20 @@ public class RubyInstanceConfig {
     public boolean getLoadGemfile() {
         return loadGemfile;
     }
+
+    /**
+     * Set the maximum number of methods to consider when profiling.
+     */
+    public void setProfileMaxMethods(int profileMaxMethods) {
+        this.profileMaxMethods = profileMaxMethods;
+    }
+
+    /**
+     * Get the maximum number of methods to consider when profiling.
+     */
+    public int getProfileMaxMethods() {
+        return profileMaxMethods;
+    }
     
     ////////////////////////////////////////////////////////////////////////////
     // Configuration fields.
@@ -1224,8 +1210,6 @@ public class RubyInstanceConfig {
     private boolean hardExit = false;
     private boolean disableGems = false;
     private boolean updateNativeENVEnabled = true;
-    
-    private int safeLevel = 0;
 
     private String jrubyHome;
     
@@ -1253,6 +1237,8 @@ public class RubyInstanceConfig {
     private boolean jitBackground = Options.JIT_BACKGROUND.load();
 
     private boolean loadGemfile = false;
+
+    private int profileMaxMethods = Options.PROFILE_MAX_METHODS.load();
     
     ////////////////////////////////////////////////////////////////////////////
     // Support classes, etc.
@@ -1403,14 +1389,6 @@ public class RubyInstanceConfig {
     public static boolean LAZYHANDLES_COMPILE = Options.COMPILE_LAZYHANDLES.load();
 
     /**
-     * Inline dynamic calls.
-     *
-     * Set with the <tt>jruby.compile.inlineDyncalls</tt> system property.
-     */
-    public static boolean INLINE_DYNCALL_ENABLED
-            = FASTEST_COMPILE_ENABLED || Options.COMPILE_INLINEDYNCALLS.load();
-
-    /**
      * Enable fast multiple assignment optimization.
      *
      * Set with the <tt>jruby.compile.fastMasgn</tt> system property.
@@ -1557,8 +1535,26 @@ public class RubyInstanceConfig {
     public static final boolean UPPER_CASE_PACKAGE_NAME_ALLOWED = Options.JI_UPPER_CASE_PACKAGE_NAME_ALLOWED.load();
     
     
-    public static final boolean USE_INVOKEDYNAMIC =
-            JAVA_VERSION == Opcodes.V1_7 && Options.COMPILE_INVOKEDYNAMIC.load();
+    public static final boolean USE_INVOKEDYNAMIC;
+    static {
+        boolean isHotspot =
+                SafePropertyAccessor.getProperty("java.vm.name", "").toLowerCase().contains("hotspot") ||
+                        SafePropertyAccessor.getProperty("java.vm.name", "").toLowerCase().contains("openjdk");
+
+        String version = SafePropertyAccessor.getProperty("java.specification.version", "1.6");
+        
+        if (isHotspot && version.equals("1.7")) {
+            // if on OpenJDK 7, on by default unless turned off
+            // TODO: turned off temporarily due to the lack of 100% working OpenJDK7 indy support
+            USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load() && Options.COMPILE_INVOKEDYNAMIC.isSpecified();
+        } else if (isHotspot && version.equals("1.8")) {
+            // OpenJDK 8 will have the new 100% working logic soon, so we enable by default
+            USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load();
+        } else {
+            // if not on Java 7, on only if explicitly turned on
+            USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load() && Options.COMPILE_INVOKEDYNAMIC.isSpecified();
+        }
+    }
     
     // max times an indy call site can fail before it goes to simple IC
     public static final int MAX_FAIL_COUNT = Options.INVOKEDYNAMIC_MAXFAIL.load();
@@ -1632,5 +1628,14 @@ public class RubyInstanceConfig {
         } else {
             throw new RuntimeException("unsupported Java version: " + specVersion);
         }
+    }
+
+    @Deprecated
+    public void setSafeLevel(int safeLevel) {
+    }
+
+    @Deprecated
+    public String getInPlaceBackupExtention() {
+        return inPlaceBackupExtension;
     }
 }

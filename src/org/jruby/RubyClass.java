@@ -59,6 +59,7 @@ import org.jruby.anno.JRubyMethod;
 import org.jruby.compiler.impl.SkinnyMethodAdapter;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.internal.runtime.methods.DynamicMethod;
+import org.jruby.internal.runtime.methods.ProfilingDynamicMethod;
 import org.jruby.java.codegen.RealClassGenerator;
 import org.jruby.java.codegen.Reified;
 import org.jruby.javasupport.Java;
@@ -226,6 +227,10 @@ public class RubyClass extends RubyModule {
             throw runtime.newTypeError("wrong instance allocation");
         }
         return obj;
+    }
+
+    public CallSite getBaseCallSite(int idx) {
+        return baseCallSites[idx];
     }
 
     public CallSite[] getBaseCallSites() {
@@ -444,6 +449,7 @@ public class RubyClass extends RubyModule {
     protected RubyClass(Ruby runtime, RubyClass superClass, boolean objectSpace) {
         super(runtime, runtime.getClassClass(), objectSpace);
         this.runtime = runtime;
+        this.realClass = superClass == null ? null : superClass.getRealClass();
         setSuperClass(superClass); // this is the only case it might be null here (in MetaClass construction)
     }
     
@@ -453,6 +459,7 @@ public class RubyClass extends RubyModule {
     protected RubyClass(Ruby runtime) {
         super(runtime, runtime.getClassClass());
         this.runtime = runtime;
+        this.realClass = this;
         index = ClassIndex.CLASS;
     }
     
@@ -683,14 +690,14 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         if(method.isUndefined()) {
             DynamicMethod methodMissing = searchMethod("method_missing");
-            if(methodMissing.isUndefined() || methodMissing == context.getRuntime().getDefaultMethodMissing()) {
+            if(methodMissing.isUndefined() || methodMissing.equals(context.runtime.getDefaultMethodMissing())) {
                 return null;
             }
 
             try {
                 return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, Block.NULL_BLOCK);
             } catch(RaiseException e) {
-                if(context.getRuntime().getNoMethodError().isInstance(e.getException())) {
+                if(context.runtime.getNoMethodError().isInstance(e.getException())) {
                     if(self.respondsTo(name)) {
                         throw e;
                     } else {
@@ -1076,8 +1083,8 @@ public class RubyClass extends RubyModule {
         return runtime;
     }
 
-    public RubyClass getRealClass() {
-        return this;
+    public final RubyClass getRealClass() {
+        return realClass;
     }    
 
     @JRubyMethod(name = "inherited", required = 1, visibility = PRIVATE)
@@ -1730,7 +1737,7 @@ public class RubyClass extends RubyModule {
         } else {
             // recache
             DynamicMethod method = searchMethod("respond_to?");
-            if (method != runtime.getRespondToMethod() && !method.isUndefined()) {
+            if (!method.equals(runtime.getRespondToMethod()) && !method.isUndefined()) {
 
                 // custom respond_to?, always do slow default marshaling
                 tuple = (cachedDumpMarshal = new MarshalTuple(null, MarshalType.DEFAULT_SLOW, generation));
@@ -1781,7 +1788,7 @@ public class RubyClass extends RubyModule {
             return target;
         } else {
             DynamicMethod method = searchMethod("respond_to?");
-            if (method != runtime.getRespondToMethod() && !method.isUndefined()) {
+            if (!method.equals(runtime.getRespondToMethod()) && !method.isUndefined()) {
 
                 // custom respond_to?, cache nothing and use slow path
                 if (method.call(context, target, this, "respond_to?", runtime.newSymbol("marshal_load")).isTrue()) {
@@ -1832,7 +1839,7 @@ public class RubyClass extends RubyModule {
             return cache.method.call(context, this, getSingletonClass(), "_load", data);
         } else {
             DynamicMethod method = getSingletonClass().searchMethod("respond_to?");
-            if (method != runtime.getRespondToMethod() && !method.isUndefined()) {
+            if (!method.equals(runtime.getRespondToMethod()) && !method.isUndefined()) {
 
                 // custom respond_to?, cache nothing and use slow path
                 if (method.call(context, this, getSingletonClass(), "respond_to?", runtime.newSymbol("_load")).isTrue()) {
@@ -1898,4 +1905,7 @@ public class RubyClass extends RubyModule {
 
     /** A cached tuple of method and generation for marshal loading */
     private CacheEntry cachedLoad = CacheEntry.NULL_CACHE;
+
+    /** The "real" class, used by includes and singletons to locate the actual type of the object */
+    private final RubyClass realClass;
 }

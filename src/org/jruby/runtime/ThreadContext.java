@@ -35,15 +35,10 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.runtime;
 
-import org.jruby.runtime.backtrace.BacktraceElement;
-import org.jruby.runtime.backtrace.RubyStackTraceElement;
-import org.jruby.runtime.profile.IProfileData;
 import java.util.ArrayList;
-import org.jruby.runtime.profile.ProfileData;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import org.jruby.runtime.scope.ManyVarsDynamicScope;
 
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
@@ -55,12 +50,19 @@ import org.jruby.RubyString;
 import org.jruby.RubyThread;
 import org.jruby.ast.executable.RuntimeCache;
 import org.jruby.exceptions.JumpException.ReturnJump;
+import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.ext.fiber.Fiber;
 import org.jruby.parser.StaticScope;
+import org.jruby.runtime.backtrace.BacktraceElement;
+import org.jruby.runtime.backtrace.RubyStackTraceElement;
 import org.jruby.runtime.backtrace.TraceType;
 import org.jruby.runtime.backtrace.TraceType.Gather;
+import org.jruby.runtime.backtrace.BacktraceElement;
+import org.jruby.runtime.backtrace.RubyStackTraceElement;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.profile.ProfileData;
+import org.jruby.runtime.scope.ManyVarsDynamicScope;
 import org.jruby.util.RecursiveComparator;
 import org.jruby.util.RubyDateFormat;
 import org.jruby.util.log.Logger;
@@ -114,8 +116,8 @@ public final class ThreadContext {
     
     private boolean isProfiling = false;
     // The flat profile data for this thread
-   private IProfileData profileData;
-   
+	private ProfileData profileData;
+	
     // In certain places, like grep, we don't use real frames for the
     // call blocks. This has the effect of not setting the backref in
     // the correct frame - this delta is activated to the place where
@@ -167,7 +169,17 @@ public final class ThreadContext {
             thread.dispose();
         }
     }
-    
+
+    /**
+     * Retrieve the runtime associated with this context.
+     *
+     * Note that there's no reason to call this method rather than accessing the
+     * runtime field directly.
+     *
+     * @see ThreadContext#runtime
+     *
+     * @return the runtime associated with this context
+     */
     public final Ruby getRuntime() {
         return runtime;
     }
@@ -922,7 +934,7 @@ public final class ThreadContext {
     
     public void preBsfApply(String[] names) {
         // FIXME: I think we need these pushed somewhere?
-        StaticScope staticScope = getRuntime().getStaticScopeFactory().newLocalScope(null);
+        StaticScope staticScope = runtime.getStaticScopeFactory().newLocalScope(null);
         staticScope.setVariables(names);
         pushFrame();
     }
@@ -1066,7 +1078,7 @@ public final class ThreadContext {
         
         pushRubyClass(executeUnderClass);
         DynamicScope scope = getCurrentScope();
-        StaticScope sScope = getRuntime().getStaticScopeFactory().newBlockScope(scope.getStaticScope());
+        StaticScope sScope = runtime.getStaticScopeFactory().newBlockScope(scope.getStaticScope());
         sScope.setModule(executeUnderClass);
         pushScope(DynamicScope.newDynamicScope(sScope, scope));
         pushCallFrame(frame.getKlazz(), frame.getName(), frame.getSelf(), block);
@@ -1278,32 +1290,18 @@ public final class ThreadContext {
      *
      * @return the thread's profile data
      */
-    public IProfileData getProfileData() {
-        if (profileData == null)
+    public ProfileData getProfileData() {
+        if (profileData == null) {
             profileData = new ProfileData(this);
+        }
         return profileData;
     }
 
-    private int currentMethodSerial = 0;
-    
-    public int profileEnter(int nextMethod) {
-        int previousMethodSerial = currentMethodSerial;
-        currentMethodSerial = nextMethod;
-        if (isProfiling)
-            getProfileData().profileEnter(nextMethod);
-        return previousMethodSerial;
-    }
-
-    public int profileExit(int nextMethod, long startTime) {
-        int previousMethodSerial = currentMethodSerial;
-        currentMethodSerial = nextMethod;
-        if (isProfiling)
-            getProfileData().profileExit(nextMethod, startTime);
-        return previousMethodSerial;
-    }
-    
     public void startProfiling() {
         isProfiling = true;
+        // use new profiling data every time profiling is started, useful in 
+        // case users keep a reference to previous data after profiling stop
+        profileData = new ProfileData(this);
     }
     
     public void stopProfiling() {
@@ -1312,6 +1310,33 @@ public final class ThreadContext {
     
     public boolean isProfiling() {
         return isProfiling;
+    }
+    
+    private int currentMethodSerial = 0;
+    
+    public int profileEnter(int nextMethod) {
+        int previousMethodSerial = currentMethodSerial;
+        currentMethodSerial = nextMethod;
+        if (isProfiling()) {
+            getProfileData().profileEnter(nextMethod);
+        }
+        return previousMethodSerial;
+    }
+
+    public int profileEnter(String name, DynamicMethod nextMethod) {
+        if (isProfiling()) {
+            getProfileData().addProfiledMethod(name, nextMethod);
+        }
+        return profileEnter((int) nextMethod.getSerialNumber());
+    }
+    
+    public int profileExit(int nextMethod, long startTime) {
+        int previousMethodSerial = currentMethodSerial;
+        currentMethodSerial = nextMethod;
+        if (isProfiling()) {
+            getProfileData().profileExit(nextMethod, startTime);
+        }
+        return previousMethodSerial;
     }
     
     public Set<RecursiveComparator.Pair> getRecursiveSet() {
@@ -1328,4 +1353,5 @@ public final class ThreadContext {
     }
     
     private Set<RecursiveComparator.Pair> recursiveSet;
+    
 }

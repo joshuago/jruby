@@ -51,20 +51,20 @@ public abstract class JRubyExecutionContextLocal extends RubyObject {
     public IRubyObject rubyInitialize(ThreadContext context, IRubyObject[] args, Block block) {
         if (block.isGiven()) {
             if (args.length != 0) {
-                throw context.getRuntime().newArgumentError("wrong number of arguments");
+                throw context.runtime.newArgumentError("wrong number of arguments");
             }
             default_proc = block.getProcObject();
             if (default_proc == null) {
-                default_proc = RubyProc.newProc(context.getRuntime(), block, block.type);
+                default_proc = RubyProc.newProc(context.runtime, block, block.type);
             }
         } else {
             if (args.length == 1) {
                 default_value = args[0];
             } else if (args.length != 0) {
-                throw context.getRuntime().newArgumentError("wrong number of arguments");
+                throw context.runtime.newArgumentError("wrong number of arguments");
             }
         }
-        return context.getRuntime().getNil();
+        return context.runtime.getNil();
     }
 
     @JRubyMethod(name = "default", required = 0)
@@ -77,7 +77,7 @@ public abstract class JRubyExecutionContextLocal extends RubyObject {
         if (default_proc != null) {
             return default_proc;
         } else {
-            return context.getRuntime().getNil();
+            return context.runtime.getNil();
         }
     }
     private static final IRubyObject[] EMPTY_ARGS = new IRubyObject[]{};
@@ -92,7 +92,7 @@ public abstract class JRubyExecutionContextLocal extends RubyObject {
             return value;
         } else if (default_proc != null) {
             // pre-set for the sake of terminating recursive calls
-            contextVariables.put(this, context.getRuntime().getNil());
+            contextVariables.put(this, context.runtime.getNil());
             final IRubyObject new_value;
             new_value = default_proc.call(context, EMPTY_ARGS, null, Block.NULL_BLOCK);
             contextVariables.put(this, new_value);

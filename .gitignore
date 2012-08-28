@@ -47,10 +47,10 @@ lib/ruby/cext/
 dev_null
 .redcar
 /.externalToolBuilders/
-/.settings/
 .metadata
 .idea/workspace.xml
 shared.iml
 build_graph.png
 /.idea/
 /.rbx/
+*.sw[mnop]

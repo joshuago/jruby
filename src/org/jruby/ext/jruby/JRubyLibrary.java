@@ -101,7 +101,7 @@ public class JRubyLibrary implements Library {
      */
     @JRubyMethod(module = true)
     public static IRubyObject reference(ThreadContext context, IRubyObject recv, IRubyObject obj) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         return Java.getInstance(runtime, obj, false);
     }
@@ -112,7 +112,7 @@ public class JRubyLibrary implements Library {
      */
     @JRubyMethod(module = true)
     public static IRubyObject reference0(ThreadContext context, IRubyObject recv, IRubyObject obj) {
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         return Java.getInstance(runtime, obj);
     }
@@ -130,14 +130,26 @@ public class JRubyLibrary implements Library {
         } else if (obj.dataGetStruct() instanceof JavaObject) {
             unwrapped = JavaUtil.unwrapJavaObject(obj);
         } else {
-            throw context.getRuntime().newTypeError("got " + obj + ", expected wrapped Java object");
+            throw context.runtime.newTypeError("got " + obj + ", expected wrapped Java object");
         }
 
         if (!(unwrapped instanceof IRubyObject)) {
-            throw context.getRuntime().newTypeError("got " + obj + ", expected Java-wrapped Ruby object");
+            throw context.runtime.newTypeError("got " + obj + ", expected Java-wrapped Ruby object");
         }
 
         return (IRubyObject)unwrapped;
+    }
+
+    /**
+     * Provide the "identity" hash code that System.identityHashCode would produce.
+     *
+     * Added here as an extension because calling System.identityHashCode (and other
+     * Java-integration-related mechanisms) will cause some core types to coerce to
+     * Java types, losing their proper identity.
+     */
+    @JRubyMethod(module = true)
+    public static IRubyObject identity_hash(ThreadContext context, IRubyObject recv, IRubyObject obj) {
+        return context.runtime.newFixnum(System.identityHashCode(obj));
     }
 
     @JRubyMethod(module = true, compat = CompatVersion.RUBY2_0)

@@ -25,6 +25,7 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.internal.runtime.methods;
 
+import org.jruby.Ruby;
 import org.jruby.RubyModule;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Arity;
@@ -216,12 +217,12 @@ public abstract class JavaMethod extends DynamicMethod implements Cloneable {
     protected static IRubyObject raiseArgumentError(JavaMethod method, ThreadContext context, String name, int given, int min, int max) {
         try {
             method.preBacktraceOnly(context, name);
-            Arity.raiseArgumentError(context.getRuntime(), given, min, max);
+            Arity.raiseArgumentError(context.runtime, name, given, min, max);
         } finally {
             postBacktraceOnly(context);
         }
         // never reached
-        return context.getRuntime().getNil();
+        return context.runtime.getNil();
     }
 
     protected static void checkArgumentCount(JavaMethod method, ThreadContext context, String name, IRubyObject[] args, int num) {
@@ -551,7 +552,8 @@ public abstract class JavaMethod extends DynamicMethod implements Cloneable {
 
         public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
             switch (args.length) {
-            case 0: throw context.getRuntime().newArgumentError(0, 1);
+            case 0:
+                throw context.runtime.newArgumentError(0, 1);
             case 1: return call(context, self, clazz, name, args[0], block);
             case 2: return call(context, self, clazz, name, args[0], args[1], block);
             case 3: return call(context, self, clazz, name, args[0], args[1], args[2], block);

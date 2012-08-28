@@ -74,11 +74,11 @@ abstract public class NativeInvoker extends DynamicMethod {
                             RubyModule clazz, String name, IRubyObject[] args, Block block) {
 
         if (!block.isGiven() || cbIndex < 0) {
-            arity.checkArity(context.getRuntime(), args);
+            arity.checkArity(context.runtime, args);
             return call(context, self, clazz, name, args);
 
         } else {
-            Arity.checkArgumentCount(context.getRuntime(), args,
+            Arity.checkArgumentCount(context.runtime, name, args,
                     arity.getValue() - 1, arity.getValue());
 
             IRubyObject[] params = new IRubyObject[arity.getValue()];

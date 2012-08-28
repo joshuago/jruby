@@ -30,16 +30,13 @@ package org.jruby.internal.runtime;
 import org.jruby.Ruby;
 import org.jruby.RubyProc;
 import org.jruby.RubyThread;
-import org.jruby.RubyThreadGroup;
 import org.jruby.exceptions.JumpException;
 import org.jruby.exceptions.MainExitException;
-import org.jruby.exceptions.RaiseException;
 import org.jruby.exceptions.ThreadKill;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.Frame;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
-import org.jruby.runtime.profile.IProfileData;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
@@ -106,11 +103,11 @@ public class RubyRunnable implements Runnable {
                 } else {
                     rubyThread.exceptionRaised(runtime.newThreadError("return can't jump across threads"));
                 }
-            } catch (RaiseException e) {
-                rubyThread.exceptionRaised(e);
             } catch (MainExitException mee) {
                 // Someone called exit!, so we need to kill the main thread
                 runtime.getThreadService().getMainThread().kill();
+            } catch (Throwable t) {
+                rubyThread.exceptionRaised(t);
             } finally {
                 runtime.getThreadService().setCritical(false);
                 rubyThread.dispose();
@@ -127,8 +124,7 @@ public class RubyRunnable implements Runnable {
 
                 // dump profile, if any
                 if (runtime.getInstanceConfig().isProfilingEntireRun()) {
-                    IProfileData profileData = (IProfileData) context.getProfileData();
-                    runtime.getInstanceConfig().makeDefaultProfilePrinter(profileData).printProfile(System.err);
+                    runtime.printProfileData(context.getProfileData(), System.err);
                 }
             }
         } catch (ThreadKill tk) {

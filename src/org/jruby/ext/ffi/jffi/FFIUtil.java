@@ -194,7 +194,7 @@ public final class FFIUtil {
         if (address == 0) {
             return runtime.getNil();
         }
-        byte[] bytes = getZeroTerminatedByteArray(address);
+        byte[] bytes = IO.getZeroTerminatedByteArray(address);
         if (bytes.length == 0) {
             return RubyString.newEmptyString(runtime);
         }
@@ -202,41 +202,5 @@ public final class FFIUtil {
         RubyString s = RubyString.newStringNoCopy(runtime, bytes);
         s.setTaint(true);
         return s;
-    }
-    
-    static final byte[] getZeroTerminatedByteArray(long address) {
-        return IO.getZeroTerminatedByteArray(address);
-    }
-
-    static final byte[] getZeroTerminatedByteArray(long address, int maxlen) {
-        return IO.getZeroTerminatedByteArray(address, maxlen);
-    }
-    static final void putZeroTerminatedByteArray(long address, byte[] bytes, int off, int len) {
-        IO.putByteArray(address, bytes, off, len);
-        IO.putByte(address + len, (byte) 0);
-    }
-
-    static final Type resolveType(ThreadContext context, IRubyObject obj) {
-        if (obj instanceof Type) {
-            return (Type) obj;
-        }
-
-        final RubyModule ffi = context.getRuntime().getModule("FFI");
-        final IRubyObject typeDefs = ffi.fetchConstant("TypeDefs");
-
-        if (!(typeDefs instanceof RubyHash)) {
-            throw context.getRuntime().newRuntimeError("invalid or corrupted FFI::TypeDefs");
-        }
-
-        IRubyObject type = ((RubyHash) typeDefs).fastARef(obj);
-        if (type == null || type.isNil()) {
-            type = ffi.callMethod(context, "find_type", obj);
-        }
-
-        if (!(type instanceof Type)) {
-            throw context.getRuntime().newTypeError("Could not resolve type: " + obj);
-        }
-
-        return (Type) type;
     }
 }

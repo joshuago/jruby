@@ -134,7 +134,7 @@ class TestCommandLineSwitches < Test::Unit::TestCase
 
     assert_match /ruby \d+\.\d+\.\d+/, lines[0]
     assert_match /true$/, lines[1]
-    assert_equal "3", lines[2]
+    assert_equal "0", lines[2]
     assert_equal "true", lines[3]
     assert_equal "UTF8", lines[4]
     assert_equal "1;2;3", lines[5].rstrip
@@ -161,7 +161,7 @@ class TestCommandLineSwitches < Test::Unit::TestCase
 
     assert_match /ruby \d+\.\d+\.\d+/, lines[0]
     assert_match /true$/, lines[1]
-    assert_equal "3", lines[2]
+    assert_equal "0", lines[2]
     assert_equal "true", lines[3]
     assert_equal "UTF-8", lines[4]
     assert_equal "1;2;3", lines[5].rstrip
@@ -232,7 +232,7 @@ class TestCommandLineSwitches < Test::Unit::TestCase
   # TODO --jdb: cannot figure out how to test
 
   def test_dash_dash_properties_shows_list_of_properties
-    assert_match /^These properties can be used/, `#{RUBY} --properties`
+    assert_match /These properties can be used/, `#{RUBY} --properties`
     assert_equal 0, $?.exitstatus
   end
 

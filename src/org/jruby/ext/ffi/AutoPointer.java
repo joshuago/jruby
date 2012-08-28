@@ -3,7 +3,6 @@ package org.jruby.ext.ffi;
 
 import java.lang.ref.Reference;
 import java.lang.ref.SoftReference;
-import java.lang.ref.WeakReference;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.jruby.Ruby;
@@ -72,7 +71,7 @@ public final class AutoPointer extends Pointer {
     @JRubyMethod(name = "initialize", visibility = PRIVATE)
     public final IRubyObject initialize(ThreadContext context, IRubyObject pointerArg) {
 
-        Ruby runtime = context.getRuntime();
+        Ruby runtime = context.runtime;
 
         checkPointer(runtime, pointerArg);
 
@@ -92,7 +91,7 @@ public final class AutoPointer extends Pointer {
     @JRubyMethod(name = "initialize", visibility = PRIVATE)
     public final IRubyObject initialize(ThreadContext context, IRubyObject pointerArg, IRubyObject releaser) {
 
-        checkPointer(context.getRuntime(), pointerArg);
+        checkPointer(context.runtime, pointerArg);
 
         setMemoryIO(((Pointer) pointerArg).getMemoryIO());
         this.pointer = (Pointer) pointerArg;
@@ -106,14 +105,14 @@ public final class AutoPointer extends Pointer {
         Reaper r = reaper;
 
         if (r == null || r.released) {
-            throw context.getRuntime().newRuntimeError("pointer already freed");
+            throw context.runtime.newRuntimeError("pointer already freed");
         }
 
         r.release(context);
         reaper = null;
         referent = null;
-        
-        return context.getRuntime().getNil();
+
+        return context.runtime.getNil();
     }
 
     @JRubyMethod(name = "autorelease=")
@@ -121,12 +120,12 @@ public final class AutoPointer extends Pointer {
         Reaper r = reaper;
 
         if (r == null || r.released) {
-            throw context.getRuntime().newRuntimeError("pointer already freed");
+            throw context.runtime.newRuntimeError("pointer already freed");
         }
 
         r.autorelease(autorelease.isTrue());
-        
-        return context.getRuntime().getNil();
+
+        return context.runtime.getNil();
     }
 
     private void setReaper(Reaper reaper) {

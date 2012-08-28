@@ -40,8 +40,9 @@ public abstract class JavaInternalBlockBody extends BlockBody {
     
     // Make sure we are still on the same thread as originator if we care
     private void threadCheck(ThreadContext yieldingContext) {
-        if (originalContext != null && yieldingContext != originalContext) 
-            throw yieldingContext.getRuntime().newThreadError("" + methodName + " cannot be parallelized");        
+        if (originalContext != null && yieldingContext != originalContext) {
+            throw yieldingContext.runtime.newThreadError("" + methodName + " cannot be parallelized");
+        }
     }
 
     @Override
@@ -50,7 +51,7 @@ public abstract class JavaInternalBlockBody extends BlockBody {
         if (args.length == 1) {
             value = args[0];
         } else {
-            value = RubyArray.newArrayNoCopy(context.getRuntime(), args);
+            value = RubyArray.newArrayNoCopy(context.runtime, args);
         }
         return yield(context, value, null, null, true, binding, type);
     }
@@ -62,7 +63,7 @@ public abstract class JavaInternalBlockBody extends BlockBody {
         if (args.length == 1) {
             value = args[0];
         } else {
-            value = RubyArray.newArrayNoCopy(context.getRuntime(), args);
+            value = RubyArray.newArrayNoCopy(context.runtime, args);
         }
         return yield(context, value, null, null, true, binding, type, block);
     }

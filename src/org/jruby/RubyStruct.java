@@ -119,10 +119,6 @@ public class RubyStruct extends RubyObject {
 
     private void modify() {
         testFrozen();
-
-        if (!isTaint() && getRuntime().getSafeLevel() >= 4) {
-            throw getRuntime().newSecurityError("Insecure: can't modify struct");
-        }
     }
     
     @JRubyMethod
@@ -235,7 +231,7 @@ public class RubyStruct extends RubyObject {
             newStruct.addMethod(memberName, new DynamicMethod(newStruct, Visibility.PUBLIC, CallConfiguration.FrameNoneScopeNone) {
                 @Override
                 public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
-                    Arity.checkArgumentCount(self.getRuntime(), args, 0, 0);
+                    Arity.checkArgumentCount(context.runtime, name, args, 0, 0);
                     return ((RubyStruct)self).get(index);
                 }
 
@@ -252,7 +248,7 @@ public class RubyStruct extends RubyObject {
             newStruct.addMethod(memberName + "=", new DynamicMethod(newStruct, Visibility.PUBLIC, CallConfiguration.FrameNoneScopeNone) {
                 @Override
                 public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
-                    Arity.checkArgumentCount(self.getRuntime(), args, 1, 1);
+                    Arity.checkArgumentCount(context.runtime, name, args, 1, 1);
                     return ((RubyStruct)self).set(args[0], index);
                 }
 
@@ -457,7 +453,7 @@ public class RubyStruct extends RubyObject {
     
     @JRubyMethod
     public RubyArray select(ThreadContext context, Block block) {
-        RubyArray array = RubyArray.newArray(context.getRuntime());
+        RubyArray array = RubyArray.newArray(context.runtime);
         
         for (int i = 0; i < values.length; i++) {
             if (block.yield(context, values[i]).isTrue()) {
@@ -597,7 +593,7 @@ public class RubyStruct extends RubyObject {
 
     @JRubyMethod
     public IRubyObject each(final ThreadContext context, final Block block) {
-        return block.isGiven() ? eachInternal(context, block) : enumeratorize(context.getRuntime(), this, "each");
+        return block.isGiven() ? eachInternal(context, block) : enumeratorize(context.runtime, this, "each");
     }
 
     public IRubyObject each_pairInternal(ThreadContext context, Block block) {
@@ -614,7 +610,7 @@ public class RubyStruct extends RubyObject {
 
     @JRubyMethod
     public IRubyObject each_pair(final ThreadContext context, final Block block) {
-        return block.isGiven() ? each_pairInternal(context, block) : enumeratorize(context.getRuntime(), this, "each_pair");
+        return block.isGiven() ? each_pairInternal(context, block) : enumeratorize(context.runtime, this, "each_pair");
     }
 
     @JRubyMethod(name = "[]", required = 1)
