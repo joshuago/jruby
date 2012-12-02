@@ -1,1 +1,1 @@
-exclude :test_random_range, "needs investigation"
+exclude :test_random_range, "precision issue?"

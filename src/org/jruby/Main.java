@@ -59,7 +59,6 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.SafePropertyAccessor;
 import org.jruby.util.SimpleSampler;
-import org.jruby.util.cli.Options;
 import org.jruby.util.cli.OutputStrings;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
@@ -393,11 +392,8 @@ public class Main {
         boolean status = checkStreamSyntax(runtime, in, filename);
         
         // check other scripts specified on argv
-        String[] argv = config.getArgv();
-        if (argv.length > 0) {
-            for (String arg : argv) {
-                status = status && checkFileSyntax(runtime, arg);
-            }
+        for (String arg : config.getArgv()) {
+            status = status && checkFileSyntax(runtime, arg);
         }
         
         return new Status(status ? 0 : -1);
@@ -446,10 +442,7 @@ public class Main {
     }
 
     private void doProcessArguments(InputStream in) {
-        String[] args = config.parseShebangOptions(in);
-        if (args.length > 0) {
-            config.processArguments(args);
-        }
+        config.processArguments(config.parseShebangOptions(in));
     }
 
     private void doPrintProperties() {

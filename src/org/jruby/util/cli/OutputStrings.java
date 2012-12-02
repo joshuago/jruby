@@ -59,6 +59,9 @@ public class OutputStrings {
                 .append("  --profile.flat  synonym for --profile\n")
                 .append("  --profile.graph run with instrumented (timed) profiling, graph format\n")
                 .append("  --profile.html  run with instrumented (timed) profiling, graph format in HTML\n")
+                .append("  --profile.json  run with instrumented (timed) profiling, graph format in JSON\n")
+                .append("                    --profile.xxx accepts a file to output the profile into\n")
+                .append("                    as an optional argument.\n")
                 .append("  --client        use the non-optimizing \"client\" JVM\n")
                 .append("                    (improves startup; default)\n")
                 .append("  --server        use the optimizing \"server\" JVM (improves perf)\n")
@@ -68,7 +71,8 @@ public class OutputStrings {
                 .append("  --1.8           specify Ruby 1.8.x compatibility\n")
                 .append("  --1.9           specify Ruby 1.9.x compatibility (default)\n")
                 .append("  --bytecode      show the JVM bytecode produced by compiling specified code\n")
-                .append("  --version       print the version\n");
+                .append("  --version       print the version\n")
+                .append("  --disable-gems  do not load RubyGems on startup\n");
 
         return sb.toString();
     }

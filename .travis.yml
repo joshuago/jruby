@@ -3,11 +3,17 @@ before_script:
   - unset GEM_PATH GEM_HOME IRBRC
   - "export PATH=`pwd`/bin:$PATH"
 # disable indy until openjdk7 on travis is upgraded and oraclejdk7 is 7u6 or 7u8
-env: JAVA_OPTS="-server -Djruby.cext.enabled=false -Djruby.compile.invokedynamic=false"
+env: JAVA_OPTS="-server -Djruby.cext.enabled=false"
 jdk:
   - oraclejdk7
 #  - openjdk6
 script: "ant test-extended && rake test19"
 install: /bin/true
 notifications:
-  irc: "irc.freenode.org#jruby"
+  irc:
+    channels:
+      - "irc.freenode.org#jruby"
+    on_success: change
+    on_failure: always
+    template:
+      - "%{repository} (%{branch}:%{commit} by %{author}): %{message} (%{build_url})" 

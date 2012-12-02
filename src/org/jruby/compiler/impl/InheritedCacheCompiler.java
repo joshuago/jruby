@@ -315,6 +315,20 @@ public class InheritedCacheCompiler implements CacheCompiler {
         inheritedConstantCount++;
     }
 
+    public void cacheConstantDefined(BaseBodyCompiler method, String constantName) {
+        method.loadThis();
+        method.loadThreadContext();
+        method.method.ldc(constantName);
+        if (inheritedConstantCount < AbstractScript.NUMBERED_CONSTANT_COUNT) {
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getConstantDefined" + inheritedConstantCount, sig(IRubyObject.class, ThreadContext.class, String.class));
+        } else {
+            method.method.pushInt(inheritedConstantCount);
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getConstantDefined", sig(IRubyObject.class, ThreadContext.class, String.class, int.class));
+        }
+
+        inheritedConstantCount++;
+    }
+
     public void cacheConstantFrom(BaseBodyCompiler method, String constantName) {
         // module is on top of stack
         method.loadThis();
@@ -442,6 +456,22 @@ public class InheritedCacheCompiler implements CacheCompiler {
             method.method.ldc(name);
             method.loadSelf();
             method.method.invokevirtual(scriptCompiler.getClassname(), "getVariable", sig(IRubyObject.class, ThreadContext.class, int.class, String.class, IRubyObject.class));
+        }
+    }
+
+    public void cachedGetVariableDefined(BaseBodyCompiler method, String name) {
+        method.loadThis();
+        method.loadThreadContext();
+        int index = inheritedVariableReaderCount++;
+        if (index < AbstractScript.NUMBERED_VARIABLEREADER_COUNT) {
+            method.method.ldc(name);
+            method.loadSelf();
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getVariableDefined" + index, sig(IRubyObject.class, ThreadContext.class, String.class, IRubyObject.class));
+        } else {
+            method.method.pushInt(index);
+            method.method.ldc(name);
+            method.loadSelf();
+            method.method.invokevirtual(scriptCompiler.getClassname(), "getVariableDefined", sig(IRubyObject.class, ThreadContext.class, int.class, String.class, IRubyObject.class));
         }
     }
 

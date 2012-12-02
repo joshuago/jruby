@@ -26,6 +26,7 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.callsite.CacheEntry;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 import org.jruby.util.RegexpOptions;
 
 public class RuntimeCache {
@@ -175,20 +176,27 @@ public class RuntimeCache {
     }
 
     public final IRubyObject getVariable(ThreadContext context, int index, String name, IRubyObject object) {
-        VariableAccessor variableAccessor = variableReaders[index];
-        RubyClass cls = object.getMetaClass().getRealClass();
-        if (variableAccessor.getClassId() != cls.hashCode()) {
-            variableReaders[index] = variableAccessor = cls.getVariableAccessorForRead(name);
-        }
-        IRubyObject value = (IRubyObject) variableAccessor.get(object);
-        if (value != null) {
-            return value;
-        }
+        IRubyObject value = getValue(context, index, name, object);
+        if (value != null) return value;
+
         Ruby runtime = context.runtime;
         if (runtime.isVerbose()) {
             warnAboutUninitializedIvar(runtime, name);
         }
         return runtime.getNil();
+    }
+
+    public final IRubyObject getVariableDefined(ThreadContext context, int index, String name, IRubyObject object) {
+        return getValue(context, index, name, object) == null ? null : context.runtime.getDefinedMessage(DefinedMessage.INSTANCE_VARIABLE);
+    }
+
+    private final IRubyObject getValue(ThreadContext context, int index, String name, IRubyObject object) {
+        VariableAccessor variableAccessor = variableReaders[index];
+        RubyClass cls = object.getMetaClass().getRealClass();
+        if (variableAccessor.getClassId() != cls.hashCode()) {
+            variableReaders[index] = variableAccessor = cls.getVariableAccessorForRead(name);
+        }
+        return (IRubyObject)variableAccessor.get(object);
     }
 
     private void warnAboutUninitializedIvar(Ruby runtime, String name) {
@@ -390,6 +398,11 @@ public class RuntimeCache {
         IRubyObject value = getValue(context, name, index);
         // We can callsite cache const_missing if we want
         return value != null ? value : context.getCurrentScope().getStaticScope().getModule().callMethod(context, "const_missing", context.runtime.fastNewSymbol(name));
+    }
+
+    public final IRubyObject getConstantDefined(ThreadContext context, String name, int index) {
+        IRubyObject value = getValue(context, name, index);
+        return value == null ? null : context.runtime.getDefinedMessage(DefinedMessage.CONSTANT);
     }
 
     public IRubyObject getValue(ThreadContext context, String name, int index) {

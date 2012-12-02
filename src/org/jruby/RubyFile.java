@@ -59,9 +59,9 @@ import org.jcodings.specific.ASCIIEncoding;
 
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
-import org.jruby.anno.JRubyModule;
 import jnr.posix.FileStat;
 import jnr.posix.util.Platform;
+import org.jcodings.specific.USASCIIEncoding;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ClassIndex;
 import org.jruby.runtime.ObjectAllocator;
@@ -75,7 +75,6 @@ import org.jruby.util.io.PermissionDeniedException;
 import org.jruby.util.io.Stream;
 import org.jruby.util.io.ChannelStream;
 import org.jruby.util.io.IOOptions;
-import org.jruby.util.FileResource;
 import org.jruby.util.JRubyFile;
 import org.jruby.util.TypeConverter;
 import org.jruby.util.io.BadDescriptorException;
@@ -83,6 +82,8 @@ import org.jruby.util.io.FileExistsException;
 import org.jruby.util.io.InvalidValueException;
 import org.jruby.util.io.PipeException;
 import static org.jruby.CompatVersion.*;
+import org.jruby.runtime.encoding.EncodingService;
+import org.jruby.util.CharsetTranscoder;
 
 /**
  * Ruby File class equivalent in java.
@@ -160,6 +161,11 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         constants.setConstant("LOCK_EX", runtime.newFixnum(RubyFile.LOCK_EX));
         constants.setConstant("LOCK_NB", runtime.newFixnum(RubyFile.LOCK_NB));
         constants.setConstant("LOCK_UN", runtime.newFixnum(RubyFile.LOCK_UN));
+        
+        // NULL device
+        if (runtime.is1_9() || runtime.is2_0()) {
+            constants.setConstant("NULL", runtime.newString(getNullDevice()));
+        }
 
         // File::Constants module is included in IO.
         runtime.getIO().includeModule(constants);
@@ -176,6 +182,18 @@ public class RubyFile extends RubyIO implements EncodingCapable {
             return instance;
         }
     };
+
+    private static String getNullDevice() {
+        // FIXME: MRI defines special null device for Amiga and VMS, but currently
+        // we lack ability to detect these platforms
+        String null_device;
+        if (Platform.IS_WINDOWS) {
+            null_device = "NUL";
+        } else {
+            null_device = "/dev/null";
+        }
+        return null_device;
+    }
 
     public RubyFile(Ruby runtime, RubyClass type) {
         super(runtime, type);
@@ -613,6 +631,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         } else {
             //TODO deal with UNC names
             int index = name.lastIndexOf('/');
+
             if (index == -1) {
                 if (startsWithDriveLetterOnWindows) {
                     return context.runtime.newString(jfilename.substring(0, 2) + ".");
@@ -630,9 +649,20 @@ public class RubyFile extends RubyIO implements EncodingCapable {
                 index++;
             }
 
+            if (jfilename.startsWith("\\\\")) {
+                index = jfilename.length();
+                String[] splitted = jfilename.split(Pattern.quote("\\"));
+                int last = splitted.length-1;
+                if (splitted[last].contains(".")) {
+                    index = jfilename.lastIndexOf("\\");
+                }
+                
+            }
+            
             result = jfilename.substring(0, index);
+            
         }
-
+        
         char endChar;
         // trim trailing slashes
         while (result.length() > minPathLength) {
@@ -837,16 +867,20 @@ public class RubyFile extends RubyIO implements EncodingCapable {
     @JRubyMethod(required = 2, meta = true)
     public static IRubyObject link(ThreadContext context, IRubyObject recv, IRubyObject from, IRubyObject to) {
         Ruby runtime = context.runtime;
-        RubyString fromStr = RubyString.stringValue(from);
-        RubyString toStr = RubyString.stringValue(to);
+        RubyString fromStr = get_path(context, from);
+        RubyString toStr = get_path(context, to);
 
         int ret = runtime.getPosix().link(fromStr.getUnicodeValue(), toStr.getUnicodeValue());
         if (ret != 0) {
-            // In most cases, when there is an error during the call,
-            // the POSIX handler throws an exception, but not in case
-            // with pure Java POSIX layer (when native support is disabled),
-            // so we deal with it like this:
-            throw runtime.newErrnoEEXISTError(fromStr + " or " + toStr);
+            if (runtime.getPosix().isNative()) {
+                throw runtime.newErrnoFromInt(runtime.getPosix().errno(), String.format("(%s, %s)", fromStr, toStr));
+            } else {
+                // In most cases, when there is an error during the call,
+                // the POSIX handler throws an exception, but not in case
+                // with pure Java POSIX layer (when native support is disabled),
+                // so we deal with it like this:
+                throw runtime.newErrnoEEXISTError(fromStr + " or " + toStr);
+            }
         }
         return runtime.newFixnum(ret);
     }
@@ -907,35 +941,42 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         String tovalue = toStr.getUnicodeValue();
         tovalue = JRubyFile.create(runtime.getCurrentDirectory(), tovalue).getAbsolutePath();
         try {
-            if (runtime.getPosix().symlink(
-                    fromStr.getUnicodeValue(), tovalue) == -1) {
-                // FIXME: When we get JNA3 we need to properly write this to errno.
-                throw runtime.newErrnoEEXISTError(fromStr + " or " + toStr);
+            if (runtime.getPosix().symlink(fromStr.getUnicodeValue(), tovalue) == -1) {
+                if (runtime.getPosix().isNative()) {
+                    throw runtime.newErrnoFromInt(runtime.getPosix().errno(), String.format("(%s, %s)", fromStr, toStr));
+                } else {
+                    throw runtime.newErrnoEEXISTError(String.format("(%s, %s)", fromStr, toStr));
+                }
             }
         } catch (java.lang.UnsatisfiedLinkError ule) {
             throw runtime.newNotImplementedError("symlink() function is unimplemented on this machine");
         }
         
-        return runtime.newFixnum(0);
+        return RubyFixnum.zero(runtime);
     }
     
     @JRubyMethod(required = 1, meta = true)
     public static IRubyObject readlink(ThreadContext context, IRubyObject recv, IRubyObject path) {
         Ruby runtime = context.runtime;
+        JRubyFile link = file(path);
         
         try {
-            String realPath = runtime.getPosix().readlink(path.convertToString().getUnicodeValue());
+            String realPath = runtime.getPosix().readlink(link.toString());
         
             if (!RubyFileTest.exist_p(recv, path).isTrue()) {
                 throw runtime.newErrnoENOENTError(path.toString());
             }
         
             if (!RubyFileTest.symlink_p(recv, path).isTrue()) {
+                // Can not check earlier, File.exist? might return false yet the symlink be there
+                if (!RubyFileTest.exist_p(recv, path).isTrue()) {
+                    throw runtime.newErrnoENOENTError(path.toString());
+                }
                 throw runtime.newErrnoEINVALError(path.toString());
             }
         
             if (realPath == null) {
-                //FIXME: When we get JNA3 we need to properly write this to errno.
+                throw runtime.newErrnoFromLastPOSIXErrno();
             }
 
             return runtime.newString(realPath);
@@ -952,10 +993,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
 
     @JRubyMethod(name = "truncate", required = 2, meta = true, compat = RUBY1_9)
     public static IRubyObject truncate19(ThreadContext context, IRubyObject recv, IRubyObject arg1, IRubyObject arg2) {
-        if (!(arg1 instanceof RubyString) && arg1.respondsTo("to_path")) {
-            arg1 = arg1.callMethod(context, "to_path");
-        }
-        return truncateCommon(context, recv, arg1, arg2);
+        return truncateCommon(context, recv, get_path(context, arg1), arg2);
     }
 
     @JRubyMethod(meta = true, optional = 1)
@@ -1238,9 +1276,13 @@ public class RubyFile extends RubyIO implements EncodingCapable {
             // FNFException can be thrown in both cases, when the file
             // is not found, or when permission is denied.
             // FIXME: yes, this is indeed gross.
-            if (ex.getMessage().contains(/*P*/"ermission denied")) {
+            String message = ex.getMessage();
+            
+            if (message.contains(/*P*/"ermission denied") ||
+                message.contains(/*A*/"ccess is denied")) {
                 throw getRuntime().newErrnoEACCESError(path);
             }
+            
             throw getRuntime().newErrnoENOENTError(path);
         } catch (DirectoryAsFileException ex) {
             throw getRuntime().newErrnoEISDirError();
@@ -1257,24 +1299,35 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         }
     }
 
-    /**
-     * similar in spirit to rb_get_path from 1.9 source
-     * @param context
-     * @param obj
-     * @return
-     */
-    public static RubyString get_path(ThreadContext context, IRubyObject obj) {
+    // mri: FilePathValue/rb_get_path/rb_get_patch_check
+    public static RubyString get_path(ThreadContext context, IRubyObject path) {
         if (context.runtime.is1_9()) {
-            if (obj instanceof RubyString) {
-                return (RubyString)obj;
-            }
+            if (path.respondsTo("to_path")) path = path.callMethod(context, "to_path");
+            
+            return filePathConvert(context, path.convertToString());
+        } 
+          
+        return path.convertToString();
+    }
+    
+    // FIXME: MRI skips this logic on windows?  Does not make sense to me why so I left it in.
+    // mri: file_path_convert
+    private static RubyString filePathConvert(ThreadContext context, RubyString path) {
+        Ruby runtime = context.getRuntime();
+        EncodingService encodingService = runtime.getEncodingService();
+        Encoding pathEncoding = path.getEncoding();
 
-            if (obj.respondsTo("to_path")) {
-                obj = obj.callMethod(context, "to_path");
-            }
-        }
+        // If we are not ascii and do not match fs encoding then transcode to fs.
+        if (runtime.getDefaultInternalEncoding() != null &&
+                pathEncoding != encodingService.getUSAsciiEncoding() &&
+                pathEncoding != encodingService.getAscii8bitEncoding() &&
+                pathEncoding != encodingService.getFileSystemEncoding(runtime) &&
+                !path.isAsciiOnly()) {
+            ByteList bytes = CharsetTranscoder.transcode(context, path.getByteList(), pathEncoding, encodingService.getFileSystemEncoding(runtime), null);
+            path = RubyString.newString(runtime, bytes);
+        }                
 
-        return obj.convertToString();
+        return path;
     }
 
     /**
@@ -1747,6 +1800,7 @@ public class RubyFile extends RubyIO implements EncodingCapable {
         boolean isTainted = false;
         StringBuilder buffer = new StringBuilder();
         Ruby runtime = context.runtime;
+        String separator = context.getRuntime().getClass("File").getConstant("SEPARATOR").toString();
 
         for (int i = 0; i < args.length; i++) {
             if (args[i].isTaint()) {
@@ -1767,8 +1821,8 @@ public class RubyFile extends RubyIO implements EncodingCapable {
             }
 
             chomp(buffer);
-            if (i > 0 && !element.startsWith("/") && !element.startsWith("\\")) {
-                buffer.append("/");
+            if (i > 0 && !element.startsWith(separator)) {
+                buffer.append(separator);
             }
             buffer.append(element);
         }

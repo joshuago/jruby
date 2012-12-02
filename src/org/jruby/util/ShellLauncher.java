@@ -225,7 +225,7 @@ public class ShellLauncher {
         try {
             // dup for JRUBY-6603 (avoid concurrent modification while we walk it)
             RubyHash hash = (RubyHash)runtime.getObject().getConstant("ENV").dup();
-            String[] ret;
+            String[] ret, ary;
 
             if (mergeEnv != null && !mergeEnv.isEmpty()) {
                 ret = new String[hash.size() + mergeEnv.size()];
@@ -235,15 +235,35 @@ public class ShellLauncher {
 
             int i=0;
             for(Map.Entry e : (Set<Map.Entry>)hash.directEntrySet()) {
+                // if the key is nil, raise TypeError
+                if (e.getKey() == null) {
+                    throw runtime.newTypeError(runtime.getNil(), runtime.getStructClass());
+                }
+                // ignore if the value is nil
+                if (e.getValue() == null) {
+                    continue;
+                }
                 ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
                 i++;
             }
-            if (mergeEnv != null) for(Map.Entry e : (Set<Map.Entry>)mergeEnv.entrySet()) {
-                ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
-                i++;
+            if (mergeEnv != null) {
+                for (Map.Entry e : (Set<Map.Entry>) mergeEnv.entrySet()) {
+                    // if the key is nil, raise TypeError
+                    if (e.getKey() == null) {
+                        throw runtime.newTypeError(runtime.getNil(), runtime.getStructClass());
+                    }
+                    // ignore if the value is nil
+                    if (e.getValue() == null) {
+                        continue;
+                    }
+                    ret[i] = e.getKey().toString() + "=" + e.getValue().toString();
+                    i++;
+                }
             }
-
-            return ret;
+            
+            ary = new String[i];
+            System.arraycopy(ret, 0, ary, 0, i);
+            return ary;
 
         } finally {
             context.setEventHooksEnabled(traceEnabled);
@@ -316,9 +336,13 @@ public class ShellLauncher {
             }
         } else {
             validFile = tryFile(runtime, fdir, fname);
-            if (validFile != null && isExec &&
-                (validFile.isDirectory() || !runtime.getPosix().stat(validFile.getAbsolutePath()).isExecutable())) {
-                throw runtime.newErrnoEACCESError(validFile.getAbsolutePath());
+            if (validFile != null) {
+                if (validFile.isDirectory()) {
+                    return null;
+                }
+                if (isExec && !runtime.getPosix().stat(validFile.getAbsolutePath()).isExecutable()) {
+                    throw runtime.newErrnoEACCESError(validFile.getAbsolutePath());
+                }
             }
         }
         return validFile;
@@ -1545,7 +1569,7 @@ public class ShellLauncher {
                 useShell = true;
             }
         }
-        if (Platform.IS_WINDOWS && command.charAt(0) == '@') {
+        if (Platform.IS_WINDOWS && command.length() >= 1 && command.charAt(0) == '@') {
             // JRUBY-5522
             useShell = true;
         }

@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.jruby.Ruby;
+import org.jruby.RubyString;
 import org.jruby.ast.types.INameNode;
 import org.jruby.ast.visitor.NodeVisitor;
 import org.jruby.exceptions.JumpException;
@@ -46,6 +47,7 @@ import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 
 /**
  * Base class for all Nodes in the AST
@@ -53,23 +55,6 @@ import org.jruby.util.ByteList;
 public abstract class Node implements ISourcePositionHolder {    
     // We define an actual list to get around bug in java integration (1387115)
     static final List<Node> EMPTY_LIST = new ArrayList<Node>();
-    
-    // defined? results
-    public static final ByteList EXPRESSION_BYTELIST = ByteList.create("expression");
-    public static final ByteList ASSIGNMENT_BYTELIST = ByteList.create("assignment");
-    public static final ByteList GLOBAL_VARIABLE_BYTELIST = ByteList.create("global-variable");
-    public static final ByteList METHOD_BYTELIST = ByteList.create("method");
-    public static final ByteList CLASS_VARIABLE_BYTELIST = ByteList.create("class variable");
-    public static final ByteList CONSTANT_BYTELIST = ByteList.create("constant");
-    public static final ByteList LOCAL_VARIABLE_BYTELIST = ByteList.create("local-variable");
-    public static final ByteList LOCAL_VARIABLE_IN_BLOCK_BYTELIST = ByteList.create("local-variable(in-block)");
-    public static final ByteList FALSE_BYTELIST = ByteList.create("false");
-    public static final ByteList INSTANCE_VARIABLE_BYTELIST = ByteList.create("instance-variable");
-    public static final ByteList NIL_BYTELIST = ByteList.create("nil");
-    public static final ByteList SELF_BYTELIST = ByteList.create("self");
-    public static final ByteList SUPER_BYTELIST = ByteList.create("super");
-    public static final ByteList TRUE_BYTELIST = ByteList.create("true");
-    public static final ByteList YIELD_BYTELIST = ByteList.create("yield");
     
     private ISourcePosition position;
 
@@ -131,14 +116,6 @@ public abstract class Node implements ISourcePositionHolder {
         return nodeType;
     }
 
-    /**
-     * Is the current node something that is syntactically visible in the AST.  IDE consumers
-     * should ignore these elements.
-     */
-    public boolean isInvisible() {
-        return this instanceof InvisibleNode;
-    }
-
     public IRubyObject interpret(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
         throw new RuntimeException(this.getClass().getSimpleName() + " should not be directly interpreted");
     }
@@ -147,10 +124,10 @@ public abstract class Node implements ISourcePositionHolder {
         throw new RuntimeException("Invalid node encountered in interpreter: \"" + getClass().getName() + "\", please report this at www.jruby.org");
     }
     
-    public ByteList definition(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
+    public RubyString definition(Ruby runtime, ThreadContext context, IRubyObject self, Block aBlock) {
         try {
             interpret(runtime, context, self, aBlock);
-            return EXPRESSION_BYTELIST;
+            return runtime.getDefinedMessage(DefinedMessage.EXPRESSION);
         } catch (JumpException jumpExcptn) {
         }
         

@@ -62,7 +62,6 @@ import org.jruby.util.io.OpenFile;
  * An implementation of tempfile.rb in Java.
  */
 @JRubyClass(name="Tempfile", parent="File")
-@SuppressWarnings("deprecation")
 public class Tempfile extends org.jruby.RubyTempfile {
 
     /** Keep strong references to the Reaper until cleanup */
@@ -322,6 +321,18 @@ public class Tempfile extends org.jruby.RubyTempfile {
         } else {
             return tempfile;
         }
+    }
+
+    @JRubyMethod
+    @Override
+    public IRubyObject inspect() {
+        StringBuilder val = new StringBuilder();
+        val.append("#<Tempfile:").append(path);
+        if(!openFile.isOpen()) {
+            val.append(" (closed)");
+        }
+        val.append(">");
+        return getRuntime().newString(val.toString());
     }
 
     // FIXME This reaper never actually runs; delete it or implement it properly

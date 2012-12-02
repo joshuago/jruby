@@ -93,16 +93,13 @@ class OpenSSL::TestPair < Test::Unit::TestCase
     ssl_pair {|s1, s2|
       s2.write "a\nbcd"
       assert_equal("a\n", s1.gets)
-      read = s1.readpartial(10)
-      assert_equal("bcd"[0, read.bytesize], read)
-      s1.read(read.bytesize - 3) # drop unread bytes
+      result = ""
+      result << s1.readpartial(10) until result.length == 3
+      assert_equal("bcd", result)
       s2.write "efg"
-      read = s1.readpartial(10)
-      assert_equal("efg"[0, read.bytesize], read)
-      rest = 3 - read.bytesize
-      while rest > 0
-        rest -= s1.readpartial(rest).size
-      end
+      result = ""
+      result << s1.readpartial(10) until result.length == 3
+      assert_equal("efg", result)
       s2.close
       assert_raise(EOFError) { s1.readpartial(10) }
       assert_raise(EOFError) { s1.readpartial(10) }
@@ -149,7 +146,7 @@ class OpenSSL::TestPair < Test::Unit::TestCase
   def test_read_nonblock
     ssl_pair {|s1, s2|
       err = nil
-      assert_raise(OpenSSL::SSL::SSLError) {
+      assert_raise(OpenSSL::SSL::SSLErrorReadable) {
         begin
           s2.read_nonblock(10)
         ensure

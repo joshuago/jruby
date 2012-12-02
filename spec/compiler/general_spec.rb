@@ -452,6 +452,37 @@ describe "JRuby's compiler" do
       result.should == '/Users/headius/projects/jruby/tmp/perfer/examples/file_stat.rb'
     end
   end
+
+  it "handles attr accessors for unassigned vars properly" do
+    # under invokedynamic, we were caching the "dummy" accessor that never saw any value
+    result = compile_and_run <<-EOC
+class AttrAccessorUnassigned
+  attr_accessor :foo
+end
+
+obj = AttrAccessorUnassigned.new
+ary = []
+2.times { ary << obj.foo; obj.foo = 1}
+ary
+    EOC
+
+    result.should == [nil, 1]
+  end
+
+  if is19
+    it "does not break String#to_r and to_c" do
+      # This is structured to cause a "dummy" scope because of the String constant
+      # This caused to_r and to_c to fail since that scope always returns nil
+      result = compile_and_run <<-EOC
+      def foo
+        [String.new("0.1".to_c.to_s), String.new("0.1".to_r.to_s)]
+      end
+      foo
+      EOC
+
+      result.should
+    end
+  end
   
   it "does a bunch of other stuff" do
     silence_warnings {

@@ -116,6 +116,7 @@ public class EncodingOption {
     // c: parse_mode_enc
     public static EncodingOption getEncodingOptionFromString(Ruby runtime, String option) {
         EncodingService service = runtime.getEncodingService();
+        Encoding ascii8bit = service.getAscii8bitEncoding();
         Encoding extEncoding = null;
         Encoding intEncoding = null;
         boolean isBom = false;
@@ -137,30 +138,26 @@ public class EncodingOption {
             }
         }
 
+        // Duplicating some rb_io_ext_int_to_encs logic here, which is also in RubyIO#setupReadWriteEncodings.
+
         if (extEncoding == null) {
             extEncoding = runtime.getDefaultExternalEncoding();
         }
 
-        if (intEncoding == null) {
+        if (intEncoding == null && extEncoding != ASCIIEncoding.INSTANCE) {
             intEncoding = runtime.getDefaultInternalEncoding();
         }
-        // NOTE: This logic used to do checks for int == ext, etc, like in rb_io_ext_int_to_encs,
-        // but that logic seems specific to how MRI's IO sets up "enc" and "enc2". We explicitly separate
-        // external and internal, so consumers should decide how to deal with int == ext.
+
         return new EncodingOption(extEncoding, intEncoding, isBom);
     }
 
     // c: parse_mode_enc
     public static EncodingOption getEncodingNoOption(Ruby runtime, ModeFlags modeFlags) {
         if (modeFlags.isBinary()) {
-            return new EncodingOption(
-                    ASCIIEncoding.INSTANCE,
-                    null, false);
-        } else {
-            return new EncodingOption(
-                    runtime.getDefaultExternalEncoding(),
-                    runtime.getDefaultInternalEncoding(), false);
+            return new EncodingOption(ASCIIEncoding.INSTANCE, null, false);
         }
+
+        return new EncodingOption(null, null, false);
     }
 
     public String toString() {

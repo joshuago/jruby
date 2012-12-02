@@ -35,7 +35,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import org.jruby.Ruby;
@@ -67,11 +66,10 @@ public final class StructLayout extends Type {
     /** The name to use to register this class in the JRuby runtime */
     static final String CLASS_NAME = "StructLayout";
 
-    /** The name:offset map for this struct */
-    private final Map<IRubyObject, Member> fieldSymbolMap;
+    private final Member[] identityLookupTable;
 
     /** The name:offset map for this struct */
-    private final Map<IRubyObject, Member> fieldStringMap;
+    private final Map<IRubyObject, Member> memberMap;
     
     /** The ordered list of field names (as symbols) */
     private final List<IRubyObject> fieldNames;
@@ -142,6 +140,10 @@ public final class StructLayout extends Type {
                 ArrayFieldAllocator.INSTANCE, layoutClass);
         arrayFieldClass.defineAnnotatedMethods(ArrayField.class);
 
+        RubyClass variableLengthArrayProxyClass = runtime.defineClassUnder("VariableLengthArrayProxy", runtime.getObject(),
+                ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR, layoutClass);
+        variableLengthArrayProxyClass.defineAnnotatedMethods(VariableLengthArrayProxy.class);
+
         RubyClass mappedFieldClass = runtime.defineClassUnder("Mapped", fieldClass,
                 MappedFieldAllocator.INSTANCE, layoutClass);
         mappedFieldClass.defineAnnotatedMethods(MappedField.class);
@@ -167,7 +169,7 @@ public final class StructLayout extends Type {
         List<IRubyObject> names = new ArrayList<IRubyObject>(fields.size());
         List<Member> memberList = new ArrayList<Member>(fields.size());
         Map<IRubyObject, Member> memberStringMap = new HashMap<IRubyObject, Member>(fields.size());
-        Map<IRubyObject, Member> memberSymbolMap = new IdentityHashMap<IRubyObject, Member>(fields.size() * 2);
+        Member[] memberSymbolLookupTable = new Member[Util.roundUpToPowerOfTwo(fields.size() * 8)];
         int offset = 0;
         
         int index = 0;
@@ -181,18 +183,27 @@ public final class StructLayout extends Type {
             if (!(f.name instanceof RubySymbol)) {
                 throw runtime.newTypeError("fields list contains field with invalid name");
             }
+            if (f.type.getNativeSize() < 1 && index < (fields.size() - 1)) {
+                throw runtime.newTypeError("sizeof field == 0");
+            }
 
             names.add(f.name);
             fieldList.add(f);
 
             Member m = new Member(f, index, f.isCacheable() ? cfCount++ : -1, f.isValueReferenceNeeded() ? refCount++ : -1);
-            memberSymbolMap.put(f.name, m);
+            for (int idx = symbolIndex(f.name, memberSymbolLookupTable.length); ; idx = nextIndex(idx, memberSymbolLookupTable.length)) {
+                if (memberSymbolLookupTable[idx] == null) {
+                    memberSymbolLookupTable[idx] = m;
+                    break;
+                }
+            }
 
             // Allow fields to be accessed as ['name'] as well as [:name] for legacy code
             memberStringMap.put(f.name, m);
             memberStringMap.put(f.name.asString(), m);
             memberList.add(m);
             offset = Math.max(offset, f.offset);
+            index++;
         }
 
 
@@ -202,8 +213,8 @@ public final class StructLayout extends Type {
         // Create the ordered list of field names from the map
         this.fieldNames = Collections.unmodifiableList(new ArrayList<IRubyObject>(names));
         this.fields = Collections.unmodifiableList(fieldList);
-        this.fieldStringMap = Collections.unmodifiableMap(memberStringMap);
-        this.fieldSymbolMap = Collections.unmodifiableMap(memberSymbolMap);
+        this.memberMap = Collections.unmodifiableMap(memberStringMap);
+        this.identityLookupTable = memberSymbolLookupTable;
         this.members = Collections.unmodifiableList(memberList);
         this.isUnion = offset == 0 && memberList.size() > 1;
     }
@@ -336,6 +347,14 @@ public final class StructLayout extends Type {
         return result;
     }
 
+    private static int symbolIndex(IRubyObject name, int length) {
+        return System.identityHashCode(name) & (length - 1);
+    }
+
+    private static int nextIndex(int idx, int length) {
+        return (idx + 1) & (length - 1);
+    }
+
     /**
      * Returns a {@link Member} descriptor for a struct field.
      * 
@@ -343,12 +362,16 @@ public final class StructLayout extends Type {
      * @return A <tt>Member</tt> descriptor.
      */
     final Member getMember(Ruby runtime, IRubyObject name) {
-        Member f = fieldSymbolMap.get(name);
-        if (f != null) {
-            return f;
+        Member m;
+        int idx = symbolIndex(name, identityLookupTable.length);
+        while ((m = identityLookupTable[idx]) != null) {
+            if (m.name == name) {
+                return m;
+            }
+            idx = nextIndex(idx, identityLookupTable.length);
         }
-        
-        f = fieldStringMap.get(name);
+
+        Member f = memberMap.get(name);
         if (f != null) {
             return f;
         }
@@ -427,6 +450,8 @@ public final class StructLayout extends Type {
         /** The index of this member within the struct */
         final int index;
 
+        final IRubyObject name;
+
         /** Initializes a new Member instance */
         protected Member(Field f, int index, int cacheIndex, int referenceIndex) {
             this.field = f;
@@ -436,6 +461,7 @@ public final class StructLayout extends Type {
             this.index = index;
             this.cacheIndex = cacheIndex;
             this.referenceIndex = referenceIndex;
+            this.name = f.name;
         }
 
         final long getOffset(IRubyObject ptr) {
@@ -1028,6 +1054,50 @@ public final class StructLayout extends Type {
         }
     }
 
+    @JRubyClass(name="FFI::StructLayout::VariableLengthArrayProxy", parent="Object")
+    public static class VariableLengthArrayProxy extends RubyObject {
+        protected final AbstractMemory ptr;
+        final MemoryOp aio;
+        private final Type componentType;
+
+        VariableLengthArrayProxy(Ruby runtime, IRubyObject ptr, long offset, Type.Array type, MemoryOp aio) {
+            this(runtime, runtime.getFFI().ffiModule.getClass(CLASS_NAME).getClass("VariableLengthArrayProxy"),
+                    ptr, offset, type, aio);
+        }
+
+        VariableLengthArrayProxy(Ruby runtime, RubyClass klass, IRubyObject ptr, long offset, Type.Array type, MemoryOp aio) {
+            super(runtime, klass);
+            this.ptr = ((AbstractMemory) ptr).slice(runtime, offset);
+            this.aio = aio;
+            this.componentType = type.getComponentType();
+        }
+
+        private long getOffset(int index) {
+            if (index < 0) {
+                throw getRuntime().newIndexError("index " + index + " out of bounds");
+            }
+
+            return (long) (index * componentType.getNativeSize());
+        }
+
+
+        @JRubyMethod(name = "[]")
+        public IRubyObject get(ThreadContext context, IRubyObject index) {
+            return aio.get(context, ptr, getOffset(Util.int32Value(index)));
+        }
+
+        @JRubyMethod(name = "[]=")
+        public IRubyObject put(ThreadContext context, IRubyObject index, IRubyObject value) {
+            aio.put(context, ptr, getOffset(Util.int32Value(index)), value);
+            return value;
+        }
+
+        @JRubyMethod(name = { "to_ptr" })
+        public IRubyObject to_ptr(ThreadContext context) {
+            return ptr;
+        }
+    }
+
     /**
      * Primitive (byte, short, int, long, float, double) types are all handled by
      * a PrimitiveMember type.
@@ -1366,9 +1436,13 @@ public final class StructLayout extends Type {
         public IRubyObject get(ThreadContext context, StructLayout.Storage cache, Member m, AbstractMemory ptr) {
             IRubyObject s = cache.getCachedValue(m);
             if (s == null) {
-                s = isCharArray()
+                if (isVariableLength()) {
+                    s = new VariableLengthArrayProxy(context.runtime, ptr, m.offset, arrayType, op);
+                } else {
+                    s = isCharArray()
                         ? new StructLayout.CharArrayProxy(context.runtime, ptr, m.offset, arrayType, op)
                         : new StructLayout.ArrayProxy(context.runtime, ptr, m.offset, arrayType, op);
+                }
                 cache.putCachedValue(m, s);
             }
 
@@ -1378,6 +1452,10 @@ public final class StructLayout extends Type {
         private final boolean isCharArray() {
             return arrayType.getComponentType().nativeType == NativeType.CHAR
                     || arrayType.getComponentType().nativeType == NativeType.UCHAR;
+        }
+
+        private boolean isVariableLength() {
+            return arrayType.length() < 1;
         }
 
 

@@ -133,6 +133,8 @@ import org.jruby.ast.IfNode;
 import org.jruby.ast.InstAsgnNode;
 import org.jruby.ast.InstVarNode;
 import org.jruby.ast.IterNode;
+import org.jruby.ast.KeywordArgNode;
+import org.jruby.ast.KeywordRestArgNode;
 import org.jruby.ast.ListNode;
 import org.jruby.ast.LocalAsgnNode;
 import org.jruby.ast.Match2Node;
@@ -1420,6 +1422,29 @@ public class ParserSupport {
         }
         return new ArgsNode(position, pre, optional, rest, post, block);
     }
+    
+    public Node new_args(ISourcePosition position, ListNode pre, ListNode optional, RestArgNode rest,
+            ListNode post, ArgsTailHolder tail) {
+        // Zero-Argument declaration
+        if (optional == null && rest == null && post == null && (tail == null || tail.getBlockArg() == null)) {
+            if (pre == null || pre.size() == 0) return new ArgsNoArgNode(position);
+            if (pre.size() == 1 && !hasAssignableArgs(pre)) return new ArgsPreOneArgNode(position, pre);
+            if (pre.size() == 2 && !hasAssignableArgs(pre)) return new ArgsPreTwoArgNode(position, pre);
+        }
+
+        if (tail == null) return new ArgsNode(position, pre, optional, rest, post, null);
+        
+        return new ArgsNode(position, pre, optional, rest, post, 
+                tail.getKeywordArgs(), tail.getKeywordRestArgNode(), tail.getBlockArg());
+    }    
+    
+    public ArgsTailHolder new_args_tail(ISourcePosition position, ListNode keywordArg, 
+            Token keywordRestArgName, BlockArgNode blockArg) {
+        KeywordRestArgNode keywordRestArg = keywordRestArgName != null ? new KeywordRestArgNode(position,
+                currentScope.declare(position, (String) keywordRestArgName.getValue())) : null;
+        
+        return new ArgsTailHolder(position, keywordArg, keywordRestArg, blockArg);
+    }    
 
     private boolean hasAssignableArgs(ListNode list) {
         for (Node node : list.childNodes()) {
@@ -1678,5 +1703,9 @@ public class ParserSupport {
         }
         
         return codeRange;
-    }    
+    }
+    
+    public KeywordArgNode keyword_arg(ISourcePosition position, AssignableNode assignable) {
+        return new KeywordArgNode(position, assignable);
+    }
 }

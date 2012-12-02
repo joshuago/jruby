@@ -54,6 +54,9 @@ import java.math.BigInteger;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.jcodings.Encoding;
 
 import org.jruby.MetaClass;
 import org.jruby.Ruby;
@@ -98,6 +101,8 @@ import org.jruby.java.proxies.MapJavaProxy;
 import org.jruby.java.proxies.InterfaceJavaProxy;
 import org.jruby.java.proxies.JavaProxy;
 import org.jruby.java.proxies.RubyObjectHolderProxy;
+import org.jruby.javasupport.proxy.JavaProxyClassFactory;
+import org.jruby.runtime.Visibility;
 import org.jruby.util.ClassCache.OneShotClassLoader;
 import org.jruby.util.cli.Options;
 
@@ -120,6 +125,8 @@ public class Java implements Library {
         ajp.includeModule(runtime.getEnumerable());
         
         RubyClassPathVariable.createClassPathVariable(runtime);
+        
+        runtime.setJavaProxyClassFactory(JavaProxyClassFactory.createFactory());
 
         // modify ENV_JAVA to be a read/write version
         Map systemProps = new SystemPropertiesMap();
@@ -455,6 +462,19 @@ public class Java implements Library {
                             runtime.getJavaSupport().getArrayProxyClass(),
                             javaClass, true);
 
+                    // FIXME: Organizationally this might be nicer in a specialized class
+                    if (c.getComponentType() == byte.class) {
+                        final Encoding ascii8bit = runtime.getEncodingService().getAscii8bitEncoding();
+                        
+                        // All bytes can be considered raw strings and forced to particular codings if not 8bitascii
+                        proxyClass.addMethod("to_s", new JavaMethodZero(proxyClass, PUBLIC) {
+                            @Override
+                            public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name) {
+                                ByteList bytes = new ByteList((byte[]) ((ArrayJavaProxy) self).getObject(), ascii8bit);
+                                return RubyString.newStringLight(context.runtime, bytes);
+                            }
+                        });
+                    }   
                 } else if (c.isPrimitive()) {
                     proxyClass = createProxyClass(runtime,
                             runtime.getJavaSupport().getConcreteProxyClass(),
@@ -822,6 +842,12 @@ public class Java implements Library {
         }
     }
 
+    public static RubyModule getJavaPackageModule(Ruby runtime, Package pkg) {
+        return pkg == null ?
+                getJavaPackageModule(runtime, "") :
+                getJavaPackageModule(runtime, pkg.getName());
+    }
+
     private static RubyModule getJavaPackageModule(Ruby runtime, String packageString) {
         String packageName;
         int length = packageString.length();
@@ -914,12 +940,13 @@ public class Java implements Library {
             // this covers the rare case of lower-case class names (and thus will
             // fail 99.999% of the time). fortunately, we'll only do this once per
             // package name. (and seriously, folks, look into best practices...)
+            IRubyObject previousErrorInfo = RuntimeHelpers.getErrorInfo(runtime);
             try {
                 return getProxyClass(runtime, JavaClass.forNameQuiet(runtime, fullName));
             } catch (RaiseException re) { /* expected */
                 RubyException rubyEx = re.getException();
                 if (rubyEx.kind_of_p(context, runtime.getStandardError()).isTrue()) {
-                    RuntimeHelpers.setErrorInfo(runtime, runtime.getNil());
+                    RuntimeHelpers.setErrorInfo(runtime, previousErrorInfo);
                 }
             } catch (Exception e) { /* expected */ }
 

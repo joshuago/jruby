@@ -64,13 +64,13 @@ import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.BlockBody;
 import org.jruby.runtime.ClassIndex;
-import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import static org.jruby.runtime.Visibility.*;
 import static org.jruby.CompatVersion.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.encoding.EncodingCapable;
+import org.jruby.runtime.invokedynamic.MethodNames;
 import org.jruby.runtime.marshal.MarshalStream;
 import org.jruby.runtime.marshal.UnmarshalStream;
 import org.jruby.util.ByteList;
@@ -80,8 +80,8 @@ import org.jruby.util.RecursiveComparator;
 import org.jruby.util.TypeConverter;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.HASH;
-import static org.jruby.runtime.MethodIndex.OP_CMP;
+import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_CMP;
 
 /**
  * The implementation of the built-in class Array in Ruby.
@@ -1933,19 +1933,24 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     @JRubyMethod(name = "==", required = 1)
     @Override
     public IRubyObject op_equal(ThreadContext context, IRubyObject obj) {
+        Ruby runtime = context.runtime;
+
         if (this == obj) {
-            return context.runtime.getTrue();
+            return runtime.getTrue();
         }
+
         if (!(obj instanceof RubyArray)) {
+            if (obj == context.nil) return runtime.getFalse();
+
             if (!obj.respondsTo("to_ary")) {
-                return context.runtime.getFalse();
+                return runtime.getFalse();
             }
             return RuntimeHelpers.rbEqual(context, obj, this);
         }
-        return RecursiveComparator.compare(context, MethodIndex.OP_EQUAL, this, obj);
+        return RecursiveComparator.compare(context, MethodNames.OP_EQUAL, this, obj);
     }
 
-    public RubyBoolean compare(ThreadContext context, int method, IRubyObject other) {
+    public RubyBoolean compare(ThreadContext context, MethodNames method, IRubyObject other) {
 
         Ruby runtime = context.runtime;
 
@@ -1977,7 +1982,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
      */
     @JRubyMethod(name = "eql?", required = 1)
     public IRubyObject eql(ThreadContext context, IRubyObject obj) {
-        return RecursiveComparator.compare(context, MethodIndex.EQL, this, obj);
+        return RecursiveComparator.compare(context, MethodNames.EQL, this, obj);
     }
 
     /** rb_ary_compact_bang
@@ -2454,13 +2459,17 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     @JRubyMethod(required = 1)
     public IRubyObject delete(ThreadContext context, IRubyObject item, Block block) {
         int i2 = 0;
+        IRubyObject value = item;
 
         Ruby runtime = context.runtime;
         for (int i1 = 0; i1 < realLength; i1++) {
             // Do not coarsen the "safe" check, since it will misinterpret AIOOBE from equalInternal
             // See JRUBY-5434
             IRubyObject e = safeArrayRef(values, begin + i1);
-            if (equalInternal(context, e, item)) continue;
+            if (equalInternal(context, e, item)) {
+                value = e;
+                continue;
+            }
             if (i1 != i2) store(i2, e);
             i2++;
         }
@@ -2487,7 +2496,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             concurrentModification();
         }
 
-        return item;
+        return value;
     }
 
     /** rb_ary_delete_at

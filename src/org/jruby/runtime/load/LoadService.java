@@ -39,6 +39,8 @@ import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
+import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -61,6 +63,7 @@ import org.jruby.RubyString;
 import org.jruby.ast.executable.Script;
 import org.jruby.exceptions.MainExitException;
 import org.jruby.exceptions.RaiseException;
+import org.jruby.ext.rbconfig.RbConfigLibrary;
 import org.jruby.platform.Platform;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.Constants;
@@ -167,7 +170,7 @@ public class LoadService {
         private static final String[] allSuffixes;
 
         static {                // compute based on platform
-            extensionSuffixes = new String[2];
+            extensionSuffixes = new String[3];
             extensionSuffixes[0] = ".jar";
             if (Platform.IS_WINDOWS) {
                 extensionSuffixes[1] = ".dll";
@@ -176,6 +179,7 @@ public class LoadService {
             } else {
                 extensionSuffixes[1] = ".so";
             }
+            extensionSuffixes[2] = ".jar.rb";
             allSuffixes = new String[sourceSuffixes.length + extensionSuffixes.length];
             System.arraycopy(sourceSuffixes, 0, allSuffixes, 0, sourceSuffixes.length);
             System.arraycopy(extensionSuffixes, 0, allSuffixes, sourceSuffixes.length, extensionSuffixes.length);
@@ -245,22 +249,22 @@ public class LoadService {
         // wrap in try/catch for security exceptions in an applet
         try {
             if (jrubyHome != null) {
-                char sep = '/';
-                String rubyDir = jrubyHome + sep + "lib" + sep + "ruby" + sep;
-
-                if (runtime.is1_9()) {
-                    // shared lib
-                    addPath(rubyDir + "shared");
-
-                    // MRI standard lib
-                    addPath(rubyDir + Constants.RUBY1_9_MAJOR_VERSION);
-                } else {
-                    // shared lib
-                    addPath(rubyDir + "shared");
-
-                    // MRI standard lib
-                    addPath(rubyDir + Constants.RUBY_MAJOR_VERSION);
+                // siteDir has to come first, because rubygems insert paths after it
+                // and we must to prefer Gems to rubyLibDir/rubySharedLibDir (same as MRI)
+                addPath(RbConfigLibrary.getSiteDir(runtime));
+                // if vendorDirGeneral is different than siteDirGeneral,
+                // add vendorDir, too
+                // adding {vendor,site}{Lib,Arch}Dir dirs is not necessary,
+                // since they should be the same as {vendor,site}Dir
+                if (!RbConfigLibrary.isSiteVendorSame(runtime)) {
+                    addPath(RbConfigLibrary.getVendorDir(runtime));
                 }
+                String rubygemsDir = RbConfigLibrary.getRubygemsDir(runtime);
+                if (rubygemsDir != null) {
+                    addPath(rubygemsDir);
+                }
+                addPath(RbConfigLibrary.getRubySharedLibDir(runtime));
+                addPath(RbConfigLibrary.getRubyLibDir(runtime));
             }
 
         } catch(SecurityException ignore) {}
@@ -912,6 +916,8 @@ public class LoadService {
     }
 
     private static RaiseException newLoadErrorFromThrowable(Ruby runtime, String file, Throwable t) {
+        if (RubyInstanceConfig.DEBUG_PARSER) t.printStackTrace();
+        
         return runtime.newLoadError(String.format("load error: %s -- %s: %s", file, t.getClass().getName(), t.getMessage()));
     }
 
@@ -1107,13 +1113,16 @@ public class LoadService {
             for (String suffix : suffixType.getSuffixes()) {
                 String namePlusSuffix = baseName + suffix;
                 try {
-                    URL url = new URL(namePlusSuffix);
+                    URI resourceUri = new URI("jar", namePlusSuffix.substring(4), null);
+                    URL url = resourceUri.toURL();
                     debugLogTry("resourceFromJarURL", url.toString());
                     if (url.openStream() != null) {
                         foundResource = new LoadServiceResource(url, namePlusSuffix);
                         debugLogFound(foundResource);
                     }
                 } catch (FileNotFoundException e) {
+                } catch (URISyntaxException e) {
+                    throw runtime.newIOError(e.getMessage());
                 } catch (MalformedURLException e) {
                     throw runtime.newIOErrorFromException(e);
                 } catch (IOException e) {
@@ -1134,9 +1143,14 @@ public class LoadService {
 
                     debugLogTry("resourceFromJarURL", expandedFilename.toString());
                     if(file.getJarEntry(expandedFilename) != null) {
-                        foundResource = new LoadServiceResource(new URL("jar:file:" + jarFile + "!/" + expandedFilename), namePlusSuffix);
+                        URI resourceUri = new URI("jar", "file:" + jarFile + "!/" + expandedFilename, null);
+                        foundResource = new LoadServiceResource(resourceUri.toURL(), namePlusSuffix);
                         debugLogFound(foundResource);
                     }
+                } catch (URISyntaxException e) {
+                    throw runtime.newIOError(e.getMessage());
+                } catch (MalformedURLException e) {
+                    throw runtime.newIOErrorFromException(e);
                 } catch(Exception e) {}
                 if (foundResource != null) {
                     state.loadName = resolveLoadName(foundResource, namePlusSuffix);
@@ -1253,9 +1267,11 @@ public class LoadService {
             debugLogTry("resourceFromJarURLWithLoadPath", current.getName() + "!/" + canonicalEntry);
             if (current.getJarEntry(canonicalEntry) != null) {
                 try {
-                    String resourceUrl = "jar:file:" + jarFileName + "!/" + canonicalEntry;
-                    foundResource = new LoadServiceResource(new URL(resourceUrl), resourceUrl);
+                    URI resourceUri = new URI("jar", "file:" + jarFileName + "!/" + canonicalEntry, null);
+                    foundResource = new LoadServiceResource(resourceUri.toURL(), resourceUri.toString());
                     debugLogFound(foundResource);
+                } catch (URISyntaxException e) {
+                    throw runtime.newIOError(e.getMessage());
                 } catch (MalformedURLException e) {
                     throw runtime.newIOErrorFromException(e);
                 }
@@ -1487,6 +1503,13 @@ public class LoadService {
                     (loc.getProtocol().equals("jar") || loc.getProtocol().equals("file"))
                     && isRequireable(loc)) {
                 path = getPath(loc);
+                // On windows file: urls converted to names will return /C:/foo from
+                // getPath versus C:/foo.  Since getPath is used in a million places
+                // putting the newFile.getPath broke some file with-in Jar loading. 
+                // So I moved it to only this site.
+                if (Platform.IS_WINDOWS && loc.getProtocol().equals("file")) {
+                    path = new File(path).getPath();
+                }
             }
             LoadServiceResource foundResource = new LoadServiceResource(loc, path);
             debugLogFound(foundResource);

@@ -38,10 +38,12 @@ import org.jruby.RubyClass;
 import org.jruby.RubyFixnum;
 import org.jruby.RubyKernel;
 import org.jruby.RubyModule;
+import org.jruby.RubyObject;
 import org.jruby.RubyRegexp;
 import org.jruby.RubyThread;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.exceptions.RaiseException;
+import org.jruby.internal.runtime.methods.JavaMethod;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
@@ -112,8 +114,9 @@ public class Timeout implements Library {
 
         final RubyThread currentThread = context.getThread();
         final AtomicBoolean latch = new AtomicBoolean(false);
-        
-        Runnable timeoutRunnable = prepareRunnable(currentThread, runtime, latch);
+
+        IRubyObject id = new RubyObject(runtime, runtime.getObject());
+        Runnable timeoutRunnable = prepareRunnable(currentThread, runtime, latch, id);
         Future timeoutFuture = null;
 
         try {
@@ -126,7 +129,7 @@ public class Timeout implements Library {
                 killTimeoutThread(context, timeoutFuture, latch);
             }
         } catch (RaiseException re) {
-            if (re.getException().getMetaClass() == runtime.getClassFromPath("Timeout::AnonymousException")) {
+            if (re.getException().getInternalVariable("__identifier__") == id) {
                 return raiseTimeoutError(context, re);
             } else {
                 throw re;
@@ -148,11 +151,14 @@ public class Timeout implements Library {
             return raiseBecauseCritical(context);
         }
 
-        final IRubyObject exception = exceptionType.isNil() ? runtime.getClassFromPath("Timeout::AnonymousException") : exceptionType;
         final RubyThread currentThread = context.getThread();
         final AtomicBoolean latch = new AtomicBoolean(false);
-        
-        Runnable timeoutRunnable = prepareRunnableWithException(currentThread, exception, runtime, latch);
+
+        IRubyObject id = new RubyObject(runtime, runtime.getObject());
+        RubyClass anonException = (RubyClass)runtime.getClassFromPath("Timeout::AnonymousException");
+        Runnable timeoutRunnable = exceptionType.isNil() ?
+                prepareRunnable(currentThread, runtime, latch, id) :
+                prepareRunnableWithException(currentThread, exceptionType, runtime, latch);
         Future timeoutFuture = null;
 
         try {
@@ -166,10 +172,13 @@ public class Timeout implements Library {
             }
         } catch (RaiseException re) {
             // if it's the exception we're expecting
-            if (re.getException().getMetaClass() == exception) {
-                // and we were given a specific exception
+            if (re.getException().getMetaClass() == anonException) {
+                // and we were not given a specific exception
                 if (exceptionType.isNil()) {
-                    return raiseTimeoutError(context, re);
+                    // and it's the exception intended for us
+                    if (re.getException().getInternalVariable("__identifier__") == id) {
+                        return raiseTimeoutError(context, re);
+                    }
                 }
             }
 
@@ -178,11 +187,16 @@ public class Timeout implements Library {
         }
     }
 
-    private static Runnable prepareRunnable(final RubyThread currentThread, final Ruby runtime, final AtomicBoolean latch) {
+    private static Runnable prepareRunnable(final RubyThread currentThread, final Ruby runtime, final AtomicBoolean latch, final IRubyObject id) {
         Runnable timeoutRunnable = new Runnable() {
             public void run() {
                 if (latch.compareAndSet(false, true)) {
-                    raiseInThread(runtime, currentThread, runtime.getClassFromPath("Timeout::AnonymousException"));
+                    if (currentThread.alive_p().isTrue()) {
+                        RubyClass anonException = (RubyClass)runtime.getClassFromPath("Timeout::AnonymousException");
+                        IRubyObject anonExceptionObj = anonException.newInstance(runtime.getCurrentContext(), runtime.newString("execution expired"), Block.NULL_BLOCK);
+                        anonExceptionObj.getInternalVariables().setInternalVariable("__identifier__", id);
+                        currentThread.internalRaise(new IRubyObject[] {anonExceptionObj});
+                    }
                 }
             }
         };
@@ -193,7 +207,9 @@ public class Timeout implements Library {
         Runnable timeoutRunnable = new Runnable() {
             public void run() {
                 if (latch.compareAndSet(false, true)) {
-                    raiseInThread(runtime, currentThread, exception);
+                    if (currentThread.alive_p().isTrue()) {
+                        currentThread.internalRaise(new IRubyObject[]{exception, runtime.newString("execution expired")});
+                    }
                 }
             }
         };
@@ -217,12 +233,6 @@ public class Timeout implements Library {
 
             // poll to propagate exception from child thread
             context.pollThreadEvents();
-        }
-    }
-    
-    private static void raiseInThread(Ruby runtime, RubyThread currentThread, IRubyObject exception) {
-        if (currentThread.alive_p().isTrue()) {
-            currentThread.internalRaise(new IRubyObject[]{exception, runtime.newString("execution expired")});
         }
     }
 

@@ -58,11 +58,11 @@ import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ClassIndex;
-import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.invokedynamic.MethodNames;
 import org.jruby.runtime.marshal.MarshalStream;
 import org.jruby.runtime.marshal.UnmarshalStream;
 import org.jruby.util.TypeConverter;
@@ -70,7 +70,7 @@ import org.jruby.util.RecursiveComparator;
 
 import static org.jruby.CompatVersion.*;
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.HASH;
+import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
 
 // Design overview:
 //
@@ -210,6 +210,13 @@ public class RubyHash extends RubyObject implements Map {
     /** rb_hash_new
      *
      */
+    public static final RubyHash newSmallHash(Ruby runtime) {
+        return new RubyHash(runtime, 1);
+    }
+
+    /** rb_hash_new
+     *
+     */
     public static final RubyHash newHash(Ruby runtime, Map valueMap, IRubyObject defaultValue) {
         assert defaultValue != null;
 
@@ -238,6 +245,10 @@ public class RubyHash extends RubyObject implements Map {
         alloc();
     }
 
+    public RubyHash(Ruby runtime, int buckets) {
+        this(runtime, runtime.getNil(), buckets);
+    }
+
     public RubyHash(Ruby runtime) {
         this(runtime, runtime.getNil());
     }
@@ -246,6 +257,12 @@ public class RubyHash extends RubyObject implements Map {
         super(runtime, runtime.getHash());
         this.ifNone = defaultValue;
         alloc();
+    }
+
+    public RubyHash(Ruby runtime, IRubyObject defaultValue, int buckets) {
+        super(runtime, runtime.getHash());
+        this.ifNone = defaultValue;
+        alloc(buckets);
     }
 
     /*
@@ -274,6 +291,13 @@ public class RubyHash extends RubyObject implements Map {
         generation++;
         head.nextAdded = head.prevAdded = head;
         table = new RubyHashEntry[MRI_HASH_RESIZE ? MRI_INITIAL_CAPACITY : JAVASOFT_INITIAL_CAPACITY];
+    }
+
+    private final void alloc(int buckets) {
+        threshold = INITIAL_THRESHOLD;
+        generation++;
+        head.nextAdded = head.prevAdded = head;
+        table = new RubyHashEntry[buckets];
     }
 
     /* ============================
@@ -474,8 +498,17 @@ public class RubyHash extends RubyObject implements Map {
         internalPut(key, value, true);
     }
 
+    private final void internalPutSmall(final IRubyObject key, final IRubyObject value) {
+        internalPutSmall(key, value, true);
+    }
+
     protected void internalPut(final IRubyObject key, final IRubyObject value, final boolean checkForExisting) {
         checkResize();
+
+        internalPutSmall(key, value, checkForExisting);
+    }
+
+    protected void internalPutSmall(final IRubyObject key, final IRubyObject value, final boolean checkForExisting) {
         final int hash = hashValue(key.hashCode());
         final int i = bucketIndex(hash, table.length);
 
@@ -704,7 +737,7 @@ public class RubyHash extends RubyObject implements Map {
      *
      */
     public void modify() {
-    	testFrozen("hash");
+    	testFrozen("Hash");
     }
 
     /** inspect_hash
@@ -874,12 +907,28 @@ public class RubyHash extends RubyObject implements Map {
       }
     }
 
+    public final void fastASetSmallCheckString(Ruby runtime, IRubyObject key, IRubyObject value) {
+        if (key instanceof RubyString) {
+            op_asetSmallForString(runtime, (RubyString) key, value);
+        } else {
+            internalPutSmall(key, value);
+        }
+    }
+
     public final void fastASetCheckString19(Ruby runtime, IRubyObject key, IRubyObject value) {
       if (key.getMetaClass().getRealClass() == runtime.getString()) {
           op_asetForString(runtime, (RubyString) key, value);
       } else {
           internalPut(key, value);
       }
+    }
+
+    public final void fastASetSmallCheckString19(Ruby runtime, IRubyObject key, IRubyObject value) {
+        if (key.getMetaClass().getRealClass() == runtime.getString()) {
+            op_asetSmallForString(runtime, (RubyString) key, value);
+        } else {
+            internalPutSmall(key, value);
+        }
     }
 
     @Deprecated
@@ -920,6 +969,20 @@ public class RubyHash extends RubyObject implements Map {
         }
     }
 
+    protected void op_asetSmallForString(Ruby runtime, RubyString key, IRubyObject value) {
+        final RubyHashEntry entry = internalGetEntry(key);
+        if (entry != NO_ENTRY) {
+            entry.value = value;
+        } else {
+            checkIterating();
+            if (!key.isFrozen()) {
+                key = key.strDup(runtime, key.getMetaClass().getRealClass());
+                key.setFrozen(true);
+            }
+            internalPutSmall(key, value, false);
+        }
+    }
+
     /**
      * Note: this is included as a compatibility measure for AR-JDBC
      * @deprecated use RubyHash.op_aset instead
@@ -940,7 +1003,7 @@ public class RubyHash extends RubyObject implements Map {
         return internalGet(key);
     }
 
-    public RubyBoolean compare(final ThreadContext context, final int method, IRubyObject other) {
+    public RubyBoolean compare(final ThreadContext context, final MethodNames method, IRubyObject other) {
 
         Ruby runtime = context.runtime;
 
@@ -965,11 +1028,13 @@ public class RubyHash extends RubyObject implements Map {
 
                     if (value2 == null) {
                         // other hash does not contain key
-                        throw new Mismatch();
+                        throw MISMATCH;
                     }
 
-                    if (!invokedynamic(context, value, method, value2).isTrue()) {
-                        throw new Mismatch();
+                    if (!(method == MethodNames.OP_EQUAL ?
+                            RuntimeHelpers.rbEqual(context, value, value2) :
+                            RuntimeHelpers.rbEql(context, value, value2)).isTrue()) {
+                        throw MISMATCH;
                     }
                 }
             });
@@ -985,7 +1050,7 @@ public class RubyHash extends RubyObject implements Map {
      */
     @JRubyMethod(name = "==")
     public IRubyObject op_equal(final ThreadContext context, IRubyObject other) {
-        return RecursiveComparator.compare(context, MethodIndex.OP_EQUAL, this, other);
+        return RecursiveComparator.compare(context, MethodNames.OP_EQUAL, this, other);
     }
 
     /** rb_hash_eql
@@ -993,7 +1058,7 @@ public class RubyHash extends RubyObject implements Map {
      */
     @JRubyMethod(name = "eql?")
     public IRubyObject op_eql19(final ThreadContext context, IRubyObject other) {
-        return RecursiveComparator.compare(context, MethodIndex.EQL, this, other);
+        return RecursiveComparator.compare(context, MethodNames.EQL, this, other);
     }
 
     /** rb_hash_aref
@@ -1388,6 +1453,7 @@ public class RubyHash extends RubyObject implements Map {
      */
 
     private static class Mismatch extends RuntimeException {}
+    private static final Mismatch MISMATCH = new Mismatch();
 
     /** rb_hash_shift
      *

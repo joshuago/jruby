@@ -39,6 +39,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.lang.NumberFormatException;
+import java.math.BigDecimal;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -62,7 +64,9 @@ import org.jruby.runtime.Constants;
 import org.jruby.runtime.backtrace.TraceType;
 import org.jruby.runtime.load.LoadService;
 import org.jruby.runtime.load.LoadService19;
+import org.jruby.runtime.profile.ProfileOutput;
 import org.jruby.util.ClassCache;
+import org.jruby.util.InputStreamMarkCursor;
 import org.jruby.util.JRubyFile;
 import org.jruby.util.KCode;
 import org.jruby.util.NormalizedFile;
@@ -220,16 +224,56 @@ public class RubyInstanceConfig {
             // ignore and do nothing
         }
     }
+    
+    // This method does not work like previous version in verifying it is
+    // a Ruby shebang line.  Looking for ruby before \n is possible to add,
+    // but I wanted to keep this short.
+    private boolean isShebang(InputStreamMarkCursor cursor) throws IOException {
+        if (cursor.read() == '#') {
+            int c = cursor.read();
+            if (c == '!') {
+                cursor.endPoint(-2);
+                return true;
+            } else if (c == '\n') {
+                cursor.rewind();
+            }
+        } else {
+            cursor.rewind();
+        }
+        
+        return false;
+    }
+    
+    private boolean skipToNextLine(InputStreamMarkCursor cursor) throws IOException {
+        int c = cursor.read();
+        do {
+            if (c == '\n') return true;
+        } while ((c = cursor.read()) != -1);
+        
+        return false;
+    }
 
+    private void eatToShebang(InputStream in) {
+        InputStreamMarkCursor cursor = new InputStreamMarkCursor(in, 8192);
+        try {
+            do {
+                if (isShebang(cursor)) break;
+            } while (skipToNextLine(cursor));
+        } catch (IOException e) {
+        } finally {
+            try { cursor.finish(); } catch (IOException e) {}
+        }
+    }
+    
     /**
      * The intent here is to gather up any options that might have
      * been specified in the shebang line and return them so they can
-     * be merged into the ones specified on the commandline.  This is
+     * be merged into the ones specified on the command-line.  This is
      * kind of a hopeless task because it's impossible to figure out
      * where the command invocation stops and the parameters start.
      * We try to work with the common scenarios where /usr/bin/env is
-     * used to invoke the jruby shell script, and skip any parameters
-     * it might have.  Then we look for the interpreter invokation and
+     * used to invoke the JRuby shell script, and skip any parameters
+     * it might have.  Then we look for the interpreter invocation and
      * assume that the binary will have the word "ruby" in the name.
      * This is error prone but should cover more cases than the
      * previous code.
@@ -238,19 +282,20 @@ public class RubyInstanceConfig {
         BufferedReader reader = null;
         String[] result = new String[0];
         if (in == null) return result;
+        
+        if (isXFlag()) eatToShebang(in);
+        
         try {
-            in.mark(1024);
+            InputStreamMarkCursor cursor = new InputStreamMarkCursor(in, 8192);
+            try {
+                if (!isShebang(cursor)) return result;
+            } finally {
+                cursor.finish();
+            }
+
+            in.mark(8192);
             reader = new BufferedReader(new InputStreamReader(in, "iso-8859-1"), 8192);
             String firstLine = reader.readLine();
-
-            // Search for the shebang line in the given stream
-            // if it wasn't found on the first line and the -x option
-            // was specified
-            if (isXFlag()) {
-                while (firstLine != null && !isRubyShebangLine(firstLine)) {
-                    firstLine = reader.readLine();
-                }
-            }
 
             boolean usesEnv = false;
             if (firstLine.length() > 2 && firstLine.charAt(0) == '#' && firstLine.charAt(1) == '!') {
@@ -263,17 +308,13 @@ public class RubyInstanceConfig {
                         continue;
                     }
                     // Skip any assignments if /usr/bin/env is in play
-                    if (usesEnv && options[i].indexOf('=') > 0) {
-                        continue;
-                    }
+                    if (usesEnv && options[i].indexOf('=') > 0) continue;
+
                     // Skip any commandline args if /usr/bin/env is in play
-                    if (usesEnv && options[i].startsWith("-")) {
-                        continue;
-                    }
+                    if (usesEnv && options[i].startsWith("-")) continue;
+
                     String basename = (new File(options[i])).getName();
-                    if (basename.indexOf("ruby") > 0) {
-                        break;
-                    }
+                    if (basename.indexOf("ruby") > 0) break;
                 }
                 setHasShebangLine(true);
                 System.arraycopy(options, i, result, 0, options.length - i);
@@ -621,6 +662,14 @@ public class RubyInstanceConfig {
     public boolean isObjectSpaceEnabled() {
         return objectSpaceEnabled;
     }
+    
+    public void setSiphashEnabled(boolean newSiphashEnabled) {
+        siphashEnabled = newSiphashEnabled;
+    }
+    
+    public boolean isSiphashEnabled() {
+        return siphashEnabled;
+    }
 
     public void setEnvironment(Map newEnvironment) {
         if (newEnvironment == null) newEnvironment = new HashMap();
@@ -962,6 +1011,14 @@ public class RubyInstanceConfig {
         return profilingMode;
     }
 
+    public void setProfileOutput(ProfileOutput output) {
+        this.profileOutput = output;
+    }
+
+    public ProfileOutput getProfileOutput() {
+        return profileOutput;
+    }
+
     public boolean hasShebangLine() {
         return hasShebangLine;
     }
@@ -1147,6 +1204,7 @@ public class RubyInstanceConfig {
     private PrintStream error          = System.err;
     private Profile profile            = Profile.DEFAULT;
     private boolean objectSpaceEnabled = Options.OBJECTSPACE_ENABLED.load();
+    private boolean siphashEnabled     = Options.SIPHASH_ENABLED.load();
 
     private CompileMode compileMode = CompileMode.JIT;
     private boolean runRubyInProcess   = true;
@@ -1170,6 +1228,7 @@ public class RubyInstanceConfig {
     private String externalEncoding = null;
 		
     private ProfilingMode profilingMode = ProfilingMode.OFF;
+    private ProfileOutput profileOutput = new ProfileOutput(System.err);
     
     private ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
     private ClassLoader loader = contextLoader == null ? RubyInstanceConfig.class.getClassLoader() : contextLoader;
@@ -1260,7 +1319,7 @@ public class RubyInstanceConfig {
     }
 
     public enum ProfilingMode {
-		OFF, API, FLAT, GRAPH, HTML
+		OFF, API, FLAT, GRAPH, HTML, JSON
 	}
 
     public enum CompileMode {
@@ -1269,10 +1328,6 @@ public class RubyInstanceConfig {
         public boolean shouldPrecompileCLI() {
             switch (this) {
             case JIT: case FORCE: case FORCEIR:
-                if (DYNOPT_COMPILE_ENABLED) {
-                    // don't precompile the CLI script in dynopt mode
-                    return false;
-                }
                 return true;
             }
             return false;
@@ -1336,12 +1391,6 @@ public class RubyInstanceConfig {
      * Set with the <tt>jruby.compile.peephole</tt> system property.
      */
     public static final boolean PEEPHOLE_OPTZ = Options.COMPILE_PEEPHOLE.load();
-    /**
-     * Enable "dynopt" optimizations.
-     *
-     * Set with the <tt>jruby.compile.dynopt</tt> system property.
-     */
-    public static boolean DYNOPT_COMPILE_ENABLED = Options.COMPILE_DYNOPT.load();
 
     /**
      * Enable compiler "noguards" optimizations.
@@ -1513,6 +1562,8 @@ public class RubyInstanceConfig {
      */
     public static final boolean DEBUG_SCRIPT_RESOLUTION = Options.DEBUG_SCRIPTRESOLUTION.load();
 
+    public static final boolean DEBUG_PARSER = Options.DEBUG_PARSER.load();
+
     public static final boolean JUMPS_HAVE_BACKTRACE = Options.JUMP_BACKTRACE.load();
 
     public static final boolean JIT_CACHE_ENABLED = Options.JIT_CACHE.load();
@@ -1535,26 +1586,7 @@ public class RubyInstanceConfig {
     public static final boolean UPPER_CASE_PACKAGE_NAME_ALLOWED = Options.JI_UPPER_CASE_PACKAGE_NAME_ALLOWED.load();
     
     
-    public static final boolean USE_INVOKEDYNAMIC;
-    static {
-        boolean isHotspot =
-                SafePropertyAccessor.getProperty("java.vm.name", "").toLowerCase().contains("hotspot") ||
-                        SafePropertyAccessor.getProperty("java.vm.name", "").toLowerCase().contains("openjdk");
-
-        String version = SafePropertyAccessor.getProperty("java.specification.version", "1.6");
-        
-        if (isHotspot && version.equals("1.7")) {
-            // if on OpenJDK 7, on by default unless turned off
-            // TODO: turned off temporarily due to the lack of 100% working OpenJDK7 indy support
-            USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load() && Options.COMPILE_INVOKEDYNAMIC.isSpecified();
-        } else if (isHotspot && version.equals("1.8")) {
-            // OpenJDK 8 will have the new 100% working logic soon, so we enable by default
-            USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load();
-        } else {
-            // if not on Java 7, on only if explicitly turned on
-            USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load() && Options.COMPILE_INVOKEDYNAMIC.isSpecified();
-        }
-    }
+    public static final boolean USE_INVOKEDYNAMIC = Options.COMPILE_INVOKEDYNAMIC.load();
     
     // max times an indy call site can fail before it goes to simple IC
     public static final int MAX_FAIL_COUNT = Options.INVOKEDYNAMIC_MAXFAIL.load();

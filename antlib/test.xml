@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project basedir="..">
     <import file="../build.xml"/>
+    
+    <regexp id="no-maxperm-java-versions" pattern="^1\.8"/>
+    <condition property="maxpermgen.arg" value="-XX:MaxPermSize=${jruby.test.memory.permgen}">
+      <not>
+        <matches string="${java.version}">
+          <regexp refid="no-maxperm-java-versions"/>
+        </matches>
+      </not>
+    </condition>
+    <condition property="maxpermgen.arg" value="">
+      <matches string="${java.version}">
+        <regexp refid="no-maxperm-java-versions"/>
+      </matches>
+    </condition>
 
 	<target name="compile-test" depends="jar" description="Compile the unit tests">
         <javac destdir="${test.classes.dir}" deprecation="true" encoding="UTF-8" debug="true"
@@ -142,7 +156,7 @@
 
         <element name="junit-tests"/>
         <sequential>
-            <echo message="compile=@{compile.mode}, jit.threshold=@{jit.threshold}, jit.maxsize=@{jit.maxsize}, jit.max=@{jit.max}, objectspace=@{objectspace.enabled} threadpool=@{thread.pooling} reflection=@{reflection} version=@{jruby.version}"/>
+          <echo message="compile=@{compile.mode}, jit.threshold=@{jit.threshold}, jit.maxsize=@{jit.maxsize}, jit.max=@{jit.max}, objectspace=@{objectspace.enabled} threadpool=@{thread.pooling} reflection=@{reflection} version=@{jruby.version} maxpermgen.arg=${maxpermgen.arg} ant.version=${ant.version} java.version=${java.version}"/>
             <taskdef name="junit" classname="org.apache.tools.ant.taskdefs.optional.junit.JUnitTask"
                      classpath="${build.lib.dir}/junit.jar"/>
 
@@ -176,7 +190,7 @@
 
                 <!-- force client VM to improve test run times AND -->
                 <!-- set a larger max permgen, since the tests load a lot of bytecode -->
-                <jvmarg line="-ea ${java.opts} -client -XX:MaxPermSize=${jruby.test.memory.permgen}"/>
+                <jvmarg line="-ea ${java.opts} -client ${maxpermgen.arg}"/>
 
                 <!-- additional flags -->
                 <jvmarg line="@{jvm.flags}"/>

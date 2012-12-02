@@ -20,6 +20,7 @@ module Psych
         @st       = {}
         @ss       = ss
         @options  = options
+        @coders   = []
 
         @dispatch_cache = Hash.new do |h,klass|
           method = "visit_#{(klass.name || '').split('::').join('_')}"
@@ -46,6 +47,7 @@ module Psych
 
       def tree
         finish unless finished?
+        @emitter.root
       end
 
       def push object
@@ -64,7 +66,7 @@ module Psych
 
         @emitter.start_document version, [], false
         accept object
-        @emitter.end_document
+        @emitter.end_document !@emitter.streaming?
       end
       alias :<< :push
 
@@ -145,8 +147,8 @@ module Psych
         @emitter.start_mapping nil, tag, false, Nodes::Mapping::BLOCK
 
         {
-          'message'   => private_iv_get(o, 'mesg'),
-          'backtrace' => private_iv_get(o, 'backtrace'),
+          'message'   => private_iv_get(o, 'mesg') || o.message,
+          'backtrace' => private_iv_get(o, 'backtrace' || o.backtrace),
         }.each do |k,v|
           next unless v
           @emitter.scalar k, nil, nil, true, false, Nodes::Scalar::ANY
@@ -229,15 +231,18 @@ module Psych
         plain = false
         quote = false
         style = Nodes::Scalar::ANY
+        tag   = nil
+        str   = o
 
         if binary?(o)
           str   = [o].pack('m').chomp
           tag   = '!binary' # FIXME: change to below when syck is removed
           #tag   = 'tag:yaml.org,2002:binary'
           style = Nodes::Scalar::LITERAL
+        elsif o =~ /\n/
+          quote = true
+          style = Nodes::Scalar::LITERAL
         else
-          str   = o
-          tag   = nil
           quote = !(String === @ss.tokenize(o))
           plain = !quote
         end
@@ -253,7 +258,7 @@ module Psych
           maptag = '!ruby/string'
           maptag << ":#{o.class}" unless o.class == ::String
 
-          @emitter.start_mapping nil, maptag, false, Nodes::Mapping::BLOCK
+          register o, @emitter.start_mapping(nil, maptag, false, Nodes::Mapping::BLOCK)
           @emitter.scalar 'str', nil, nil, true, false, Nodes::Scalar::ANY
           @emitter.scalar str, nil, tag, plain, quote, style
 
@@ -406,6 +411,7 @@ module Psych
       end
 
       def dump_coder o
+        @coders << o
         tag = Psych.dump_tags[o.class]
         unless tag
           klass = o.class == Object ? nil : o.class.name

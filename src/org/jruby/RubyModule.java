@@ -1006,10 +1006,8 @@ public class RubyModule extends RubyObject {
                 }
                 current = ((WrapperCacheEntryFactory)current).getPrevious();
             }
-            if (cacheEntryFactoryClass.isAssignableFrom(current.getClass())) {
-                return true;
-            }
-            return false;
+
+            return cacheEntryFactoryClass.isAssignableFrom(current.getClass());
         }
     }
 
@@ -1154,9 +1152,9 @@ public class RubyModule extends RubyObject {
     }
 
     /**
-     * Search through this module and supermodules for method definitions. Cache superclass definitions in this class.
+     * Find the given class in this hierarchy, considering modules along the way.
      * 
-     * @param name The name of the method to search for
+     * @param clazz the class to find
      * @return The method, or UndefinedMethod if not found
      */
     public RubyModule findImplementer(RubyModule clazz) {
@@ -1209,30 +1207,9 @@ public class RubyModule extends RubyObject {
      */
     public synchronized void defineAlias(String name, String oldName) {
         testFrozen("module");
-        if (oldName.equals(name)) {
-            return;
-        }
-        Ruby runtime = getRuntime();
+        if (oldName.equals(name)) return;
 
-        // JRUBY-2435: Aliasing eval and other "special" methods should display a warning
-        // We warn because we treat certain method names as "special" for purposes of
-        // optimization. Hopefully this will be enough to convince people not to alias
-        // them.
-        if (SCOPE_CAPTURING_METHODS.contains(oldName)) {
-            runtime.getWarnings().warn("`" + oldName + "' should not be aliased");
-        }
-
-        DynamicMethod method = searchMethod(oldName);
-        if (method.isUndefined()) {
-            if (isModule()) {
-                method = runtime.getObject().searchMethod(oldName);
-            }
-
-            if (method.isUndefined()) {
-                throw runtime.newNameError("undefined method `" + oldName + "' for " +
-                        (isModule() ? "module" : "class") + " `" + getName() + "'", oldName);
-            }
-        }
+        DynamicMethod method = searchForAliasMethod(getRuntime(), oldName);
 
         putMethod(name, new AliasMethod(this, method, oldName));
 
@@ -1242,27 +1219,28 @@ public class RubyModule extends RubyObject {
 
     public synchronized void defineAliases(List<String> aliases, String oldName) {
         testFrozen("module");
-        Ruby runtime = getRuntime();
-
-        DynamicMethod method = searchMethod(oldName);
-        if (method.isUndefined()) {
-            if (isModule()) {
-                method = runtime.getObject().searchMethod(oldName);
-            }
-
-            if (method.isUndefined()) {
-                throw runtime.newNameError("undefined method `" + oldName + "' for " +
-                        (isModule() ? "module" : "class") + " `" + getName() + "'", oldName);
-            }
-        }
+        DynamicMethod method = searchForAliasMethod(getRuntime(), oldName);
 
         for (String name: aliases) {
             if (oldName.equals(name)) continue;
 
             putMethod(name, new AliasMethod(this, method, oldName));
         }
+        
         invalidateCoreClasses();
         invalidateCacheDescendants();
+    }
+    
+    private DynamicMethod searchForAliasMethod(Ruby runtime, String name) {
+        // JRUBY-2435: Aliasing eval and other "special" methods should display a warning
+        // We warn because we treat certain method names as "special" for purposes of
+        // optimization. Hopefully this will be enough to convince people not to alias
+        // them.
+        if (SCOPE_CAPTURING_METHODS.contains(name)) {
+            runtime.getWarnings().warn("`" + name + "' should not be aliased");
+        }  
+      
+        return deepMethodSearch(name, runtime);
     }
 
     /** this method should be used only by interpreter or compiler 
@@ -1426,22 +1404,6 @@ public class RubyModule extends RubyObject {
             return !(checkVisibility && method.getVisibility() == PRIVATE);
         }
         return false;
-    }
-
-    public void checkMethodBound(ThreadContext context, IRubyObject[] args, Visibility visibility) {
-        if (args.length == 0) {
-            throw context.runtime.newArgumentError("no method name given");
-        }
-        String name = args[0].asJavaString();
-
-        DynamicMethod method = searchMethod(name);
-        if (!method.isUndefined() && method.getVisibility() != visibility) {
-            Ruby runtime = context.runtime;
-            RubyNameError.RubyNameErrorMessage message = new RubyNameError.RubyNameErrorMessage(runtime, this,
-                    runtime.newString(name), method.getVisibility(), CallType.NORMAL);
-
-            throw runtime.newNoMethodError(message.to_str(context).asJavaString(), name, NEVER);
-        }
     }
 
     public IRubyObject newMethod(IRubyObject receiver, String methodName, boolean bound, Visibility visibility) {
@@ -2316,7 +2278,7 @@ public class RubyModule extends RubyObject {
         return this;
     }
 
-    @JRubyMethod(name = "undef_method", required = 1, rest = true, visibility = PRIVATE)
+    @JRubyMethod(name = "undef_method", rest = true, visibility = PRIVATE)
     public RubyModule undef_method(ThreadContext context, IRubyObject[] args) {
         for (int i=0; i<args.length; i++) {
             undef(context, args[i].asJavaString());
@@ -2363,7 +2325,7 @@ public class RubyModule extends RubyObject {
         }
     }
 
-    @JRubyMethod(name = "remove_method", required = 1, rest = true, visibility = PRIVATE)
+    @JRubyMethod(name = "remove_method", rest = true, visibility = PRIVATE)
     public RubyModule remove_method(ThreadContext context, IRubyObject[] args) {
         for(int i=0;i<args.length;i++) {
             removeMethod(context, args[i].asJavaString());
@@ -2622,12 +2584,33 @@ public class RubyModule extends RubyObject {
     }
 
     @JRubyMethod(name = "const_get", required = 1, optional = 1, compat = CompatVersion.RUBY1_9)
-    public IRubyObject const_get(ThreadContext context, IRubyObject[] args) {
+    public IRubyObject const_get_1_9(ThreadContext context, IRubyObject[] args) {
         IRubyObject symbol = args[0];
         boolean inherit = args.length == 1 || (!args[1].isNil() && args[1].isTrue());
 
         // 1.9 only includes Object when inherit = true or unspecified (JRUBY-6224)
         return getConstant(validateConstant(symbol.asJavaString()), inherit, inherit);
+    }
+
+    @JRubyMethod(name = "const_get", required = 1, optional = 1, compat = CompatVersion.RUBY2_0)
+    public IRubyObject const_get_2_0(ThreadContext context, IRubyObject[] args) {
+        String symbol = args[0].asJavaString();
+        boolean inherit = args.length == 1 || (!args[1].isNil() && args[1].isTrue());
+
+        RubyModule mod = this;
+        int sep;
+        while((sep = symbol.indexOf("::")) != -1) {
+            String segment = symbol.substring(0, sep);
+            symbol = symbol.substring(sep + 2);
+            IRubyObject obj = mod.getConstant(validateConstant(segment), inherit, inherit);
+            if(obj instanceof RubyModule) {
+                mod = (RubyModule)obj;
+            } else {
+                throw getRuntime().newTypeError(segment + " does not refer to class/module");
+            }
+        }
+
+        return mod.getConstant(validateConstant(symbol), inherit, inherit);
     }
 
     /** rb_mod_const_set
@@ -2677,7 +2660,7 @@ public class RubyModule extends RubyObject {
     /**
      * Base implementation of Module#const_missing, throws NameError for specific missing constant.
      * 
-     * @param name The constant name which was found to be missing
+     * @param rubyName The constant name which was found to be missing
      * @return Nothing! Absolutely nothing! (though subclasses might choose to return something)
      */
     @JRubyMethod(name = "const_missing", required = 1, frame = true)
@@ -3772,15 +3755,13 @@ public class RubyModule extends RubyObject {
         }
         
         // Update an object for the constant if the caller is the autoloading thread.
-        boolean setConstant(ThreadContext ctx, IRubyObject value) {
+        boolean setConstant(ThreadContext ctx, IRubyObject newValue) {
             synchronized(ctxLock) {
-                if (this.ctx == null) {
-                    return false;
-                } else if (isSelf(ctx)) {
-                    this.value = value;
-                    return true;
-                }
-                return false;
+                boolean isSelf = isSelf(ctx);
+                
+                if (isSelf) value = newValue;
+                
+                return isSelf;
             }
         }
         
@@ -3833,6 +3814,10 @@ public class RubyModule extends RubyObject {
      */
     public void setCacheProxy(boolean cacheProxy) {
         setFlag(USER0_F, cacheProxy);
+    }
+
+    @Deprecated
+    public void checkMethodBound(ThreadContext context, IRubyObject[] args, Visibility visibility) {
     }
     
     private volatile Map<String, Autoload> autoloads = Collections.EMPTY_MAP;

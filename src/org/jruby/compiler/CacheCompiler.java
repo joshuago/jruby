@@ -38,6 +38,8 @@ public interface CacheCompiler {
 
     public void cachedGetVariable(BaseBodyCompiler method, String name);
 
+    public void cachedGetVariableDefined(BaseBodyCompiler method, String name);
+
     public void cachedSetVariable(BaseBodyCompiler method, String name, CompilerCallback value);
 
     public void cacheRegexp(BaseBodyCompiler method, ByteList pattern, int options);
@@ -53,6 +55,8 @@ public interface CacheCompiler {
     public void cacheSpecialClosure(BaseBodyCompiler method, String closureMethod);
 
     public void cacheConstant(BaseBodyCompiler method, String constantName);
+
+    public void cacheConstantDefined(BaseBodyCompiler method, String constantName);
 
     public void cacheConstantFrom(BaseBodyCompiler method, String constantName);
 

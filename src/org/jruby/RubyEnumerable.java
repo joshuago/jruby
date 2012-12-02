@@ -55,7 +55,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.TypeConverter;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.OP_CMP;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_CMP;
 
 /**
  * The implementation of Ruby's Enumerable module.
@@ -120,7 +120,7 @@ public class RubyEnumerable {
         }
     }
 
-    public static IRubyObject checkArgs(Ruby runtime, IRubyObject[]largs) { 
+    public static IRubyObject checkArgs(Ruby runtime, IRubyObject[] largs) {
         return largs.length == 0 ? runtime.getNil() : largs[0];
     }
 
@@ -281,7 +281,10 @@ public class RubyEnumerable {
                 public IRubyObject yield(ThreadContext context, IRubyObject arg) {
                     synchronized (result) {
                         if (i == 0) {
-                            result.append(arg);
+                            // While iterating over an RubyEnumerator, "arg"
+                            // gets overwritten by the new value, leading to JRUBY-6892.
+                            // So call .dup() whenever appropriate.
+                            result.append(arg.isImmediate() ? arg : arg.dup());
                         } else {
                             --i;
                         }
@@ -826,7 +829,7 @@ public class RubyEnumerable {
         final String methodId = method.asJavaString();
         final IRubyObject result[] = new IRubyObject[] { init }; 
 
-        callEach(runtime, context, self, Arity.NO_ARGUMENTS, new BlockCallback() {
+        callEach(runtime, context, self, Arity.OPTIONAL, new BlockCallback() {
             public IRubyObject call(ThreadContext ctx, IRubyObject[] largs, Block blk) {
                 IRubyObject larg = checkArgs(runtime, largs);
                 result[0] = result[0] == null ? larg : result[0].callMethod(ctx, methodId, larg);

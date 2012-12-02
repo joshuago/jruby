@@ -110,6 +110,9 @@ public class RubyMath {
     public static RubyFloat atan219(IRubyObject recv, IRubyObject x, IRubyObject y) {
         double valuea = needFloat(x).getDoubleValue();
         double valueb = needFloat(y).getDoubleValue();
+        if (Double.isInfinite(valuea) && Double.isInfinite(valueb)) {
+            throw recv.getRuntime().newMathDomainError("atan2");
+        }
         return RubyFloat.newFloat(recv.getRuntime(), Math.atan2(valuea, valueb));
     }
 
@@ -160,8 +163,10 @@ public class RubyMath {
     @JRubyMethod(name = "asin", required = 1, module = true, visibility = Visibility.PRIVATE, compat = CompatVersion.RUBY1_9)
     public static RubyFloat asin19(IRubyObject recv, IRubyObject x) {
         double value = needFloat(x).getDoubleValue();
+        if (value < -1.0 || value > 1.0) {
+            throw recv.getRuntime().newMathDomainError("asin");
+        }
         double result = Math.asin(value);
-        domainCheck(recv, result, "asin");        
         return RubyFloat.newFloat(recv.getRuntime(),result);
     }
 
@@ -176,8 +181,10 @@ public class RubyMath {
     @JRubyMethod(name = "acos", required = 1, module = true, visibility = Visibility.PRIVATE, compat = CompatVersion.RUBY1_9)
     public static RubyFloat acos19(IRubyObject recv, IRubyObject x) {
         double value = needFloat(x).getDoubleValue();
+        if (value < -1.0 || value > 1.0) {
+            throw recv.getRuntime().newMathDomainError("acos");
+        }
         double result = Math.acos(value);  
-        domainCheck(recv, result, "acos");
         return RubyFloat.newFloat(recv.getRuntime(), result);
     }
     
@@ -250,15 +257,15 @@ public class RubyMath {
     public static RubyFloat acosh19(IRubyObject recv, IRubyObject x) {
         double value = needFloat(x).getDoubleValue();
         double result;
-        if (Double.isNaN(value) || value < 1) {
+        if (Double.isNaN(value)) {
             result = Double.NaN;
+        } else if (value < 1) {
+            throw recv.getRuntime().newMathDomainError("acosh");
         } else if (value < 94906265.62) {
             result = Math.log(value + Math.sqrt(value * value - 1.0));
         } else{
             result = 0.69314718055994530941723212145818 + Math.log(value);
         }
-        
-        domainCheck(recv, result, "acosh");
         
         return RubyFloat.newFloat(recv.getRuntime(),result);
     }
@@ -361,11 +368,10 @@ public class RubyMath {
     public static RubyFloat atanh_19(IRubyObject recv, IRubyObject x) {
         double value = needFloat(x).getDoubleValue();
         double  y = Math.abs(value);
-        if (y==1.0) {
-            throw recv.getRuntime().newErrnoEDOMError("atanh");
+        if (value < -1.0 || value > 1.0) {
+            throw recv.getRuntime().newMathDomainError("atanh");
         }
         double result = atanh_common(recv, x);
-        domainCheck19(recv, result, "atanh");
         return RubyFloat.newFloat(recv.getRuntime(), result);
     }
 
@@ -415,7 +421,6 @@ public class RubyMath {
             throw recv.getRuntime().newMathDomainError(msg);
         }
         double result = Math.log(value)/Math.log(base);
-        domainCheck(recv, result, msg);
         return RubyFloat.newFloat(recv.getRuntime(),result);
     }
 
@@ -486,12 +491,13 @@ public class RubyMath {
         double result;
 
         if (value < 0) {
-            result = Double.NaN;
-        } else{
+            throw recv.getRuntime().newMathDomainError("sqrt");
+        } else if (value == 0.0) {
+            result = 0.0;
+        } else {
             result = Math.sqrt(value);
         }
-        
-        domainCheck19(recv, result, "sqrt");
+
         return RubyFloat.newFloat(recv.getRuntime(), result);
     }
     
@@ -522,6 +528,8 @@ public class RubyMath {
         } else if (valueb != 0) {
             result = valuea / valueb;
             result = Math.abs(valueb) * Math.sqrt(1 + result * result);
+        } else if (Double.isNaN(valuea) || Double.isNaN(valueb)) {
+            result = Double.NaN;
         } else {
             result = 0;
         }
@@ -540,6 +548,8 @@ public class RubyMath {
         } else if (valueb != 0) {
             result = valuea / valueb;
             result = Math.abs(valueb) * Math.sqrt(1 + result * result);
+        } else if (Double.isNaN(valuea) || Double.isNaN(valueb)) {
+            result = Double.NaN;
         } else {
             result = 0;
         }
@@ -648,6 +658,8 @@ public class RubyMath {
             result = value * (1 + chebylevSerie(2 * value * value - 1, ERFC_COEF));
         } else if (y < 6.013687357) {
             result = sign(1 - erfc(recv, RubyFloat.newFloat(recv.getRuntime(),y)).getDoubleValue(), value);
+        } else if (Double.isNaN(y)) {
+            result = Double.NaN;
         } else {
             result = sign(1, value);
         }
@@ -667,6 +679,8 @@ public class RubyMath {
             result = value * (1 + chebylevSerie(2 * value * value - 1, ERFC_COEF));
         } else if (y < 6.013687357) {
             result = sign(1 - erfc(recv, RubyFloat.newFloat(recv.getRuntime(),y)).getDoubleValue(), value);
+        } else if (Double.isNaN(y)) {
+            result = Double.NaN;
         } else {
             result = sign(1, value);
         }

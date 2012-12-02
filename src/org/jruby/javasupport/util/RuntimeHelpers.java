@@ -1,24 +1,6 @@
 package org.jruby.javasupport.util;
 
-import org.jruby.MetaClass;
-import org.jruby.NativeException;
-import org.jruby.Ruby;
-import org.jruby.RubyArray;
-import org.jruby.RubyBasicObject;
-import org.jruby.RubyBoolean;
-import org.jruby.RubyClass;
-import org.jruby.RubyException;
-import org.jruby.RubyFixnum;
-import org.jruby.RubyHash;
-import org.jruby.RubyInstanceConfig;
-import org.jruby.RubyKernel;
-import org.jruby.RubyLocalJumpError;
-import org.jruby.RubyMatchData;
-import org.jruby.RubyModule;
-import org.jruby.RubyProc;
-import org.jruby.RubyRegexp;
-import org.jruby.RubyString;
-import org.jruby.RubySymbol;
+import org.jruby.*;
 import org.jruby.ast.ArgsNode;
 import org.jruby.ast.ArgumentNode;
 import org.jruby.ast.DAsgnNode;
@@ -66,19 +48,21 @@ import org.jruby.runtime.DynamicScope;
 import org.jruby.runtime.Interpreted19Block;
 import org.jruby.runtime.InterpretedBlock;
 import org.jruby.runtime.MethodFactory;
-import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.RubyEvent;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.invokedynamic.MethodNames;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 import org.jruby.util.TypeConverter;
 import org.jruby.util.unsafe.UnsafeFactory;
 
 import java.util.ArrayList;
 import java.util.StringTokenizer;
 
-import static org.jruby.runtime.MethodIndex.OP_EQUAL;
+import static org.jruby.runtime.invokedynamic.MethodNames.EQL;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_EQUAL;
 
 /**
  * Helper methods which are called by the compiler.  Note: These will show no consumers, but
@@ -701,6 +685,10 @@ public class RuntimeHelpers {
 
         return context.getCurrentScope().getStaticScope().getConstantWithConstMissing(runtime, internedName, runtime.getObject());
     }
+
+    public static IRubyObject nullToNil(IRubyObject value, ThreadContext context) {
+        return value != null ? value : context.nil;
+    }
     
     public static IRubyObject nullToNil(IRubyObject value, Ruby runtime) {
         return value != null ? value : runtime.getNil();
@@ -797,7 +785,7 @@ public class RuntimeHelpers {
     /**
      * If it's Redo, Next, or Break, rethrow it as a normal exception for while to handle
      * @param re
-     * @param runtime
+     * @param context
      */
     public static Throwable unwrapRedoNextBreakOrJustLocalJump(RaiseException re, ThreadContext context) {
         RubyException exception = re.getException();
@@ -1016,7 +1004,10 @@ public class RuntimeHelpers {
                 runtime.getException() == catchable ||
 
                 // rescue Object needs to catch Java exceptions
-                runtime.getObject() == catchable) {
+                runtime.getObject() == catchable ||
+
+                // rescue StandardError needs t= catch Java exceptions
+                runtime.getStandardError() == catchable) {
 
             if (throwable instanceof RaiseException) {
                 return isExceptionHandled(((RaiseException)throwable).getException(), catchable, context).isTrue();
@@ -1051,9 +1042,14 @@ public class RuntimeHelpers {
         if (currentThrowable instanceof RaiseException) {
             return isExceptionHandled(((RaiseException)currentThrowable).getException(), throwables, context);
         } else {
-            for (int i = 0; i < throwables.length; i++) {
-                if (checkJavaException(currentThrowable, throwables[i], context)) {
-                    return context.runtime.getTrue();
+            if (throwables.length == 0) {
+                // no rescue means StandardError, which rescues Java exceptions
+                return context.runtime.getTrue();
+            } else {
+                for (int i = 0; i < throwables.length; i++) {
+                    if (checkJavaException(currentThrowable, throwables[i], context)) {
+                        return context.runtime.getTrue();
+                    }
                 }
             }
 
@@ -1517,6 +1513,27 @@ public class RuntimeHelpers {
         hash.fastASetCheckString(runtime, key3, value3);
         return hash;
     }
+
+    public static RubyHash constructSmallHash(Ruby runtime, IRubyObject key1, IRubyObject value1) {
+        RubyHash hash = RubyHash.newSmallHash(runtime);
+        hash.fastASetSmallCheckString(runtime, key1, value1);
+        return hash;
+    }
+
+    public static RubyHash constructSmallHash(Ruby runtime, IRubyObject key1, IRubyObject value1, IRubyObject key2, IRubyObject value2) {
+        RubyHash hash = RubyHash.newSmallHash(runtime);
+        hash.fastASetSmallCheckString(runtime, key1, value1);
+        hash.fastASetSmallCheckString(runtime, key2, value2);
+        return hash;
+    }
+
+    public static RubyHash constructSmallHash(Ruby runtime, IRubyObject key1, IRubyObject value1, IRubyObject key2, IRubyObject value2, IRubyObject key3, IRubyObject value3) {
+        RubyHash hash = RubyHash.newHash(runtime);
+        hash.fastASetSmallCheckString(runtime, key1, value1);
+        hash.fastASetSmallCheckString(runtime, key2, value2);
+        hash.fastASetSmallCheckString(runtime, key3, value3);
+        return hash;
+    }
     
     public static RubyHash constructHash19(Ruby runtime, IRubyObject key1, IRubyObject value1) {
         RubyHash hash = RubyHash.newHash(runtime);
@@ -1536,6 +1553,27 @@ public class RuntimeHelpers {
         hash.fastASetCheckString19(runtime, key1, value1);
         hash.fastASetCheckString19(runtime, key2, value2);
         hash.fastASetCheckString19(runtime, key3, value3);
+        return hash;
+    }
+
+    public static RubyHash constructSmallHash19(Ruby runtime, IRubyObject key1, IRubyObject value1) {
+        RubyHash hash = RubyHash.newSmallHash(runtime);
+        hash.fastASetSmallCheckString19(runtime, key1, value1);
+        return hash;
+    }
+
+    public static RubyHash constructSmallHash19(Ruby runtime, IRubyObject key1, IRubyObject value1, IRubyObject key2, IRubyObject value2) {
+        RubyHash hash = RubyHash.newSmallHash(runtime);
+        hash.fastASetSmallCheckString19(runtime, key1, value1);
+        hash.fastASetSmallCheckString19(runtime, key2, value2);
+        return hash;
+    }
+
+    public static RubyHash constructSmallHash19(Ruby runtime, IRubyObject key1, IRubyObject value1, IRubyObject key2, IRubyObject value2, IRubyObject key3, IRubyObject value3) {
+        RubyHash hash = RubyHash.newSmallHash(runtime);
+        hash.fastASetSmallCheckString19(runtime, key1, value1);
+        hash.fastASetSmallCheckString19(runtime, key2, value2);
+        hash.fastASetSmallCheckString19(runtime, key3, value3);
         return hash;
     }
 
@@ -1820,12 +1858,16 @@ public class RuntimeHelpers {
                     
             if (array.size() == 1) {
                 IRubyObject newResult = array.eltInternal(0);
-                // JRUBY-6729. It seems RubyArray should be returned as it is from here.
-                if (!(newResult instanceof RubyArray)) {
+                if (!((newResult instanceof RubyArray) && ((RubyArray) newResult).size() == 0)) {
                     argsResult = newResult;
                 }
             }
         }        
+        return argsResult;
+    }
+
+    public static IRubyObject unsplatValue19IfArityOne(IRubyObject argsResult, Block block) {
+        if (block.isGiven() && block.arity().getValue() > 1) argsResult = RuntimeHelpers.unsplatValue19(argsResult);
         return argsResult;
     }
         
@@ -2314,6 +2356,21 @@ public class RuntimeHelpers {
         return runtime.newBoolean(res.isTrue());
     }
 
+    /**
+     * Equivalent to rb_eql in MRI
+     *
+     * @param context
+     * @param a
+     * @param b
+     * @return
+     */
+    public static RubyBoolean rbEql(ThreadContext context, IRubyObject a, IRubyObject b) {
+        Ruby runtime = context.runtime;
+        if (a == b) return runtime.getTrue();
+        IRubyObject res = invokedynamic(context, a, EQL, b);
+        return runtime.newBoolean(res.isTrue());
+    }
+
     public static void traceLine(ThreadContext context) {
         String name = context.getFrameName();
         RubyModule type = context.getFrameKlazz();
@@ -2391,9 +2448,9 @@ public class RuntimeHelpers {
         return left instanceof RubyModule && ((RubyModule) left).getConstantFromNoConstMissing(name, false) != null;
     }
 
-    public static ByteList getDefinedConstantOrBoundMethod(IRubyObject left, String name) {
-        if (isModuleAndHasConstant(left, name)) return Node.CONSTANT_BYTELIST;
-        if (left.getMetaClass().isMethodBound(name, true)) return Node.METHOD_BYTELIST;
+    public static RubyString getDefinedConstantOrBoundMethod(IRubyObject left, String name) {
+        if (isModuleAndHasConstant(left, name)) return left.getRuntime().getDefinedMessage(DefinedMessage.CONSTANT);
+        if (left.getMetaClass().isMethodBound(name, true)) left.getRuntime().getDefinedMessage(DefinedMessage.METHOD);
         return null;
     }
 
@@ -2637,41 +2694,41 @@ public class RuntimeHelpers {
         return parms;
     }
 
-    public static ByteList getDefinedCall(ThreadContext context, IRubyObject self, IRubyObject receiver, String name) {
+    public static RubyString getDefinedCall(ThreadContext context, IRubyObject self, IRubyObject receiver, String name) {
         RubyClass metaClass = receiver.getMetaClass();
         DynamicMethod method = metaClass.searchMethod(name);
         Visibility visibility = method.getVisibility();
 
         if (visibility != Visibility.PRIVATE &&
                 (visibility != Visibility.PROTECTED || metaClass.getRealClass().isInstance(self)) && !method.isUndefined()) {
-            return Node.METHOD_BYTELIST;
+            return context.runtime.getDefinedMessage(DefinedMessage.METHOD);
         }
 
         if (context.runtime.is1_9() && receiver.callMethod(context, "respond_to_missing?",
             new IRubyObject[]{context.runtime.newSymbol(name), context.runtime.getFalse()}).isTrue()) {
-            return Node.METHOD_BYTELIST;
+            return context.runtime.getDefinedMessage(DefinedMessage.METHOD);
         }
         return null;
     }
 
-    public static ByteList getDefinedNot(Ruby runtime, ByteList definition) {
+    public static RubyString getDefinedNot(Ruby runtime, RubyString definition) {
         if (definition != null && runtime.is1_9()) {
-            definition = Node.METHOD_BYTELIST;
+            definition = runtime.getDefinedMessage(DefinedMessage.METHOD);
         }
 
         return definition;
     }
-    
-    public static IRubyObject invokedynamic(ThreadContext context, IRubyObject self, int index) {
+
+    public static IRubyObject invokedynamic(ThreadContext context, IRubyObject self, MethodNames method) {
         RubyClass metaclass = self.getMetaClass();
-        String name = MethodIndex.METHOD_NAMES[index];
-        return getMethodCached(context, metaclass, index, name).call(context, self, metaclass, name);
+        String name = method.realName();
+        return getMethodCached(context, metaclass, method.ordinal(), name).call(context, self, metaclass, name);
     }
-    
-    public static IRubyObject invokedynamic(ThreadContext context, IRubyObject self, int index, IRubyObject arg0) {
+
+    public static IRubyObject invokedynamic(ThreadContext context, IRubyObject self, MethodNames method, IRubyObject arg0) {
         RubyClass metaclass = self.getMetaClass();
-        String name = MethodIndex.METHOD_NAMES[index];
-        return getMethodCached(context, metaclass, index, name).call(context, self, metaclass, name, arg0);
+        String name = method.realName();
+        return getMethodCached(context, metaclass, method.ordinal(), name).call(context, self, metaclass, name, arg0);
     }
     
     private static DynamicMethod getMethodCached(ThreadContext context, RubyClass metaclass, int index, String name) {
@@ -2759,5 +2816,41 @@ public class RuntimeHelpers {
 
 
         return classContainer.defineOrGetClassUnder(name, sc);
+    }
+
+    public static RubyString appendByteList(RubyString target, ByteList source) {
+        target.getByteList().append(source);
+        return target;
+    }
+
+    public static RubyString appendByteList19(RubyString target, ByteList source, int codeRange) {
+        target.cat19(source, codeRange);
+        return target;
+    }
+
+    public static RubyString shortcutAppend18(RubyString string, IRubyObject object) {
+        if (object instanceof RubyFixnum || object instanceof RubyFloat || object instanceof RubySymbol) {
+            return string.append(object);
+        } else {
+            return string.append(object.asString());
+        }
+    }
+
+    public static RubyString shortcutAppend(RubyString string, IRubyObject object) {
+        if (object instanceof RubyFixnum || object instanceof RubyFloat || object instanceof RubySymbol) {
+            return string.append19(object);
+        } else {
+            return string.append19(object.asString());
+        }
+    }
+
+    @Deprecated
+    public static IRubyObject invokedynamic(ThreadContext context, IRubyObject self, int index) {
+        return invokedynamic(context, self, MethodNames.values()[index]);
+    }
+
+    @Deprecated
+    public static IRubyObject invokedynamic(ThreadContext context, IRubyObject self, int index, IRubyObject arg0) {
+        return invokedynamic(context, self, MethodNames.values()[index], arg0);
     }
 }

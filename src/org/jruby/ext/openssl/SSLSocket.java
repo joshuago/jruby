@@ -87,6 +87,7 @@ public class SSLSocket extends RubyObject {
         cSSLSocket.addReadWriteAttribute(runtime.getCurrentContext(), "io");
         cSSLSocket.addReadWriteAttribute(runtime.getCurrentContext(), "context");
         cSSLSocket.addReadWriteAttribute(runtime.getCurrentContext(), "sync_close");
+        cSSLSocket.addReadWriteAttribute(runtime.getCurrentContext(), "hostname");
         cSSLSocket.defineAlias("to_io","io");
         cSSLSocket.defineAnnotatedMethods(SSLSocket.class);
     }
@@ -98,6 +99,14 @@ public class SSLSocket extends RubyObject {
     
     public static RaiseException newSSLError(Ruby runtime, String message) {
         return Utils.newError(runtime, "OpenSSL::SSL::SSLError", message, false);
+    }
+
+    public static RaiseException newSSLErrorReadable(Ruby runtime, String message) {
+        return Utils.newError(runtime, "OpenSSL::SSL::SSLErrorReadable", message, false);
+    }
+
+    public static RaiseException newSSLErrorWritable(Ruby runtime, String message) {
+        return Utils.newError(runtime, "OpenSSL::SSL::SSLErrorWritable", message, false);
     }
 
     private org.jruby.ext.openssl.SSLContext rubyCtx;
@@ -127,6 +136,7 @@ public class SSLSocket extends RubyObject {
         Utils.checkKind(getRuntime(), args[0], "IO");
         io = (RubyIO) args[0];
         api.callMethod(this, "io=", io);
+        api.callMethod(this, "hostname=", getRuntime().newString(""));
         // This is a bit of a hack: SSLSocket should share code with RubyBasicSocket, which always sets sync to true.
         // Instead we set it here for now.
         api.callMethod(io, "sync=", getRuntime().getTrue());
@@ -139,7 +149,9 @@ public class SSLSocket extends RubyObject {
     private void ossl_ssl_setup() throws NoSuchAlgorithmException, KeyManagementException, IOException {
         if(null == engine) {
             Socket socket = getSocketChannel().socket();
-            String peerHost = socket.getInetAddress().getHostName();
+            // Server Name Indication (SNI) RFC 3546
+            // SNI support will not be attempted unless hostname is explicitly set by the caller
+            String peerHost = api.callMethod(this,"hostname").convertToString().toString();
             int peerPort = socket.getPort();
             engine = rubyCtx.createSSLEngine(peerHost, peerPort);
             SSLSession session = engine.getSession();
@@ -169,11 +181,13 @@ public class SSLSocket extends RubyObject {
             throw newSSLError(runtime, "called a function you should not call");
         }
         try {
-            ossl_ssl_setup();
-            engine.setUseClientMode(true);
-            engine.beginHandshake();
-            hsStatus = engine.getHandshakeStatus();
-            initialHandshake = true;
+            if (!initialHandshake) {
+                ossl_ssl_setup();
+                engine.setUseClientMode(true);
+                engine.beginHandshake();
+                hsStatus = engine.getHandshakeStatus();
+                initialHandshake = true;
+            }
             doHandshake(blocking);
         } catch(SSLHandshakeException e) {
             // unlike server side, client should close outbound channel even if
@@ -214,24 +228,26 @@ public class SSLSocket extends RubyObject {
         }
         try {
             int vfy = 0;
-            ossl_ssl_setup();
-            engine.setUseClientMode(false);
-            if(!rubyCtx.isNil() && !rubyCtx.callMethod(context,"verify_mode").isNil()) {
-                vfy = RubyNumeric.fix2int(rubyCtx.callMethod(context,"verify_mode"));
-                if(vfy == 0) { //VERIFY_NONE
-                    engine.setNeedClientAuth(false);
-                    engine.setWantClientAuth(false);
+            if (!initialHandshake) {
+                ossl_ssl_setup();
+                engine.setUseClientMode(false);
+                if(!rubyCtx.isNil() && !rubyCtx.callMethod(context,"verify_mode").isNil()) {
+                    vfy = RubyNumeric.fix2int(rubyCtx.callMethod(context,"verify_mode"));
+                    if(vfy == 0) { //VERIFY_NONE
+                        engine.setNeedClientAuth(false);
+                        engine.setWantClientAuth(false);
+                    }
+                    if((vfy & 1) != 0) { //VERIFY_PEER
+                        engine.setWantClientAuth(true);
+                    }
+                    if((vfy & 2) != 0) { //VERIFY_FAIL_IF_NO_PEER_CERT
+                        engine.setNeedClientAuth(true);
+                    }
                 }
-                if((vfy & 1) != 0) { //VERIFY_PEER
-                    engine.setWantClientAuth(true);
-                }
-                if((vfy & 2) != 0) { //VERIFY_FAIL_IF_NO_PEER_CERT
-                    engine.setNeedClientAuth(true);
-                }
+                engine.beginHandshake();
+                hsStatus = engine.getHandshakeStatus();
+                initialHandshake = true;
             }
-            engine.beginHandshake();
-            hsStatus = engine.getHandshakeStatus();
-            initialHandshake = true;
             doHandshake(blocking);
         } catch(SSLHandshakeException e) {
             throw SSL.newSSLError(runtime, e);
@@ -259,30 +275,57 @@ public class SSLSocket extends RubyObject {
     // SelectableChannel.configureBlocking(false) permanently instead of setting
     // temporarily. SSLSocket requires wrapping IO to be selectable so it should
     // be OK to set configureBlocking(false) permanently.
-    private boolean waitSelect(int operations, boolean blocking) throws IOException {
+    private boolean waitSelect(final int operations, final boolean blocking) throws IOException {
         if (!(io.getChannel() instanceof SelectableChannel)) {
             return true;
         }
-        Ruby runtime = getRuntime();
+        final Ruby runtime = getRuntime();
         RubyThread thread = runtime.getCurrentContext().getThread();
 
         SelectableChannel selectable = (SelectableChannel)io.getChannel();
         selectable.configureBlocking(false);
-        SelectionKey key = null;
-        Selector selector = null;
+        final Selector selector = runtime.getSelectorPool().get();
+        final SelectionKey key = selectable.register(selector, operations);
+
         try {
             io.addBlockingThread(thread);
-            selector = runtime.getSelectorPool().get();
 
-            key = selectable.register(selector, operations);
+            final int[] result = new int[1];
 
-            thread.beforeBlockingCall();
-            int result = blocking ? selector.select() : selector.selectNow();
+            thread.executeBlockingTask(new RubyThread.BlockingTask() {
+                public void run() throws InterruptedException {
+                    try {
+                        if (!blocking) {
+                            result[0] = selector.selectNow();
+                            if (result[0] == 0) {
+                                if ((operations & SelectionKey.OP_READ) != 0 && (operations & SelectionKey.OP_WRITE) != 0) {
+                                    if (key.isReadable()) {
+                                        writeWouldBlock();
+                                    } else if (key.isWritable()) {
+                                        readWouldBlock();
+                                    } else { //neither, pick one
+                                        readWouldBlock();
+                                    }
+                                } else if ((operations & SelectionKey.OP_READ) != 0) {
+                                    readWouldBlock();
+                                } else if ((operations & SelectionKey.OP_WRITE) != 0) {
+                                    writeWouldBlock();
+                                }
+                            }
+                        } else {
+                            result[0] = selector.select();
+                        }
+                    } catch (IOException ioe) {
+                        throw runtime.newRuntimeError("Error with selector: " + ioe.getMessage());
+                    }
+                }
 
-            // check for thread events, in case we've been woken up to die
-            thread.pollThreadEvents();
+                public void wakeup() {
+                    selector.wakeup();
+                }
+            });
 
-            if (result == 1) {
+            if (result[0] >= 1) {
                 Set<SelectionKey> keySet = selector.selectedKeys();
 
                 if (keySet.iterator().next() == key) {
@@ -291,8 +334,8 @@ public class SSLSocket extends RubyObject {
             }
 
             return false;
-        } catch (IOException ioe) {
-            throw runtime.newRuntimeError("Error with selector: " + ioe.getMessage());
+        } catch (InterruptedException ie) {
+            return false;
         } finally {
             // Note: I don't like ignoring these exceptions, but it's
             // unclear how likely they are to happen or what damage we
@@ -325,8 +368,18 @@ public class SSLSocket extends RubyObject {
         }
     }
 
+    private void readWouldBlock() {
+        Ruby runtime = getRuntime();
+        throw newSSLErrorReadable(runtime, "read would block");
+    }
+
+    private void writeWouldBlock() {
+        Ruby runtime = getRuntime();
+        throw newSSLErrorWritable(runtime, "write would block");
+    }
+
     private void doHandshake(boolean blocking) throws IOException {
-        while (blocking && true) {
+        while (true) {
             SSLEngineResult res;
             boolean ready = waitSelect(SelectionKey.OP_READ | SelectionKey.OP_WRITE, blocking);
 
@@ -363,14 +416,14 @@ public class SSLSocket extends RubyObject {
                 break;
             case NEED_WRAP:
                 if (netData.hasRemaining()) {
-                    while (flushData()) {
+                    while (flushData(blocking)) {
                     }
                 }
                 netData.clear();
                 res = engine.wrap(dummy, netData);
                 hsStatus = res.getHandshakeStatus();
                 netData.flip();
-                flushData();
+                flushData(blocking);
                 break;
             case NOT_HANDSHAKING:
                 // Opposite side could close while unwrapping. Handle this as same as FINISHED
@@ -390,9 +443,9 @@ public class SSLSocket extends RubyObject {
         verifyResult = rubyCtx.getLastVerifyResult();
     }
 
-    private boolean flushData() throws IOException {		
+    private boolean flushData(boolean blocking) throws IOException {
         try {
-            writeToChannel(netData);
+            writeToChannel(netData, blocking);
         } catch (IOException ioe) {
             netData.position(netData.limit());
             throw ioe;
@@ -403,11 +456,12 @@ public class SSLSocket extends RubyObject {
             return true;
         }
     }
-    
-    private int writeToChannel(ByteBuffer buffer) throws IOException {
+
+    private int writeToChannel(ByteBuffer buffer, boolean blocking) throws IOException {
         int totalWritten = 0;
         while (buffer.hasRemaining()) {
             totalWritten += getSocketChannel().write(buffer);
+            if (!blocking) break; // don't continue attempting to read
         }
         return totalWritten;
     }
@@ -416,23 +470,27 @@ public class SSLSocket extends RubyObject {
         initialHandshake = false;
     }
 
-    public int write(ByteBuffer src) throws SSLException, IOException {
+    public int write(ByteBuffer src, boolean blocking) throws SSLException, IOException {
         if(initialHandshake) {
             throw new IOException("Writing not possible during handshake");
         }
-        if(netData.hasRemaining()) {
-            // TODO; remove
-            // This protect should be propagated from
-            // http://www.javadocexamples.com/java_source/ssl/SSLChannel.java.html
-            // to avoid IO selecting problem under MT.
-            // We have different model of selecting so it's safe to be removed I think.
-            throw new IOException("Another thread may be writing");
+
+        SelectableChannel selectable = getSocketChannel();
+        boolean blockingMode = selectable.isBlocking();
+        if (!blocking) selectable.configureBlocking(false);
+
+        try {
+            if(netData.hasRemaining()) {
+                flushData(blocking);
+            }
+            netData.clear();
+            SSLEngineResult res = engine.wrap(src, netData);
+            netData.flip();
+            flushData(blocking);
+            return res.bytesConsumed();
+        } finally {
+            if (!blocking) selectable.configureBlocking(blockingMode);
         }
-        netData.clear();
-        SSLEngineResult res = engine.wrap(src, netData);
-        netData.flip();
-        flushData();
-        return res.bytesConsumed();
     }
 
     public int read(ByteBuffer dst, boolean blocking) throws IOException {
@@ -521,10 +579,10 @@ public class SSLSocket extends RubyObject {
             return;
         }
         netData.flip();
-        flushData();
+        flushData(true);
     }
 
-    private IRubyObject do_sysread(ThreadContext context, IRubyObject[] args, boolean nonBlock) {
+    private IRubyObject do_sysread(ThreadContext context, IRubyObject[] args, boolean blocking) {
         Ruby runtime = context.runtime;
         int len = RubyNumeric.fix2int(args[0]);
         RubyString str = null;
@@ -545,14 +603,7 @@ public class SSLSocket extends RubyObject {
         try {
             // So we need to make sure to only block when there is no data left to process
             if (engine == null || !(peerAppData.hasRemaining() || peerNetData.position() > 0)) {
-                if (nonBlock) {
-                    RaiseException re = newSSLError(runtime, "read would raise");
-                    IRubyObject waitReadable = runtime.getIO().getConstant("WaitReadable");
-                    re.getException().extend(new IRubyObject[] {waitReadable});
-                    throw re;
-                } else {
-                    waitSelect(SelectionKey.OP_READ, true);
-                }
+                waitSelect(SelectionKey.OP_READ, blocking);
             }
 
             ByteBuffer dst = ByteBuffer.allocate(len);
@@ -562,7 +613,7 @@ public class SSLSocket extends RubyObject {
                 if (engine == null) {
                     rr = getSocketChannel().read(dst);
                 } else {
-                    rr = read(dst, !nonBlock);
+                    rr = read(dst, blocking);
                 }
                 if (rr == -1) {
                     throw getRuntime().newEOFError();
@@ -580,33 +631,28 @@ public class SSLSocket extends RubyObject {
 
     @JRubyMethod(rest = true, required = 1, optional = 1)
     public IRubyObject sysread(ThreadContext context, IRubyObject[] args) {
-        return do_sysread(context, args, false);
+        return do_sysread(context, args, true);
     }
     
     @JRubyMethod(rest = true, required = 1, optional = 1)
     public IRubyObject sysread_nonblock(ThreadContext context, IRubyObject[] args) {
-        return do_sysread(context, args, true);
+        return do_sysread(context, args, false);
     }
 
-    private IRubyObject do_syswrite(ThreadContext context, IRubyObject arg, boolean nonBlock)  {
+    private IRubyObject do_syswrite(ThreadContext context, IRubyObject arg, boolean blocking)  {
         Ruby runtime = context.runtime;
         try {
             checkClosed();
-            if (nonBlock) {
-                RaiseException re = newSSLError(runtime, "write would raise");
-                IRubyObject waitWritable = runtime.getIO().getConstant("WaitWritable");
-                re.getException().extend(new IRubyObject[] {waitWritable});
-                throw re;
-            } else {
-                waitSelect(SelectionKey.OP_WRITE, true);
-            }
-            byte[] bls = arg.convertToString().getBytes();
-            ByteBuffer b1 = ByteBuffer.wrap(bls);
+
+            waitSelect(SelectionKey.OP_WRITE, blocking);
+
+            ByteList bls = arg.convertToString().getByteList();
+            ByteBuffer b1 = ByteBuffer.wrap(bls.getUnsafeBytes(), bls.getBegin(), bls.getRealSize());
             int written;
             if(engine == null) {
-                written = writeToChannel(b1);
+                written = writeToChannel(b1, blocking);
             } else {
-                written = write(b1);
+                written = write(b1, blocking);
             }
             ((RubyIO)api.callMethod(this,"io")).flush();
 
@@ -618,12 +664,12 @@ public class SSLSocket extends RubyObject {
 
     @JRubyMethod
     public IRubyObject syswrite(ThreadContext context, IRubyObject arg) {
-        return do_syswrite(context, arg, false);
+        return do_syswrite(context, arg, true);
     }
 
     @JRubyMethod
     public IRubyObject syswrite_nonblock(ThreadContext context, IRubyObject arg) {
-        return do_syswrite(context, arg, true);
+        return do_syswrite(context, arg, false);
     }
 
     private void checkClosed() {

@@ -550,7 +550,7 @@ public class RubyThread extends RubyObject implements ExecutionContext {
         Ruby runtime = getRuntime();
         long timeoutMillis = Long.MAX_VALUE;
 
-        if (args.length > 0) {
+        if (args.length > 0 && !args[0].isNil()) {
             if (args.length > 1) {
                 throw getRuntime().newArgumentError(args.length,1);
             }
@@ -994,10 +994,18 @@ public class RubyThread extends RubyObject implements ExecutionContext {
         if (runtime.getSystemExit().isInstance(rubyException)) {
             runtime.getThreadService().getMainThread().raise(new IRubyObject[] {rubyException}, Block.NULL_BLOCK);
         } else if (abortOnException(runtime)) {
-            runtime.printError(rubyException);
-            RubyException systemExit = RubySystemExit.newInstance(runtime, 1);
-            systemExit.message = rubyException.message;
-            systemExit.set_backtrace(rubyException.backtrace());
+            RubyException systemExit;
+
+            if (!runtime.is1_9()) {
+                runtime.printError(rubyException);
+
+                systemExit = RubySystemExit.newInstance(runtime, 1);
+                systemExit.message = rubyException.message;
+                systemExit.set_backtrace(rubyException.backtrace());
+            } else {
+                systemExit = rubyException;
+            }
+
             runtime.getThreadService().getMainThread().raise(new IRubyObject[] {systemExit}, Block.NULL_BLOCK);
             return;
         } else if (runtime.getDebug().isTrue()) {
@@ -1099,7 +1107,7 @@ public class RubyThread extends RubyObject implements ExecutionContext {
 
                     return false;
                 } catch (IOException ioe) {
-                    throw getRuntime().newRuntimeError("Error with selector: " + ioe);
+                    throw getRuntime().newIOErrorFromException(ioe);
                 } finally {
                     // Note: I don't like ignoring these exceptions, but it's
                     // unclear how likely they are to happen or what damage we

@@ -41,104 +41,8 @@ import org.jruby.RubyFixnum;
 import org.jruby.RubyFloat;
 import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyMatchData;
-import org.jruby.ast.AliasNode;
-import org.jruby.ast.AndNode;
-import org.jruby.ast.ArgsCatNode;
-import org.jruby.ast.ArgsNode;
-import org.jruby.ast.ArgsPushNode;
-import org.jruby.ast.ArrayNode;
-import org.jruby.ast.AttrAssignNode;
-import org.jruby.ast.BackRefNode;
-import org.jruby.ast.BeginNode;
-import org.jruby.ast.BignumNode;
-import org.jruby.ast.BinaryOperatorNode;
-import org.jruby.ast.BlockNode;
-import org.jruby.ast.BlockPassNode;
-import org.jruby.ast.BreakNode;
-import org.jruby.ast.CallNode;
-import org.jruby.ast.CaseNode;
-import org.jruby.ast.ClassNode;
-import org.jruby.ast.ClassVarAsgnNode;
-import org.jruby.ast.ClassVarDeclNode;
-import org.jruby.ast.ClassVarNode;
-import org.jruby.ast.Colon2ConstNode;
-import org.jruby.ast.Colon2MethodNode;
-import org.jruby.ast.Colon2Node;
-import org.jruby.ast.Colon3Node;
-import org.jruby.ast.ConstDeclNode;
-import org.jruby.ast.ConstNode;
-import org.jruby.ast.DAsgnNode;
-import org.jruby.ast.DRegexpNode;
-import org.jruby.ast.DStrNode;
-import org.jruby.ast.DSymbolNode;
-import org.jruby.ast.DVarNode;
-import org.jruby.ast.DXStrNode;
-import org.jruby.ast.DefinedNode;
-import org.jruby.ast.DefnNode;
-import org.jruby.ast.DefsNode;
-import org.jruby.ast.DotNode;
-import org.jruby.ast.EnsureNode;
-import org.jruby.ast.EvStrNode;
-import org.jruby.ast.FCallNode;
-import org.jruby.ast.FileNode;
-import org.jruby.ast.FixnumNode;
-import org.jruby.ast.FlipNode;
-import org.jruby.ast.FloatNode;
-import org.jruby.ast.ForNode;
-import org.jruby.ast.GlobalAsgnNode;
-import org.jruby.ast.GlobalVarNode;
-import org.jruby.ast.HashNode;
-import org.jruby.ast.IfNode;
-import org.jruby.ast.InstAsgnNode;
-import org.jruby.ast.InstVarNode;
-import org.jruby.ast.IterNode;
-import org.jruby.ast.ListNode;
-import org.jruby.ast.LiteralNode;
-import org.jruby.ast.LocalAsgnNode;
-import org.jruby.ast.LocalVarNode;
-import org.jruby.ast.Match2Node;
-import org.jruby.ast.Match3Node;
-import org.jruby.ast.MatchNode;
-import org.jruby.ast.ModuleNode;
-import org.jruby.ast.MultipleAsgnNode;
-import org.jruby.ast.NewlineNode;
-import org.jruby.ast.NextNode;
-import org.jruby.ast.NilNode;
-import org.jruby.ast.Node;
-import org.jruby.ast.NodeType;
-import org.jruby.ast.NotNode;
-import org.jruby.ast.NthRefNode;
-import org.jruby.ast.OpAsgnNode;
-import org.jruby.ast.OpAsgnOrNode;
-import org.jruby.ast.OpElementAsgnNode;
-import org.jruby.ast.OrNode;
-import org.jruby.ast.PostExeNode;
-import org.jruby.ast.PreExeNode;
-import org.jruby.ast.RegexpNode;
-import org.jruby.ast.RescueBodyNode;
-import org.jruby.ast.RescueNode;
-import org.jruby.ast.ReturnNode;
-import org.jruby.ast.RootNode;
-import org.jruby.ast.SClassNode;
-import org.jruby.ast.SValueNode;
-import org.jruby.ast.SelfNode;
-import org.jruby.ast.SpecialArgs;
-import org.jruby.ast.SplatNode;
-import org.jruby.ast.StarNode;
-import org.jruby.ast.StrNode;
-import org.jruby.ast.SuperNode;
-import org.jruby.ast.SymbolNode;
-import org.jruby.ast.ToAryNode;
-import org.jruby.ast.UndefNode;
-import org.jruby.ast.UntilNode;
-import org.jruby.ast.VAliasNode;
-import org.jruby.ast.VCallNode;
-import org.jruby.ast.WhenNode;
-import org.jruby.ast.WhenOneArgNode;
-import org.jruby.ast.WhileNode;
-import org.jruby.ast.XStrNode;
-import org.jruby.ast.YieldNode;
-import org.jruby.ast.ZSuperNode;
+import org.jruby.RubyString;
+import org.jruby.ast.*;
 import org.jruby.exceptions.JumpException;
 import org.jruby.internal.runtime.methods.DefaultMethod;
 import org.jruby.internal.runtime.methods.DynamicMethod;
@@ -154,6 +58,7 @@ import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.callsite.CacheEntry;
 import org.jruby.runtime.callsite.CachingCallSite;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 import org.jruby.util.StringSupport;
 
 /**
@@ -813,42 +718,6 @@ public class ASTCompiler {
         String name = callNode.getName();
         CallType callType = CallType.NORMAL;
 
-        DYNOPT: if (RubyInstanceConfig.DYNOPT_COMPILE_ENABLED) {
-            // dynopt does not handle non-local block flow control yet, so we bail out
-            // if there's a closure.
-            if (callNode.getIterNode() != null) break DYNOPT;
-            if (callNode.callAdapter instanceof CachingCallSite) {
-                CachingCallSite cacheSite = (CachingCallSite)callNode.callAdapter;
-                if (cacheSite.isOptimizable()) {
-                    CacheEntry entry = cacheSite.getCache();
-                    if (entry.method.getNativeCall() != null) {
-                        NativeCall nativeCall = entry.method.getNativeCall();
-
-                        // only do direct calls for specific arity
-                        if (argsCallback == null || argsCallback.getArity() >= 0 && argsCallback.getArity() <= 3) {
-                            if (compileIntrinsic(context, callNode, cacheSite.methodName, entry.token, entry.method, receiverCallback, argsCallback, closureArg)) {
-                                // intrinsic compilation worked, hooray!
-                                return;
-                            } else {
-                                // otherwise, normal straight-through native call
-                                context.getInvocationCompiler().invokeNative(
-                                        name, nativeCall, entry.token, receiverCallback,
-                                        argsCallback, closureArg, CallType.NORMAL,
-                                        callNode.getIterNode() instanceof IterNode);
-                                return;
-                            }
-                        }
-                    }
-
-                    // check for a recursive call
-                    if (callNode.getReceiverNode() instanceof SelfNode) {
-                        // recursive calls
-                        if (compileRecursiveCall(callNode.getName(), entry.token, CallType.NORMAL, callNode.getIterNode() instanceof IterNode, entry.method, context, argsCallback, closureArg, expr)) return;
-                    }
-                }
-            }
-        }
-
         if (argsCallback != null && argsCallback.getArity() == 1) {
             Node argument = callNode.getArgsNode().childNodes().get(0);
             if (argument instanceof FixnumNode) {
@@ -928,110 +797,6 @@ public class ASTCompiler {
         floatDoubleIntrinsics.put(">=", "op_ge");
         floatDoubleIntrinsics.put("==", "op_equal");
         floatDoubleIntrinsics.put("<=>", "op_cmp");
-    }
-
-    private boolean compileRecursiveCall(String name, int generation, CallType callType, boolean iterator, DynamicMethod method, BodyCompiler context, ArgumentsCallback argsCallback, CompilerCallback closure, boolean expr) {
-        if (currentBodyNode != null && context.isSimpleRoot()) {
-            if (method instanceof InterpretedMethod) {
-                InterpretedMethod target = (InterpretedMethod)method;
-                if (target.getBodyNode() == currentBodyNode) {
-                    context.getInvocationCompiler().invokeRecursive(name, generation, argsCallback, closure, callType, iterator);
-                    if (!expr) context.consumeCurrentValue();
-                    return true;
-                }
-            }
-            if (method instanceof DefaultMethod) {
-                DefaultMethod target = (DefaultMethod)method;
-                if (target.getBodyNode() == currentBodyNode) {
-                    context.getInvocationCompiler().invokeRecursive(name, generation, argsCallback, closure, callType, iterator);
-                    if (!expr) context.consumeCurrentValue();
-                    return true;
-                }
-            }
-
-            if (method instanceof JittedMethod) {
-                DefaultMethod target = (DefaultMethod)((JittedMethod)method).getRealMethod();
-                if (target.getBodyNode() == currentBodyNode) {
-                    context.getInvocationCompiler().invokeRecursive(name, generation, argsCallback, closure, callType, iterator);
-                    if (!expr) context.consumeCurrentValue();
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean compileTrivialCall(String name, DynamicMethod method, int generation, BodyCompiler context, boolean expr) {
-        Node simpleBody = null;
-        if (method instanceof InterpretedMethod) {
-            InterpretedMethod target = (InterpretedMethod)method;
-            simpleBody = target.getBodyNode();
-            while (simpleBody instanceof NewlineNode) simpleBody = ((NewlineNode)simpleBody).getNextNode();
-        }
-
-        if (method instanceof DefaultMethod) {
-            DefaultMethod target = (DefaultMethod)method;
-            simpleBody = target.getBodyNode();
-            while (simpleBody instanceof NewlineNode) simpleBody = ((NewlineNode)simpleBody).getNextNode();
-        }
-
-        if (method instanceof JittedMethod) {
-            DefaultMethod target = (DefaultMethod)((JittedMethod)method).getRealMethod();
-            simpleBody = target.getBodyNode();
-            while (simpleBody instanceof NewlineNode) simpleBody = ((NewlineNode)simpleBody).getNextNode();
-        }
-
-        if (simpleBody != null) {
-            switch (simpleBody.getNodeType()) {
-            case SELFNODE:
-            case INSTVARNODE:
-            case NILNODE:
-            case FIXNUMNODE:
-            case FLOATNODE:
-            case STRNODE:
-            case BIGNUMNODE:
-            case FALSENODE:
-            case TRUENODE:
-            case SYMBOLNODE:
-            case XSTRNODE:
-                final Node simpleBodyFinal = simpleBody;
-                context.getInvocationCompiler().invokeTrivial(name, generation, new CompilerCallback() {
-                    public void call(BodyCompiler context) {
-                        compile(simpleBodyFinal, context, true);
-                    }
-                });
-                if (!expr) context.consumeCurrentValue();
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean compileIntrinsic(BodyCompiler context, CallNode callNode, String name, int generation, DynamicMethod method, CompilerCallback receiverCallback, ArgumentsCallback argsCallback, CompilerCallback closureCallback) {
-        if (!(method.getImplementationClass() instanceof RubyClass)) return false;
-
-        RubyClass implClass = (RubyClass)method.getImplementationClass();
-        Map<Class, Map<String, String>> typeIntrinsics = Intrinsics.get(implClass.getReifiedClass());
-        if (typeIntrinsics != null) {
-            if (argsCallback != null && argsCallback.getArity() == 1) {
-                Node argument = callNode.getArgsNode().childNodes().get(0);
-                if (argument instanceof FixnumNode) {
-                    Map<String, String> typeLongIntrinsics = typeIntrinsics.get(FixnumNode.class);
-                    if (typeLongIntrinsics != null && typeLongIntrinsics.containsKey(name)) {
-                        context.getInvocationCompiler().invokeFixnumLong(name, generation, receiverCallback, typeLongIntrinsics.get(name), ((FixnumNode)argument).getValue());
-                        return true;
-                    }
-                }
-                if (argument instanceof FloatNode) {
-                    Map<String, String> typeDoubleIntrinsics = typeIntrinsics.get(FloatNode.class);
-                    if (typeDoubleIntrinsics != null && typeDoubleIntrinsics.containsKey(name)) {
-                        context.getInvocationCompiler().invokeFloatDouble(name, generation, receiverCallback, typeDoubleIntrinsics.get(name), ((FloatNode)argument).getValue());
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
     }
 
     private String getLiteralSend(CallNode callNode) {
@@ -1496,13 +1261,13 @@ public class ASTCompiler {
     public void compileDefined(final Node node, BodyCompiler context, boolean expr) {
         if (expr) {
             compileGetDefinitionBase(((DefinedNode) node).getExpressionNode(), context);
-            context.stringOrNil();
+            context.nullToNil();
         }
     }
 
     public void compileGetArgumentDefinition(final Node node, BodyCompiler context, String type) {
         if (node == null) {
-            context.pushByteList(ByteList.create(type));
+            context.pushDefinedMessage(DefinedMessage.byText(type));
         } else if (node instanceof ArrayNode) {
             Object endToken = context.getNewEnding();
             for (int i = 0; i < ((ArrayNode) node).size(); i++) {
@@ -1510,7 +1275,7 @@ public class ASTCompiler {
                 compileGetDefinition(iterNode, context);
                 context.ifNull(endToken);
             }
-            context.pushByteList(ByteList.create(type));
+            context.pushDefinedMessage(DefinedMessage.byText(type));
             Object realToken = context.getNewEnding();
             context.go(realToken);
             context.setEnding(endToken);
@@ -1520,7 +1285,7 @@ public class ASTCompiler {
             compileGetDefinition(node, context);
             Object endToken = context.getNewEnding();
             context.ifNull(endToken);
-            context.pushByteList(ByteList.create(type));
+            context.pushDefinedMessage(DefinedMessage.byText(type));
             Object realToken = context.getNewEnding();
             context.go(realToken);
             context.setEnding(endToken);
@@ -1544,7 +1309,7 @@ public class ASTCompiler {
             case OPASGNORNODE:
             case OPELEMENTASGNNODE:
             case INSTASGNNODE: // simple assignment cases
-                context.pushByteList(Node.ASSIGNMENT_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.ASSIGNMENT);
                 break;
             case ANDNODE: // all these just evaluate and then do expression if there's no error
             case ORNODE:
@@ -1558,7 +1323,7 @@ public class ASTCompiler {
 
                                 public void branch(BodyCompiler context) {
                                     compile(node, context, false);
-                                    context.pushByteList(Node.EXPRESSION_BYTELIST);
+                                    context.pushDefinedMessage(DefinedMessage.EXPRESSION);
                                 }
                             }, JumpException.class,
                             new BranchCallback() {
@@ -1566,7 +1331,7 @@ public class ASTCompiler {
                                 public void branch(BodyCompiler context) {
                                     context.pushNull();
                                 }
-                            }, ByteList.class);
+                            }, RubyString.class);
                     context.definedNot();
                     break;
                 }
@@ -1577,26 +1342,26 @@ public class ASTCompiler {
                 compileDefinedDVar(node, context);
                 break;
             case FALSENODE:
-                context.pushByteList(Node.FALSE_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.FALSE);
                 break;
             case TRUENODE:
-                context.pushByteList(Node.TRUE_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.TRUE);
                 break;
             case LOCALVARNODE:
-                context.pushByteList(Node.LOCAL_VARIABLE_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.LOCAL_VARIABLE);
                 break;
             case MATCH2NODE:
             case MATCH3NODE:
-                context.pushByteList(Node.METHOD_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.METHOD);
                 break;
             case NILNODE:
-                context.pushByteList(Node.NIL_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.NIL);
                 break;
             case NTHREFNODE:
                 compileDefinedNthref(node, context);
                 break;
             case SELFNODE:
-                context.pushByteList(Node.SELF_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.SELF);
                 break;
             case VCALLNODE:
                 context.loadSelf();
@@ -1604,7 +1369,7 @@ public class ASTCompiler {
                         new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushByteList(Node.METHOD_BYTELIST);
+                                context.pushDefinedMessage(DefinedMessage.METHOD);
                             }
                         },
                         new BranchCallback() {
@@ -1618,7 +1383,7 @@ public class ASTCompiler {
                 context.hasBlock(new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushByteList(Node.YIELD_BYTELIST);
+                                context.pushDefinedMessage(DefinedMessage.YIELD);
                             }
                         },
                         new BranchCallback() {
@@ -1633,7 +1398,7 @@ public class ASTCompiler {
                         new BranchCallback() {
 
                             public void branch(BodyCompiler context) {
-                                context.pushByteList(Node.GLOBAL_VARIABLE_BYTELIST);
+                                context.pushDefinedMessage(DefinedMessage.GLOBAL_VARIABLE);
                             }
                         },
                         new BranchCallback() {
@@ -1644,34 +1409,10 @@ public class ASTCompiler {
                         });
                 break;
             case INSTVARNODE:
-                context.isInstanceVariableDefined(((InstVarNode) node).getName(),
-                        new BranchCallback() {
-
-                            public void branch(BodyCompiler context) {
-                                context.pushByteList(Node.INSTANCE_VARIABLE_BYTELIST);
-                            }
-                        },
-                        new BranchCallback() {
-
-                            public void branch(BodyCompiler context) {
-                                context.pushNull();
-                            }
-                        });
+                context.isInstanceVariableDefined(((InstVarNode) node).getName());
                 break;
             case CONSTNODE:
-                context.isConstantDefined(((ConstNode) node).getName(),
-                        new BranchCallback() {
-
-                            public void branch(BodyCompiler context) {
-                                context.pushByteList(Node.CONSTANT_BYTELIST);
-                            }
-                        },
-                        new BranchCallback() {
-
-                            public void branch(BodyCompiler context) {
-                                context.pushNull();
-                            }
-                        });
+                context.isConstantDefined(((ConstNode) node).getName());
                 break;
             case FCALLNODE:
                 context.loadSelf();
@@ -1734,7 +1475,7 @@ public class ASTCompiler {
 
                                 public void branch(BodyCompiler context) {
                                     context.consumeCurrentValue();
-                                    context.pushByteList(Node.CLASS_VARIABLE_BYTELIST);
+                                    context.pushDefinedMessage(DefinedMessage.CLASS_VARIABLE);
                                     context.go(ending);
                                 }
                             },
@@ -1750,7 +1491,7 @@ public class ASTCompiler {
 
                                 public void branch(BodyCompiler context) {
                                     context.consumeCurrentValue();
-                                    context.pushByteList(Node.CLASS_VARIABLE_BYTELIST);
+                                    context.pushDefinedMessage(DefinedMessage.CLASS_VARIABLE);
                                     context.go(ending);
                                 }
                             },
@@ -1767,7 +1508,7 @@ public class ASTCompiler {
                     context.setEnding(singleton);
                     context.attached();//[RubyClass]
                     context.notIsModuleAndClassVarDefined(iVisited.getName(), failure); //[]
-                    context.pushByteList(Node.CLASS_VARIABLE_BYTELIST);
+                    context.pushDefinedMessage(DefinedMessage.CLASS_VARIABLE);
                     context.go(ending);
                     context.setEnding(failure);
                     context.pushNull();
@@ -1790,7 +1531,7 @@ public class ASTCompiler {
                     context.superClass();
                     context.ifNotSuperMethodBound(fail_easy);
 
-                    context.pushByteList(Node.SUPER_BYTELIST);
+                    context.pushDefinedMessage(DefinedMessage.SUPER);
                     context.go(ending);
 
                     context.setEnding(fail2);
@@ -1880,7 +1621,7 @@ public class ASTCompiler {
                                 public void branch(BodyCompiler context) {
                                     context.pushNull();
                                 }
-                            }, ByteList.class);
+                            }, RubyString.class);
 
                     context.go(ending);
                     context.setEnding(isnull);
@@ -1902,9 +1643,9 @@ public class ASTCompiler {
                             public void branch(BodyCompiler context) {
                                 context.pushNull();
                             }
-                        }, ByteList.class);
+                        }, RubyString.class);
                 context.consumeCurrentValue();
-                context.pushByteList(Node.EXPRESSION_BYTELIST);
+                context.pushDefinedMessage(DefinedMessage.EXPRESSION);
         }
     }
 
@@ -1913,7 +1654,7 @@ public class ASTCompiler {
 
                     public void branch(BodyCompiler context) {
                         compile(node, context, false);
-                        context.pushByteList(Node.EXPRESSION_BYTELIST);
+                        context.pushDefinedMessage(DefinedMessage.EXPRESSION);
                     }
                 }, JumpException.class,
                 new BranchCallback() {
@@ -1921,7 +1662,7 @@ public class ASTCompiler {
                     public void branch(BodyCompiler context) {
                         context.pushNull();
                     }
-                }, ByteList.class);
+                }, RubyString.class);
     }
 
     protected void compileDefinedCall(final Node node, BodyCompiler context) {
@@ -1943,7 +1684,7 @@ public class ASTCompiler {
                         public void branch(BodyCompiler context) {
                             context.pushNull();
                         }
-                    }, ByteList.class);
+                    }, RubyString.class);
 
             //          context.swapValues();
     //context.consumeCurrentValue();
@@ -1954,7 +1695,7 @@ public class ASTCompiler {
     }
 
     protected void compileDefinedDVar(final Node node, BodyCompiler context) {
-        context.pushByteList(Node.LOCAL_VARIABLE_IN_BLOCK_BYTELIST);
+        context.pushDefinedMessage(DefinedMessage.LOCAL_VARIABLE_IN_BLOCK);
     }
 
     protected void compileDefinedBackref(final Node node, BodyCompiler context) {
@@ -1963,7 +1704,7 @@ public class ASTCompiler {
                 new BranchCallback() {
 
                     public void branch(BodyCompiler context) {
-                        context.pushByteList(ByteList.create("$" + ((BackRefNode) node).getType()));
+                        context.pushDefinedMessage(DefinedMessage.byText("$" + ((BackRefNode) node).getType()));
                     }
                 },
                 new BranchCallback() {
@@ -1979,7 +1720,7 @@ public class ASTCompiler {
                 new BranchCallback() {
 
                     public void branch(BodyCompiler context) {
-                        context.pushByteList(ByteList.create("$" + ((NthRefNode) node).getMatchNumber()));
+                        context.pushDefinedMessage(DefinedMessage.byText("$" + ((NthRefNode) node).getMatchNumber()));
                     }
                 },
                 new BranchCallback() {
@@ -2244,54 +1985,55 @@ public class ASTCompiler {
         }
     }
 
-    public void compileDStr(Node node, BodyCompiler context, boolean expr) {
-        final DStrNode dstrNode = (DStrNode) node;
+    public void compileDNode(Node node, BodyCompiler context, boolean expr) {
+        final DNode dNode = (DNode) node;
 
         ArrayCallback dstrCallback = new ArrayCallback() {
+            public void nextValue(BodyCompiler context, Object sourceArray,
+                                  int index) {
+                Node nextNode = dNode.get(index);
 
-                    public void nextValue(BodyCompiler context, Object sourceArray,
-                            int index) {
-                        compile(dstrNode.get(index), context, true);
-                    }
-                };
+                switch (nextNode.getNodeType()) {
+                    case STRNODE:
+                        context.appendByteList(((StrNode) nextNode).getValue(), ((StrNode) nextNode).getCodeRange(), dNode.is19());
+                        break;
+                    case EVSTRNODE:
+                        compile(((EvStrNode)nextNode).getBody(), context, true);
+                        context.shortcutAppend(dNode.is19());
+                        break;
+                    default:
+                        compile(nextNode, context, true);
+                        context.appendObject(dNode.is19());
+                }
+            }
+        };
 
         if (expr) {
             Encoding enc = null;
-            if (dstrNode.is19()) {
-                enc = dstrNode.getEncoding();
+            if (dNode.is19()) {
+                enc = dNode.getEncoding();
             }
 
-            context.createNewString(dstrCallback, dstrNode.size(), enc);
+            context.buildNewString(dstrCallback, dNode.size(), enc);
         } else {
             // not an expression, only compile the elements
-            for (Node nextNode : dstrNode.childNodes()) {
+            for (Node nextNode : dNode.childNodes()) {
                 compile(nextNode, context, false);
             }
         }
     }
 
+    public void compileDStr(Node node, BodyCompiler context, boolean expr) {
+        compileDNode(node, context, expr);
+    }
+
     public void compileDSymbol(Node node, BodyCompiler context, boolean expr) {
         final DSymbolNode dsymbolNode = (DSymbolNode) node;
 
-        ArrayCallback dstrCallback = new ArrayCallback() {
-
-                    public void nextValue(BodyCompiler context, Object sourceArray,
-                            int index) {
-                        compile(dsymbolNode.get(index), context, true);
-                    }
-                };
+        compileDNode(dsymbolNode, context, expr);
 
         if (expr) {
-            Encoding enc = null;
-            if (dsymbolNode.is19()) {
-                enc = dsymbolNode.getEncoding();
-            }
-            context.createNewSymbol(dstrCallback, dsymbolNode.size(), enc);
-        } else {
-            // not an expression, only compile the elements
-            for (Node nextNode : dsymbolNode.childNodes()) {
-                compile(nextNode, context, false);
-            }
+            context.stringToSymbol(dsymbolNode.is19());
         }
     }
 
@@ -2304,25 +2046,13 @@ public class ASTCompiler {
     public void compileDXStr(Node node, BodyCompiler context, boolean expr) {
         final DXStrNode dxstrNode = (DXStrNode) node;
 
-        final ArrayCallback dstrCallback = new ArrayCallback() {
-
-                    public void nextValue(BodyCompiler context, Object sourceArray,
-                            int index) {
-                        compile(dxstrNode.get(index), context,true);
-                    }
-                };
-
         ArgumentsCallback argsCallback = new ArgumentsCallback() {
                     public int getArity() {
                         return 1;
                     }
 
                     public void call(BodyCompiler context) {
-                        Encoding enc = null;
-                        if (dxstrNode.is19()) {
-                            enc = dxstrNode.getEncoding();
-                        }
-                        context.createNewString(dstrCallback, dxstrNode.size(), enc);
+                        compileDNode(dxstrNode, context, true);
                     }
                 };
 
@@ -2384,27 +2114,6 @@ public class ASTCompiler {
         ArgumentsCallback argsCallback = getArgsCallback(fcallNode.getArgsNode());
         
         CompilerCallback closureArg = getBlock(fcallNode.getIterNode());
-
-        DYNOPT: if (RubyInstanceConfig.DYNOPT_COMPILE_ENABLED) {
-            // dynopt does not handle non-local block flow control yet, so we bail out
-            if (fcallNode.getIterNode() != null) break DYNOPT;
-            if (fcallNode.callAdapter instanceof CachingCallSite) {
-                CachingCallSite cacheSite = (CachingCallSite)fcallNode.callAdapter;
-                if (cacheSite.isOptimizable()) {
-                    CacheEntry entry = cacheSite.getCache();
-
-                    if (closureArg == null && (argsCallback == null || (argsCallback.getArity() >= 0 && argsCallback.getArity() <= 3))) {
-                        // recursive calls
-                        if (compileRecursiveCall(fcallNode.getName(), entry.token, CallType.FUNCTIONAL, fcallNode.getIterNode() instanceof IterNode, entry.method, context, argsCallback, closureArg, expr)) return;
-
-                        // peephole inlining for trivial targets
-                        if (closureArg == null &&
-                                argsCallback == null &&
-                                compileTrivialCall(fcallNode.getName(), entry.method, entry.token, context, expr)) return;
-                    }
-                }
-            }
-        }
 
         if (fcallNode instanceof SpecialArgs) {
             context.getInvocationCompiler().invokeDynamicVarargs(fcallNode.getName(), null, argsCallback, CallType.FUNCTIONAL, closureArg, fcallNode.getIterNode() instanceof IterNode);
@@ -3898,20 +3607,6 @@ public class ASTCompiler {
 
     public void compileVCall(Node node, BodyCompiler context, boolean expr) {
         VCallNode vcallNode = (VCallNode) node;
-        if (RubyInstanceConfig.DYNOPT_COMPILE_ENABLED) {
-            if (vcallNode.callAdapter instanceof CachingCallSite) {
-                CachingCallSite cacheSite = (CachingCallSite)vcallNode.callAdapter;
-                if (cacheSite.isOptimizable()) {
-                    CacheEntry entry = cacheSite.getCache();
-
-                    // recursive calls
-                    if (compileRecursiveCall(vcallNode.getName(), entry.token, CallType.VARIABLE, false, entry.method, context, null, null, expr)) return;
-
-                    // peephole inlining for trivial targets
-                    if (compileTrivialCall(vcallNode.getName(), entry.method, entry.token, context, expr)) return;
-                }
-            }
-        }
 
         context.getInvocationCompiler().invokeDynamic(vcallNode.getName(), null, null, CallType.VARIABLE, null, false);
         // TODO: don't require pop

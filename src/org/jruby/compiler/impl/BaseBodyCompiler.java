@@ -65,6 +65,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.builtin.InstanceVariables;
 import org.jruby.runtime.opto.OptoFactory;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 import org.jruby.util.JavaNameMangler;
 import org.jruby.util.SafePropertyAccessor;
 import org.objectweb.asm.Label;
@@ -447,17 +448,62 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
 
         for (int i = 0; i < count; i++) {
             callback.nextValue(this, null, i);
-            if (encoding != null) {
-                method.invokevirtual(p(RubyString.class), "append19", sig(RubyString.class, params(IRubyObject.class)));
-            } else {
-                method.invokevirtual(p(RubyString.class), "append", sig(RubyString.class, params(IRubyObject.class)));
-            }
+            appendObject(encoding != null);
+        }
+    }
+
+    public void buildNewString(ArrayCallback callback, int count, Encoding encoding) {
+        loadRuntime();
+        method.ldc(StandardASMCompiler.STARTING_DSTR_FACTOR * count);
+        if (encoding == null) {
+            method.invokestatic(p(RubyString.class), "newStringLight", sig(RubyString.class, Ruby.class, int.class));
+        } else {
+            script.getCacheCompiler().cacheEncoding(this, encoding);
+            method.invokestatic(p(RubyString.class), "newStringLight", sig(RubyString.class, Ruby.class, int.class, Encoding.class));
+        }
+
+        for (int i = 0; i < count; i++) {
+            callback.nextValue(this, null, i);
+        }
+    }
+
+    public void appendByteList(ByteList value, int codeRange, boolean is19) {
+        script.getCacheCompiler().cacheByteList(this, value);
+        if (is19) {
+            method.ldc(codeRange);
+            invokeUtilityMethod("appendByteList19", sig(RubyString.class, RubyString.class, ByteList.class, int.class));
+        } else {
+            invokeUtilityMethod("appendByteList", sig(RubyString.class, RubyString.class, ByteList.class));
+        }
+    }
+
+    public void appendObject(boolean is19) {
+        if (is19) {
+            method.invokevirtual(p(RubyString.class), "append19", sig(RubyString.class, params(IRubyObject.class)));
+        } else {
+            method.invokevirtual(p(RubyString.class), "append", sig(RubyString.class, params(IRubyObject.class)));
+        }
+    }
+
+    public void shortcutAppend(boolean is19) {
+        if (is19) {
+            invokeUtilityMethod("shortcutAppend", sig(RubyString.class, RubyString.class, IRubyObject.class));
+        } else {
+            invokeUtilityMethod("shortcutAppend18", sig(RubyString.class, RubyString.class, IRubyObject.class));
+        }
+    }
+
+    public void stringToSymbol(boolean is19) {
+        if (is19) {
+            method.invokevirtual(p(RubyString.class), "intern19", sig(RubySymbol.class));
+        } else {
+            method.invokevirtual(p(RubyString.class), "intern", sig(RubySymbol.class));
         }
     }
 
     public void createNewSymbol(ArrayCallback callback, int count, Encoding encoding) {
         loadRuntime();
-        createNewString(callback, count, encoding);
+        buildNewString(callback, count, encoding);
         toJavaString();
         invokeRuby("newSymbol", sig(RubySymbol.class, params(String.class)));
     }
@@ -653,15 +699,27 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     }
 
     public void createNewHash(Object elements, ArrayCallback callback, int keyCount) {
-        createNewHashCommon(elements, callback, keyCount, "constructHash", "fastASetCheckString");
+        if (keyCount <= 10) {
+            createNewHashCommon(elements, callback, keyCount, "constructSmallHash", "fastASetSmallCheckString");
+        } else {
+            createNewHashCommon(elements, callback, keyCount, "constructHash", "fastASetCheckString");
+        }
     }
 
     public void createNewLiteralHash(Object elements, ArrayCallback callback, int keyCount) {
-        createNewLiteralHashCommon(elements, callback, keyCount, "constructHash", "fastASetCheckString");
+        if (keyCount <= 10) {
+            createNewLiteralHashCommon(elements, callback, keyCount, "constructSmallHash", "fastASetSmallCheckString");
+        } else {
+            createNewLiteralHashCommon(elements, callback, keyCount, "constructHash", "fastASetCheckString");
+        }
     }
     
     public void createNewHash19(Object elements, ArrayCallback callback, int keyCount) {
-        createNewHashCommon(elements, callback, keyCount, "constructHash19", "fastASetCheckString19");
+        if (keyCount <= 10) {
+            createNewHashCommon(elements, callback, keyCount, "constructSmallHash19", "fastASetSmallCheckString19");
+        } else {
+            createNewHashCommon(elements, callback, keyCount, "constructHash19", "fastASetCheckString19");
+        }
     }
     
     private void createNewHashCommon(Object elements, ArrayCallback callback, int keyCount,
@@ -1406,12 +1464,8 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
     }
 
     public void nullToNil() {
-        Label notNull = new Label();
-        method.dup();
-        method.ifnonnull(notNull);
-        method.pop();
-        loadNil();
-        method.label(notNull);
+        loadThreadContext();
+        invokeUtilityMethod("nullToNil", sig(IRubyObject.class, IRubyObject.class, ThreadContext.class));
     }
 
     public void isInstanceOf(Class clazz, BranchCallback trueBranch, BranchCallback falseBranch) {
@@ -1869,6 +1923,12 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         script.getCacheCompiler().cacheByteList(this, byteList);
     }
 
+    public void pushDefinedMessage(DefinedMessage definedMessage) {
+        loadRuntime();
+        method.getstatic(p(DefinedMessage.class), definedMessage.name(), ci(DefinedMessage.class));
+        method.invokevirtual(p(Ruby.class), "getDefinedMessage", sig(RubyString.class, DefinedMessage.class));
+    }
+
     public void isMethodBound(String name, BranchCallback trueBranch, BranchCallback falseBranch) {
         metaclass();
         method.ldc(name);
@@ -1912,35 +1972,12 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         method.label(exitLabel);
     }
 
-    public void isConstantDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch) {
-        loadThreadContext();
-        method.ldc(name);
-        invokeThreadContext("getConstantDefined", sig(boolean.class, params(String.class)));
-        Label falseLabel = new Label();
-        Label exitLabel = new Label();
-        method.ifeq(falseLabel); // EQ == 0 (i.e. false)
-        trueBranch.branch(this);
-        method.go_to(exitLabel);
-        method.label(falseLabel);
-        falseBranch.branch(this);
-        method.label(exitLabel);
+    public void isConstantDefined(String name) {
+        script.getCacheCompiler().cacheConstantDefined(this, name);
     }
 
-    public void isInstanceVariableDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch) {
-        loadSelf();
-        invokeIRubyObject("getInstanceVariables", sig(InstanceVariables.class));
-        method.ldc(name);
-        //method.invokeinterface(p(IRubyObject.class), "getInstanceVariable", sig(IRubyObject.class, params(String.class)));
-        method.invokeinterface(p(InstanceVariables.class), "fastHasInstanceVariable", sig(boolean.class, params(String.class)));
-        Label trueLabel = new Label();
-        Label exitLabel = new Label();
-        //method.ifnonnull(trueLabel);
-        method.ifne(trueLabel);
-        falseBranch.branch(this);
-        method.go_to(exitLabel);
-        method.label(trueLabel);
-        trueBranch.branch(this);
-        method.label(exitLabel);
+    public void isInstanceVariableDefined(String name) {
+        script.getCacheCompiler().cachedGetVariableDefined(this, name);
     }
 
     public void isClassVarDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch) {
@@ -2015,7 +2052,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
             public void branch(BodyCompiler context) {
                 setup.branch(BaseBodyCompiler.this);
                 method.ldc(name); //[C, C, String]
-                invokeUtilityMethod("getDefinedConstantOrBoundMethod", sig(ByteList.class, IRubyObject.class, String.class));
+                invokeUtilityMethod("getDefinedConstantOrBoundMethod", sig(RubyString.class, IRubyObject.class, String.class));
             }
         };
         String mname = getNewRescueName();
@@ -2023,7 +2060,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
                 script.getClassVisitor(),
                     ACC_PUBLIC | ACC_SYNTHETIC | ACC_STATIC,
                     mname,
-                    sig(ByteList.class, "L" + script.getClassname() + ";", ThreadContext.class, IRubyObject.class, Block.class),
+                    sig(RubyString.class, "L" + script.getClassname() + ";", ThreadContext.class, IRubyObject.class, Block.class),
                     null,
                     null);
         SkinnyMethodAdapter old_method = null;
@@ -2101,7 +2138,7 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         method.invokestatic(
                 script.getClassname(),
                 mname,
-                sig(ByteList.class, "L" + script.getClassname() + ";", ThreadContext.class, IRubyObject.class, Block.class));
+                sig(RubyString.class, "L" + script.getClassname() + ";", ThreadContext.class, IRubyObject.class, Block.class));
     }
 
     public void metaclass() {
@@ -2860,12 +2897,12 @@ public abstract class BaseBodyCompiler implements BodyCompiler {
         method.dup2_x1();
         method.pop2();
         method.ldc(name);
-        invokeUtilityMethod("getDefinedCall", sig(ByteList.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class));
+        invokeUtilityMethod("getDefinedCall", sig(RubyString.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class));
     }
 
     public void definedNot() {
         loadRuntime();
         method.swap();
-        invokeUtilityMethod("getDefinedNot", sig(ByteList.class, Ruby.class, ByteList.class));
+        invokeUtilityMethod("getDefinedNot", sig(RubyString.class, Ruby.class, RubyString.class));
     }
 }

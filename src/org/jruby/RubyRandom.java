@@ -26,7 +26,6 @@
 package org.jruby;
 
 import java.math.BigInteger;
-import java.security.SecureRandom;
 
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
@@ -39,9 +38,6 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
 import org.jruby.util.Random;
 import org.jruby.util.TypeConverter;
-
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.OP_EQUAL;
 
 /**
  * Implementation of the Random class.
@@ -272,7 +268,11 @@ public class RubyRandom extends RubyObject {
         if (arg.isNil()) {
             return randFloat(context, random);
         }
-        // 1.9 calls rb_to_int
+
+        if (arg instanceof RubyRange) {
+            return randomRand(context, arg, random);
+        }
+
         RubyInteger max = arg.convertToInteger();
         return randCommon(context, random, max);
     }

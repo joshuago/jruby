@@ -69,9 +69,10 @@ import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.OP_EQUAL;
-import static org.jruby.runtime.MethodIndex.OP_CMP;
-import static org.jruby.runtime.MethodIndex.EQL;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_EQUAL;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_CMP;
+import static org.jruby.runtime.invokedynamic.MethodNames.EQL;
+import static org.jruby.runtime.invokedynamic.MethodNames.INSPECT;
 
 /**
  * RubyBasicObject is the only implementation of the
@@ -221,19 +222,15 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * only if ObjectSpace is enabled.
      */
     public RubyBasicObject(Ruby runtime, RubyClass metaClass) {
-        assert metaClass != null: "NULL Metaclass!!?!?!";
-
         this.metaClass = metaClass;
 
-        if (runtime.isObjectSpaceEnabled()) addToObjectSpace(runtime);
+        runtime.addToObjectSpace(true, this);
     }
 
     /**
      * Path for objects that don't taint and don't enter objectspace.
      */
     public RubyBasicObject(RubyClass metaClass) {
-        assert metaClass != null: "NULL Metaclass!!?!?!";
-
         this.metaClass = metaClass;
     }
 
@@ -245,12 +242,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     protected RubyBasicObject(Ruby runtime, RubyClass metaClass, boolean useObjectSpace) {
         this.metaClass = metaClass;
 
-        if (useObjectSpace) addToObjectSpace(runtime);
-    }
-
-    private void addToObjectSpace(Ruby runtime) {
-        assert runtime.isObjectSpaceEnabled();
-        runtime.getObjectSpace().add(this);
+        runtime.addToObjectSpace(useObjectSpace, this);
     }
 
     protected void taint(Ruby runtime) {
@@ -805,13 +797,15 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     }
 
     public IRubyObject dup() {
-        if (isImmediate()) throw getRuntime().newTypeError("can't dup " + getMetaClass().getName());
+        Ruby runtime = getRuntime();
+
+        if (isImmediate()) throw runtime.newTypeError("can't dup " + getMetaClass().getName());
 
         IRubyObject dup = getMetaClass().getRealClass().allocate();
         if (isTaint()) dup.setTaint(true);
         if (isUntrusted()) dup.setUntrusted(true);
 
-        initCopy(dup, this);
+        initCopy(dup, this, runtime.is1_9() ? "initialize_dup" : "initialize_copy");
 
         return dup;
     }
@@ -821,7 +815,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * Initializes a copy with variable and special instance variable
      * information, and then call the initialize_copy Ruby method.
      */
-    private static void initCopy(IRubyObject clone, IRubyObject original) {
+    private static void initCopy(IRubyObject clone, IRubyObject original, String method) {
         assert !clone.isFrozen() : "frozen object (" + clone.getMetaClass().getName() + ") allocated";
 
         original.copySpecialInstanceVariables(clone);
@@ -834,7 +828,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         }
 
         /* FIXME: finalizer should be dupped here */
-        clone.callMethod(clone.getRuntime().getCurrentContext(), "initialize_copy", original);
+        clone.callMethod(clone.getRuntime().getCurrentContext(), method, original);
     }
 
     /**
@@ -852,18 +846,20 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * Prefered over callMethod(context, "inspect")
      */
     static RubyString inspect(ThreadContext context, IRubyObject object) {
-        return RubyString.objAsString(context, object.callMethod(context, "inspect"));
+        return RubyString.objAsString(context, invokedynamic(context, object, INSPECT));
     }
 
     public IRubyObject rbClone() {
-        if (isImmediate()) throw getRuntime().newTypeError("can't clone " + getMetaClass().getName());
+        Ruby runtime = getRuntime();
+
+        if (isImmediate()) throw runtime.newTypeError("can't clone " + getMetaClass().getName());
 
         // We're cloning ourselves, so we know the result should be a RubyObject
         RubyBasicObject clone = (RubyBasicObject)getMetaClass().getRealClass().allocate();
         clone.setMetaClass(getSingletonClassClone());
         if (isTaint()) clone.setTaint(true);
 
-        initCopy(clone, this);
+        initCopy(clone, this, runtime.is1_9() ? "initialize_clone" : "initialize_copy");
 
         if (isFrozen()) clone.setFrozen(true);
         if (isUntrusted()) clone.setUntrusted(true);
@@ -1083,7 +1079,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
             if (value == null || !(value instanceof IRubyObject) || !IdUtil.isInstanceVariable(entry.getKey())) continue;
             
             part.append(sep).append(" ").append(entry.getKey()).append("=");
-            part.append(((IRubyObject)value).callMethod(context, "inspect"));
+            part.append(invokedynamic(context, (IRubyObject)value, INSPECT));
             sep = ",";
         }
         part.append(">");
@@ -1657,10 +1653,6 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     }
 
     @JRubyMethod(name = "__send__", compat = RUBY1_9)
-    public IRubyObject send19(ThreadContext context, Block block) {
-        throw context.runtime.newArgumentError(0, 1);
-    }
-    @JRubyMethod(name = "__send__", compat = RUBY1_9)
     public IRubyObject send19(ThreadContext context, IRubyObject arg0, Block block) {
         String name = arg0.asJavaString();
 
@@ -1678,7 +1670,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
 
         return getMetaClass().finvoke(context, this, name, arg1, arg2, block);
     }
-    @JRubyMethod(name = "__send__", rest = true, compat = RUBY1_9)
+    @JRubyMethod(name = "__send__", required = 1, rest = true, compat = RUBY1_9)
     public IRubyObject send19(ThreadContext context, IRubyObject[] args, Block block) {
         String name = args[0].asJavaString();
         int newArgsLength = args.length - 1;

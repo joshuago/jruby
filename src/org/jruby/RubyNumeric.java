@@ -803,14 +803,27 @@ public class RubyNumeric extends RubyObject {
         return this;
     }
 
-    private static void fixnumStep(ThreadContext context, Ruby runtime, long value, long end, long diff, Block block) {
-        if (diff == 0) throw runtime.newArgumentError("step cannot be 0");
-        if (diff > 0) {
-            for (long i = value; i <= end; i += diff) {
+    private static void fixnumStep(ThreadContext context, Ruby runtime, long from, long to, long step, Block block) {
+        // We must avoid integer overflows in "i += step".
+        if (step == 0) throw runtime.newArgumentError("step cannot be 0");
+        if (step > 0) {
+            long tov = Long.MAX_VALUE - step;
+            if (to < tov) tov = to;
+            long i;
+            for (i = from; i <= tov; i += step) {
+                block.yield(context, RubyFixnum.newFixnum(runtime, i));
+            }
+            if (i <= to) {
                 block.yield(context, RubyFixnum.newFixnum(runtime, i));
             }
         } else {
-            for (long i = value; i >= end; i += diff) {
+            long tov = Long.MIN_VALUE - step;
+            if (to > tov) tov = to;
+            long i;
+            for (i = from; i >= tov; i += step) {
+                block.yield(context, RubyFixnum.newFixnum(runtime, i));
+            }
+            if (i >= to) {
                 block.yield(context, RubyFixnum.newFixnum(runtime, i));
             }
         }

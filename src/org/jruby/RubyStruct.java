@@ -54,19 +54,17 @@ import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.ClassIndex;
 
-import java.util.concurrent.Callable;
-
 import static org.jruby.runtime.Visibility.*;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.HASH;
+import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
 
 /**
  * @author  jpetersen
  */
 @JRubyClass(name="Struct")
 public class RubyStruct extends RubyObject {
-    private IRubyObject[] values;
+    private final IRubyObject[] values;
 
     /**
      * Constructor for RubyStruct.
@@ -471,7 +469,7 @@ public class RubyStruct extends RubyObject {
     }
 
     private RaiseException notStructMemberError(String name) {
-        return getRuntime().newNameError(name + " is not struct member", name);
+        return getRuntime().newNameError("no member '" + name + "' in struct", name);
     }
 
     public IRubyObject get(int index) {
@@ -481,7 +479,6 @@ public class RubyStruct extends RubyObject {
     @Override
     public void copySpecialInstanceVariables(IRubyObject clone) {
         RubyStruct struct = (RubyStruct)clone;
-        struct.values = new IRubyObject[values.length];
         System.arraycopy(values, 0, struct.values, 0, values.length);
     }
 
@@ -624,9 +621,9 @@ public class RubyStruct extends RubyObject {
         idx = idx < 0 ? values.length + idx : idx;
 
         if (idx < 0) {
-            throw getRuntime().newIndexError("offset " + idx + " too large for struct (size:" + values.length + ")");
+            throw getRuntime().newIndexError("offset " + idx + " too small for struct(size:" + values.length + ")");
         } else if (idx >= values.length) {
-            throw getRuntime().newIndexError("offset " + idx + " too large for struct (size:" + values.length + ")");
+            throw getRuntime().newIndexError("offset " + idx + " too large for struct(size:" + values.length + ")");
         }
 
         return values[idx];
@@ -643,9 +640,9 @@ public class RubyStruct extends RubyObject {
         idx = idx < 0 ? values.length + idx : idx;
 
         if (idx < 0) {
-            throw getRuntime().newIndexError("offset " + idx + " too large for struct (size:" + values.length + ")");
+            throw getRuntime().newIndexError("offset " + idx + " too small for struct(size:" + values.length + ")");
         } else if (idx >= values.length) {
-            throw getRuntime().newIndexError("offset " + idx + " too large for struct (size:" + values.length + ")");
+            throw getRuntime().newIndexError("offset " + idx + " too large for struct(size:" + values.length + ")");
         }
 
         modify();
@@ -761,7 +758,6 @@ public class RubyStruct extends RubyObject {
         if (this == arg) return this;
         RubyStruct original = (RubyStruct) arg;
         
-        values = new IRubyObject[original.values.length];
         System.arraycopy(original.values, 0, values, 0, original.values.length);
 
         return this;

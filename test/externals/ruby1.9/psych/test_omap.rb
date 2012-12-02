@@ -2,6 +2,13 @@ require 'psych/helper'
 
 module Psych
   class TestOmap < TestCase
+    def test_parse_as_map
+      o = Psych.load "--- !!omap\na: 1\nb: 2"
+      assert_kind_of Psych::Omap, o
+      assert_equal 1, o['a']
+      assert_equal 2, o['b']
+    end
+
     def test_self_referential
       map = Psych::Omap.new
       map['foo'] = 'bar'
@@ -30,14 +37,12 @@ module Psych
       assert_equal 'c', map['b']
     end
 
-    unless RUBY_ENGINE == 'jruby'
-      def test_dump
-        map = Psych::Omap['a', 'b', 'c', 'd']
-        yaml = Psych.dump(map)
-        assert_match('!omap', yaml)
-        assert_match('- a: b', yaml)
-        assert_match('- c: d', yaml)
-      end
+    def test_dump
+      map = Psych::Omap['a', 'b', 'c', 'd']
+      yaml = Psych.dump(map)
+      assert_match('!omap', yaml)
+      assert_match('- a: b', yaml)
+      assert_match('- c: d', yaml)
     end
 
     def test_round_trip

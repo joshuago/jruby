@@ -45,6 +45,7 @@ import org.jruby.RubyModule;
 import org.jruby.RubyNumeric;
 import org.jruby.RubyObject;
 import org.jruby.RubyString;
+import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.RaiseException;
@@ -67,6 +68,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 /**
  * @author <a href="mailto:ola.bini@ki.se">Ola Bini</a>
  */
+@SuppressWarnings("deprecation")
 public class SSLContext extends RubyObject {
     private static final long serialVersionUID = -6203496135962974777L;
 
@@ -339,8 +341,14 @@ public class SSLContext extends RubyObject {
 
     @JRubyMethod(name = "ssl_version=")
     public IRubyObject set_ssl_version(IRubyObject val) {
-        RubyString str = val.convertToString();
-        String given = str.toString();
+        String given;
+
+        if (val instanceof RubyString) {
+            RubyString str = val.convertToString();
+            given = str.toString();
+        } else {
+            given = val.toString();
+        }
         String mapped = SSL_VERSION_OSSL2JSSE.get(given);
         if (mapped == null) {
             throw newSSLError(getRuntime(), String.format("unknown SSL method `%s'.", given));
@@ -353,7 +361,7 @@ public class SSLContext extends RubyObject {
         if (given.endsWith("_server")) {
             protocolForClient = false;
         }
-        return str;
+        return val;
     }
 
     boolean isProtocolForServer() {
@@ -380,7 +388,16 @@ public class SSLContext extends RubyObject {
 
     // should keep SSLContext as a member for introducin SSLSession. later...
     SSLEngine createSSLEngine(String peerHost, int peerPort) throws NoSuchAlgorithmException, KeyManagementException {
-        SSLEngine engine = internalCtx.getSSLContext().createSSLEngine(peerHost, peerPort);
+        SSLEngine engine;
+        // an empty peerHost implies no SNI (RFC 3546) support requested
+        if (peerHost == null || peerHost.length() == 0) {
+            engine = internalCtx.getSSLContext().createSSLEngine();
+        }
+        // SNI is attempted for valid peerHost hostname on Java >= 7
+        // if peerHost is set to an IP address Java does not use SNI
+        else {
+            engine = internalCtx.getSSLContext().createSSLEngine(peerHost, peerPort);
+        }
         engine.setEnabledCipherSuites(getCipherSuites(engine));
         engine.setEnabledProtocols(getEnabledProtocols(engine));
         return engine;

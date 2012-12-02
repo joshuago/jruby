@@ -886,7 +886,7 @@ public class RubyYaccLexer {
             case Tokens.tSTRING_CONTENT: System.err.print("tSTRING_CONTENT[" + ((StrNode) value()).getValue().toString() + "],"); break;
             case Tokens.tSTRING_BEG: System.err.print("tSTRING_BEG,"); break;
             case Tokens.tSTRING_END: System.err.print("tSTRING_END,"); break;
-            case Tokens.tSTRING_DBEG: System.err.print("STRING_DBEG,"); break;
+            case Tokens.tSTRING_DBEG: System.err.print("tSTRING_DBEG,"); break;
             case Tokens.tSTRING_DVAR: System.err.print("tSTRING_DVAR,"); break;
             case Tokens.tXSTRING_BEG: System.err.print("tXSTRING_BEG,"); break;
             case Tokens.tREGEXP_BEG: System.err.print("tREGEXP_BEG,"); break;
@@ -957,7 +957,7 @@ public class RubyYaccLexer {
 
     // DEBUGGING HELP 
     private int yylex2() throws IOException {
-        int currentToken = yylex();
+        int currentToken = yylex2();
         
         printToken(currentToken);
         
@@ -1658,7 +1658,7 @@ public class RubyYaccLexer {
                 src.unread(c2);
                 setState(LexState.EXPR_BEG);
                 src.read();
-                yaccValue = new Token(tempVal, getPosition());
+                yaccValue = new Token(tempVal, Tokens.tLABEL, getPosition());
                 return Tokens.tLABEL;
             }
             src.unread(c2);

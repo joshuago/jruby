@@ -34,6 +34,7 @@ import org.jruby.ast.NodeType;
 import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.parser.StaticScope;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 
 /**
  *
@@ -136,6 +137,33 @@ public interface BodyCompiler {
      */
     public void createNewString(ArrayCallback callback, int count, Encoding encoding);
     public void createNewSymbol(ArrayCallback callback, int count, Encoding encoding);
+
+    /**
+     * Build a string using the given callback. A String will be create at the start,
+     * and each iteration is expected to leave a String on the stack.
+     */
+    public void buildNewString(ArrayCallback callback, int count, Encoding encoding);
+
+    /**
+     * Append the given bytelist + coderange to the string currently on the stack.
+     */
+    public void appendByteList(ByteList value, int codeRange, boolean is19);
+
+    /**
+     * Append the object on stack to the string below it.
+     */
+    public void appendObject(boolean is19);
+
+    /**
+     * A "shortcut" append that skips conversions to String where possible.
+     * Same stack requirements as appendObject.
+     */
+    public void shortcutAppend(boolean is19);
+
+    /**
+     * Convert a String on stack to a Symbol
+     */
+    public void stringToSymbol(boolean is19);
 
     /**
      * Generate a new "Symbol" value (or fetch the existing one).
@@ -539,11 +567,12 @@ public interface BodyCompiler {
     public void pushNull();
     public void pushString(String strVal);
     public void pushByteList(ByteList bl);
+    public void pushDefinedMessage(DefinedMessage definedMessage);
     public void isMethodBound(String name, BranchCallback trueBranch, BranchCallback falseBranch);
     public void hasBlock(BranchCallback trueBranch, BranchCallback falseBranch);
     public void isGlobalDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch);
-    public void isConstantDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch);
-    public void isInstanceVariableDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch);
+    public void isConstantDefined(String name);
+    public void isInstanceVariableDefined(String name);
     public void isClassVarDefined(String name, BranchCallback trueBranch, BranchCallback falseBranch);
     public Object getNewEnding();
     public void ifNull(Object gotoToken);

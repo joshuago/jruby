@@ -39,7 +39,7 @@ import org.jruby.exceptions.RaiseException;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.OP_CMP;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_CMP;
 
 /** Implementation of the Comparable module.
  *
@@ -115,6 +115,11 @@ public class RubyComparable {
 
         try {
             IRubyObject result = invokedynamic(context, recv, OP_CMP, other);
+
+            // This is only to prevent throwing exceptions by cmperr - it has poor performance
+            if (result.isNil()) {
+                return returnValueOnError;
+            }
 
             return RubyBoolean.newBoolean(runtime, cmpint(context, result, recv, other) == 0);
         } catch (RaiseException e) {

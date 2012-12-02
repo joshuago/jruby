@@ -57,6 +57,7 @@ import java.text.DecimalFormatSymbols;
 import java.util.Locale;
 
 import org.jcodings.specific.ASCIIEncoding;
+import org.jcodings.specific.USASCIIEncoding;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.runtime.ClassIndex;
@@ -70,7 +71,7 @@ import org.jruby.util.ConvertDouble;
 import org.jruby.util.Sprintf;
 
 import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.OP_EQUAL;
+import static org.jruby.runtime.invokedynamic.MethodNames.OP_EQUAL;
 
 /**
   * A representation of a float object
@@ -146,7 +147,7 @@ public class RubyFloat extends RubyNumeric {
     }
 
     public RubyFloat(Ruby runtime, double value) {
-        super(runtime, runtime.getFloat());
+        super(runtime.getFloat());
         this.value = value;
     }
 
@@ -247,6 +248,9 @@ public class RubyFloat extends RubyNumeric {
         while (buf.get(p - 1) == '0' && ascii.isDigit(buf.get(p - 2))) p--;
         System.arraycopy(buf.getUnsafeBytes(), e, buf.getUnsafeBytes(), p, buf.getRealSize() - e);
         buf.setRealSize(p + buf.getRealSize() - e);
+
+        if (getRuntime().is1_9()) buf.setEncoding(USASCIIEncoding.INSTANCE);
+
         return runtime.newString(buf);
     }
 

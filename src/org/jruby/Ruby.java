@@ -99,13 +99,13 @@ import org.jruby.runtime.DynamicScope;
 import org.jruby.runtime.EventHook;
 import org.jruby.runtime.GlobalVariable;
 import org.jruby.runtime.IAccessor;
-import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ObjectSpace;
 import org.jruby.runtime.RubyEvent;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.encoding.EncodingService;
+import org.jruby.runtime.invokedynamic.MethodNames;
 import org.jruby.runtime.load.BasicLibraryService;
 import org.jruby.runtime.load.CompiledScriptLoader;
 import org.jruby.runtime.load.Library;
@@ -115,9 +115,11 @@ import org.jruby.runtime.opto.OptoFactory;
 import org.jruby.runtime.profile.ProfileData;
 import org.jruby.runtime.profile.ProfilePrinter;
 import org.jruby.runtime.profile.ProfiledMethod;
+import org.jruby.runtime.profile.ProfileOutput;
 import org.jruby.runtime.scope.ManyVarsDynamicScope;
 import org.jruby.threading.DaemonThreadFactory;
 import org.jruby.util.ByteList;
+import org.jruby.util.DefinedMessage;
 import org.jruby.util.IOInputStream;
 import org.jruby.util.IOOutputStream;
 import org.jruby.util.JRubyClassLoader;
@@ -143,19 +145,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.net.BindException;
 import java.nio.channels.ClosedChannelException;
 import java.security.SecureRandom;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.IdentityHashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.Stack;
-import java.util.Vector;
-import java.util.WeakHashMap;
+import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.SynchronousQueue;
@@ -164,6 +154,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
+import org.jruby.javasupport.proxy.JavaProxyClassFactory;
 
 /**
  * The Ruby object represents the top-level of a JRuby "instance" in a given VM.
@@ -214,6 +205,7 @@ public final class Ruby {
         this.out                = config.getOutput();
         this.err                = config.getError();
         this.objectSpaceEnabled = config.isObjectSpaceEnabled();
+        this.siphashEnabled     = config.isSiphashEnabled();
         this.profile            = config.getProfile();
         this.currentDirectory   = config.getCurrentDirectory();
         this.kcode              = config.getKCode();
@@ -229,7 +221,8 @@ public final class Ruby {
             myRandom = new Random();
         }
         this.random = myRandom;
-        this.hashSeed = this.random.nextInt();
+        this.hashSeedK0 = this.random.nextLong();
+        this.hashSeedK1 = this.random.nextLong();
         
         this.beanManager.register(new Config(this));
         this.beanManager.register(parserStats);
@@ -237,9 +230,15 @@ public final class Ruby {
         this.beanManager.register(new org.jruby.management.Runtime(this));
 
         this.runtimeCache = new RuntimeCache();
-        runtimeCache.initMethodCache(ClassIndex.MAX_CLASSES * MethodIndex.MAX_METHODS);
+        runtimeCache.initMethodCache(ClassIndex.MAX_CLASSES * MethodNames.values().length - 1);
         
         constantInvalidator = OptoFactory.newConstantInvalidator();
+
+        if (config.isObjectSpaceEnabled()) {
+            objectSpacer = ENABLED_OBJECTSPACE;
+        } else {
+            objectSpacer = DISABLED_OBJECTSPACE;
+        }
     }
     
     /**
@@ -1111,6 +1110,9 @@ public final class Ruby {
 
         // Initialize all the core classes
         bootstrap();
+
+        // set up defined messages
+        initDefinedMessages();
         
         irManager = new IRManager();
         
@@ -1123,11 +1125,17 @@ public final class Ruby {
 
         // Prepare LoadService and load path
         getLoadService().init(config.getLoadPaths());
-        
-        booting = false;
 
         // initialize builtin libraries
         initBuiltins();
+
+        // load JRuby internals, which loads Java support
+        if (!RubyInstanceConfig.DEBUG_PARSER) {
+            loadService.require("jruby");
+        }
+
+        // out of base boot mode
+        booting = false;
         
         // init Ruby-based kernel
         initRubyKernel();
@@ -1159,6 +1167,14 @@ public final class Ruby {
     private void bootstrap() {
         initCore();
         initExceptions();
+    }
+
+    private void initDefinedMessages() {
+        for (DefinedMessage definedMessage : DefinedMessage.values()) {
+            RubyString str = RubyString.newString(this, ByteList.create(definedMessage.getText()));
+            str.setFrozen(true);
+            definedMessages.put(definedMessage, str);
+        }
     }
 
     private void initRoot() {
@@ -1508,6 +1524,9 @@ public final class Ruby {
     }
 
     private void initBuiltins() {
+        // We cannot load any .rb and debug new parser features
+        if (RubyInstanceConfig.DEBUG_PARSER) return;
+        
         addLazyBuiltin("java.rb", "java", "org.jruby.javasupport.Java");
         addLazyBuiltin("jruby.rb", "jruby", "org.jruby.ext.jruby.JRubyLibrary");
         addLazyBuiltin("jruby/util.rb", "jruby/util", "org.jruby.ext.jruby.JRubyUtilLibrary");
@@ -1540,7 +1559,7 @@ public final class Ruby {
         addLazyBuiltin("fcntl.rb", "fcntl", "org.jruby.ext.fcntl.FcntlLibrary");
         addLazyBuiltin("rubinius.jar", "rubinius", "org.jruby.ext.rubinius.RubiniusLibrary");
         addLazyBuiltin("yecht.jar", "yecht", "YechtService");
-        addLazyBuiltin("jopenssl.jar", "jopenssl", "org.jruby.ext.openssl.OSSLLibrary");
+        addLazyBuiltin("openssl.jar", "openssl", "org.jruby.ext.openssl.OSSLLibrary");
 
         if (is1_9()) {
             addLazyBuiltin("mathn/complex.jar", "mathn/complex", "org.jruby.ext.mathn.Complex");
@@ -1575,6 +1594,9 @@ public final class Ruby {
     }
     
     private void initRubyKernel() {
+        // We cannot load any .rb and debug new parser features
+        if (RubyInstanceConfig.DEBUG_PARSER) return;
+        
         // load Ruby parts of core
         loadService.loadFromClassLoader(getClassLoader(), "jruby/kernel.rb", false);
         
@@ -2468,6 +2490,12 @@ public final class Ruby {
         return loadService;
     }
 
+    /**
+     * This is an internal encoding if actually specified via default_internal=
+     * or passed in via -E.
+     * 
+     * @return null or encoding
+     */
     public Encoding getDefaultInternalEncoding() {
         return defaultInternalEncoding;
     }
@@ -2694,6 +2722,15 @@ public final class Ruby {
     public Map<String, Map<String, String>> getBoundMethods() {
         return boundMethods;
     }
+
+    public void setJavaProxyClassFactory(JavaProxyClassFactory factory) {
+        this.javaProxyClassFactory = factory;
+    }
+    
+    public JavaProxyClassFactory getJavaProxyClassFactory() {
+        return javaProxyClassFactory;
+    }
+            
 
     public class CallTraceFuncHook extends EventHook {
         private RubyProc traceFunc;
@@ -2924,9 +2961,8 @@ public final class Ruby {
 
         if (config.isProfilingEntireRun()) {
             // not using logging because it's formatted
-            System.err.println("\nmain thread profile results:");
             ProfileData profileData = threadService.getMainThread().getContext().getProfileData();
-            printProfileData(profileData, System.err);
+            printProfileData(profileData);
         }
 
         if (systemExit && status != 0) {
@@ -2939,13 +2975,25 @@ public final class Ruby {
      * @param profileData
      * @param out
      * @see RubyInstanceConfig#getProfilingMode()
+     * @deprecated use printProfileData(ProfileData) or printProfileData(ProfileData,ProfileOutput)
      */
     public void printProfileData(ProfileData profileData, PrintStream out) {
-        ProfilePrinter profilePrinter = ProfilePrinter.newPrinter(config.getProfilingMode(), profileData);
-        if (profilePrinter != null) profilePrinter.printProfile(out);
-        else out.println("\nno printer for profile mode: " + config.getProfilingMode() + " !");
+        printProfileData(profileData, new ProfileOutput(out));
     }
-    
+
+    public void printProfileData(ProfileData profileData) {
+        printProfileData(profileData, config.getProfileOutput());
+    }
+
+    public void printProfileData(ProfileData profileData, ProfileOutput output) {
+        ProfilePrinter profilePrinter = ProfilePrinter.newPrinter(config.getProfilingMode(), profileData);
+        if (profilePrinter != null) {
+            output.printProfile(profilePrinter);
+        } else {
+            out.println("\nno printer for profile mode: " + config.getProfilingMode() + " !");
+        }
+    }
+
     // new factory methods ------------------------------------------------------------------------
 
     public RubyArray newEmptyArray() {
@@ -3449,7 +3497,7 @@ public final class Ruby {
 
     public RaiseException newIOErrorFromException(IOException ioe) {
         if (ioe instanceof ClosedChannelException) {
-            throw newIOError("closed stream");
+            throw newErrnoEBADFError();
         }
 
         // TODO: this is kinda gross
@@ -3897,6 +3945,11 @@ public final class Ruby {
     public void setObjectSpaceEnabled(boolean objectSpaceEnabled) {
         this.objectSpaceEnabled = objectSpaceEnabled;
     }
+    
+    // You cannot set siphashEnabled property except via RubyInstanceConfig to avoid mixing hash functions.
+    public boolean isSiphashEnabled() {
+        return siphashEnabled;
+    }
 
     public long getStartTime() {
         return startTime;
@@ -4192,9 +4245,13 @@ public final class Ruby {
     public Random getRandom() {
         return random;
     }
-    
-    public int getHashSeed() {
-        return hashSeed;
+
+    public long getHashSeedK0() {
+        return hashSeedK0;
+    }
+
+    public long getHashSeedK1() {
+        return hashSeedK1;
     }
     
     public StaticScopeFactory getStaticScopeFactory() {
@@ -4207,6 +4264,10 @@ public final class Ruby {
 
     public void setFFI(FFI ffi) {
         this.ffi = ffi;
+    }
+
+    public RubyString getDefinedMessage(DefinedMessage definedMessage) {
+        return definedMessages.get(definedMessage);
     }
 
     @Deprecated
@@ -4240,6 +4301,7 @@ public final class Ruby {
     private boolean globalAbortOnExceptionEnabled = false;
     private boolean doNotReverseLookupEnabled = false;
     private volatile boolean objectSpaceEnabled;
+    private boolean siphashEnabled;
     
     private final Set<Script> jittedMethods = Collections.synchronizedSet(new WeakHashSet<Script>());
     
@@ -4451,7 +4513,8 @@ public final class Ruby {
     private final Random random;
 
     /** The runtime-local seed for hash randomization */
-    private int hashSeed;
+    private long hashSeedK0;
+    private long hashSeedK1;
     
     private final StaticScopeFactory staticScopeFactory;
     
@@ -4463,4 +4526,29 @@ public final class Ruby {
     private ThreadLocal<Boolean> inRecursiveListOperation = new ThreadLocal<Boolean>();
 
     private FFI ffi;
+    
+    private JavaProxyClassFactory javaProxyClassFactory;
+
+    private EnumMap<DefinedMessage, RubyString> definedMessages = new EnumMap<DefinedMessage, RubyString>(DefinedMessage.class);
+
+    private interface ObjectSpacer {
+        public void addToObjectSpace(Ruby runtime, boolean useObjectSpace, IRubyObject object);
+    }
+
+    private static final ObjectSpacer DISABLED_OBJECTSPACE = new ObjectSpacer() {
+        public void addToObjectSpace(Ruby runtime, boolean useObjectSpace, IRubyObject object) {
+        }
+    };
+
+    private static final ObjectSpacer ENABLED_OBJECTSPACE = new ObjectSpacer() {
+        public void addToObjectSpace(Ruby runtime, boolean useObjectSpace, IRubyObject object) {
+            if (useObjectSpace) runtime.objectSpace.add(object);
+        }
+    };
+
+    private final ObjectSpacer objectSpacer;
+
+    public void addToObjectSpace(boolean useObjectSpace, IRubyObject object) {
+        objectSpacer.addToObjectSpace(this, useObjectSpace, object);
+    }
 }

@@ -378,7 +378,7 @@
           jffi-x86_64-Windows.jar
           jffi-s390x-Linux.jar
           joda-time-${joda.time.version}.jar
-          snakeyaml-1.10.jar
+          snakeyaml-1.11.jar
           yecht.jar
           yydebug.jar
           nailgun-0.7.1.jar
@@ -426,7 +426,19 @@ other than ASM, which is rewritten to avoid conflicts. -->
             <fileset dir="${jruby.classes.dir}"/>
             <zipfileset src="${build.lib.dir}/${asm.jar}"/>
             <zipfileset src="${build.lib.dir}/${asm.util.jar}"/>
+            <zipfileset src="${build.lib.dir}/${asm.tree.jar}"/>
+            <zipfileset src="${build.lib.dir}/${asm.commons.jar}"/>
+            <zipfileset src="${build.lib.dir}/${asm.analysis.jar}"/>
             <zipfileset src="${build.lib.dir}/yecht.jar"/>
+            <zipfileset src="${build.lib.dir}/nailgun-0.7.1.jar"/>
+            <zipfileset src="${build.lib.dir}/invokebinder.jar"/>
+            <zipfileset src="${build.lib.dir}/yydebug.jar"/>
+            <zipfileset src="${build.lib.dir}/bcmail-jdk15-146.jar">
+                <exclude name="META-INF/BCKEY.*"/>
+            </zipfileset>
+            <zipfileset src="${build.lib.dir}/bcprov-jdk15-146.jar">
+                <exclude name="META-INF/BCKEY.*"/>
+            </zipfileset>
             <metainf dir="spi">
                 <include name="services/**"/>
             </metainf>
@@ -435,6 +447,7 @@ other than ASM, which is rewritten to avoid conflicts. -->
                 <attribute name="Main-Class" value="org.jruby.Main"/>
             </manifest>
             <rule pattern="org.objectweb.asm.**" result="org.jruby.org.objectweb.asm.@1"/>
+            <rule pattern="org.bouncycastle.**" result="org.jruby.org.bouncycastle.@1"/>
         </jarjar>
         <antcall target="_osgify-jar_">
             <param name="bndfile" value="jruby.bnd"/>
@@ -468,6 +481,7 @@ other than ASM, which is rewritten to avoid conflicts. -->
                 <attribute name="Main-Class" value="org.jruby.Main"/>
             </manifest>
             <rule pattern="org.objectweb.asm.**" result="org.jruby.org.objectweb.asm.@1"/>
+            <rule pattern="org.bouncycastle.**" result="org.jruby.org.bouncycastle.@1"/>
         </jarjar>
         <antcall target="_osgify-jar_">
             <param name="bndfile" value="jruby.bnd"/>
@@ -596,6 +610,7 @@ other than ASM, which is rewritten to avoid conflicts. -->
                 <attribute name="Main-Class" value="${mainclass}"/>
             </manifest>
             <rule pattern="org.objectweb.asm.**" result="org.jruby.org.objectweb.asm.@1"/>
+            <rule pattern="org.bouncycastle.**" result="org.jruby.org.bouncycastle.@1"/>
         </jarjar>
         <antcall target="_osgify-jar_">
             <param name="bndfile" value="jruby-complete.bnd"/>

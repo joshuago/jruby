@@ -27,9 +27,19 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.ext.psych;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
+import java.io.Reader;
 import java.io.StringReader;
+import java.nio.channels.Channel;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.charset.Charset;
 import java.util.Map;
+
+import org.jcodings.Encoding;
+import org.jcodings.specific.ASCIIEncoding;
+import org.jcodings.specific.USASCIIEncoding;
 import org.jcodings.specific.UTF16BEEncoding;
 import org.jcodings.specific.UTF16LEEncoding;
 import org.jcodings.specific.UTF8Encoding;
@@ -37,13 +47,13 @@ import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
 import org.jruby.RubyEncoding;
-import org.jruby.RubyException;
 import org.jruby.RubyIO;
 import org.jruby.RubyKernel;
 import org.jruby.RubyModule;
 import org.jruby.RubyObject;
 import org.jruby.RubyString;
 import org.jruby.anno.JRubyMethod;
+import static org.jruby.ext.psych.PsychLibrary.YAMLEncoding.*;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
@@ -52,6 +62,7 @@ import org.jruby.util.IOInputStream;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 import org.jruby.util.unsafe.UnsafeFactory;
+import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.error.Mark;
 import org.yaml.snakeyaml.error.MarkedYAMLException;
 import org.yaml.snakeyaml.events.AliasEvent;
@@ -74,11 +85,6 @@ import org.jruby.util.ByteList;
 public class PsychParser extends RubyObject {
 
     private static final Logger LOG = LoggerFactory.getLogger("PsychParser");
-
-    public static final int YAML_ANY_ENCODING = 0;
-    public static final int YAML_UTF8_ENCODING = UTF8Encoding.INSTANCE.getIndex();
-    public static final int YAML_UTF16LE_ENCODING = UTF16LEEncoding.INSTANCE.getIndex();
-    public static final int YAML_UTF16BE_ENCODING = UTF16BEEncoding.INSTANCE.getIndex();
     
     public static void initPsychParser(Ruby runtime, RubyModule psych) {
         RubyClass psychParser = runtime.defineClassUnder("Parser", runtime.getObject(), new ObjectAllocator() {
@@ -89,14 +95,12 @@ public class PsychParser extends RubyObject {
 
         RubyKernel.require(runtime.getNil(),
                 runtime.newString("psych/syntax_error"), Block.NULL_BLOCK);
-        psychParser.defineConstant("ANY", runtime.newFixnum(YAML_ANY_ENCODING));
-        psychParser.defineConstant("UTF8", runtime.newFixnum(YAML_UTF8_ENCODING));
-        psychParser.defineConstant("UTF16LE", runtime.newFixnum(YAML_UTF16LE_ENCODING));
-        psychParser.defineConstant("UTF16BE", runtime.newFixnum(YAML_UTF16BE_ENCODING));
+        psychParser.defineConstant("ANY", runtime.newFixnum(YAML_ANY_ENCODING.ordinal()));
+        psychParser.defineConstant("UTF8", runtime.newFixnum(YAML_UTF8_ENCODING.ordinal()));
+        psychParser.defineConstant("UTF16LE", runtime.newFixnum(YAML_UTF16LE_ENCODING.ordinal()));
+        psychParser.defineConstant("UTF16BE", runtime.newFixnum(YAML_UTF16BE_ENCODING.ordinal()));
 
         psychParser.defineAnnotatedMethods(PsychParser.class);
-
-        psych.defineClassUnder("SyntaxError", runtime.getSyntaxError(), RubyException.EXCEPTION_ALLOCATOR);
     }
 
     public PsychParser(Ruby runtime, RubyClass klass) {
@@ -117,7 +121,17 @@ public class PsychParser extends RubyObject {
     }
     
     private RubyString stringFor(Ruby runtime, String value, boolean tainted) {
-        ByteList bytes = new ByteList(value.getBytes(RubyEncoding.UTF8), UTF8Encoding.INSTANCE);
+        Encoding encoding = runtime.getDefaultInternalEncoding();
+        if (encoding == null) {
+            encoding = UTF8Encoding.INSTANCE;
+        }
+
+        Charset charset = RubyEncoding.UTF8;
+        if (encoding.getCharset() != null) {
+            charset = encoding.getCharset();
+        }
+
+        ByteList bytes = new ByteList(value.getBytes(charset), encoding);
         RubyString string = RubyString.newString(runtime, bytes);
         
         string.setTaint(tainted);
@@ -125,22 +139,36 @@ public class PsychParser extends RubyObject {
         return string;
     }
     
-    private StreamReader readerFor(IRubyObject yaml) {
-        if (yaml.respondsTo("read")) {
-            return new StreamReader(new InputStreamReader(new IOInputStream(yaml), RubyEncoding.UTF8));
+    private StreamReader readerFor(ThreadContext context, IRubyObject yaml) {
+        Ruby runtime = context.runtime;
+
+        if (yaml instanceof RubyString) {
+            ByteList byteList = ((RubyString)yaml).getByteList();
+            ByteArrayInputStream bais = new ByteArrayInputStream(byteList.getUnsafeBytes(), byteList.getBegin(), byteList.getRealSize());
+
+            Charset charset = byteList.getEncoding().getCharset();
+            if (charset == null) charset = Charset.defaultCharset();
+
+            InputStreamReader isr = new InputStreamReader(bais, charset);
+
+            return new StreamReader(isr);
         }
 
-        return new StreamReader(new StringReader(yaml.convertToString().asJavaString()));
+        // fall back on IOInputStream, using default charset
+        if (yaml.respondsTo("read")) {
+            return new StreamReader(new InputStreamReader(new IOInputStream(yaml), Charset.defaultCharset()));
+        } else {
+            throw runtime.newTypeError(yaml, runtime.getIO());
+        }
     }
 
     @JRubyMethod
     public IRubyObject parse(ThreadContext context, IRubyObject yaml, IRubyObject path) {
         Ruby runtime = context.runtime;
         boolean tainted = yaml.isTaint() || yaml instanceof RubyIO;
-        
-        // FIXME? only supports Unicode, since we have to produces strings...
+
         try {
-            parser = new ParserImpl(readerFor(yaml));
+            parser = new ParserImpl(readerFor(context, yaml));
 
             if (path.isNil() && yaml.respondsTo("path")) {
                 path = yaml.callMethod(context, "path");
@@ -153,7 +181,7 @@ public class PsychParser extends RubyObject {
 
                 // FIXME: Event should expose a getID, so it can be switched
                 if (event.is(ID.StreamStart)) {
-                    invoke(context, handler, "start_stream", runtime.newFixnum(YAML_ANY_ENCODING));
+                    invoke(context, handler, "start_stream", runtime.newFixnum(YAML_ANY_ENCODING.ordinal()));
                 } else if (event.is(ID.DocumentStart)) {
                     handleDocumentStart(context, (DocumentStartEvent) event, tainted, handler);
                 } else if (event.is(ID.DocumentEnd)) {
@@ -206,7 +234,8 @@ public class PsychParser extends RubyObject {
     
     private void handleDocumentStart(ThreadContext context, DocumentStartEvent dse, boolean tainted, IRubyObject handler) {
         Ruby runtime = context.runtime;
-        Integer[] versionInts = dse.getVersion();
+        DumperOptions.Version _version = dse.getVersion();
+        Integer[] versionInts = _version == null ? null : _version.getArray();
         IRubyObject version = versionInts == null ?
             RubyArray.newArray(runtime) :
             RubyArray.newArray(runtime, runtime.newFixnum(versionInts[0]), runtime.newFixnum(versionInts[1]));
@@ -357,12 +386,6 @@ public class PsychParser extends RubyObject {
                 runtime.newFixnum(mark.getColumn()),
                 Block.NULL_BLOCK
         );
-    }
-
-    @JRubyMethod(name = "external_encoding=")
-    public IRubyObject external_encoding_set(ThreadContext context, IRubyObject encoding) {
-        // stubbed
-        return encoding;
     }
 
     private Parser parser;

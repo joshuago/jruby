@@ -28,6 +28,7 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.util.cli;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import org.jruby.runtime.Constants;
@@ -59,14 +60,47 @@ public class Options {
     }
 
     private static final List<Option> _loadedOptions = new ArrayList<Option>();
+
+    private static final boolean INVOKEDYNAMIC_DEFAULT;
+    static {
+        String vmName = SafePropertyAccessor.getProperty("java.vm.name", "").toLowerCase();
+        boolean isHotspot =
+                vmName.contains("hotspot") ||
+                        vmName.toLowerCase().contains("openjdk");
+
+        String vmVersionString = SafePropertyAccessor.getProperty("java.vm.version", "");
+        String javaVersion = SafePropertyAccessor.getProperty("java.specification.version", "");
+        int version;
+        try {
+            version = Integer.parseInt(vmVersionString.substring(0, 2));
+        } catch (NumberFormatException nfe) {
+            version = -1;
+        }
+
+        if (isHotspot) {
+            if (version < 24) {
+                // if on HotSpot version prior to 24, off by default unless turned on
+                // TODO: turned off temporarily due to the lack of 100% working OpenJDK7 indy support
+                INVOKEDYNAMIC_DEFAULT = false;
+            } else {
+                // Hotspot >= 24 will has the new working indy logic, so we enable by default
+                INVOKEDYNAMIC_DEFAULT = true;
+            }
+        } else if (new BigDecimal(javaVersion).compareTo(new BigDecimal("1.7")) >= 0){
+            // if not on HotSpot, on if specification version supports indy
+            INVOKEDYNAMIC_DEFAULT = true;
+        } else {
+            // on only if forced
+            INVOKEDYNAMIC_DEFAULT = false;
+        }
+    }
     
     // This section holds all Options for JRuby. They will be listed in the
     // --properties output in the order they are constructed here.
     public static final Option<String> COMPILE_MODE = string(COMPILER, "compile.mode", new String[]{"JIT", "FORCE", "OFF", "OFFIR"}, "JIT", "Set compilation mode. JIT = at runtime; FORCE = before execution.");
     public static final Option<Boolean> COMPILE_DUMP = bool(COMPILER, "compile.dump", false, "Dump to console all bytecode generated at runtime.");
     public static final Option<Boolean> COMPILE_THREADLESS = bool(COMPILER, "compile.threadless", false, "(EXPERIMENTAL) Turn on compilation without polling for \"unsafe\" thread events.");
-    public static final Option<Boolean> COMPILE_DYNOPT = bool(COMPILER, "compile.dynopt", false, "(EXPERIMENTAL) Use interpreter to help compiler make direct calls.");
-    public static final Option<Boolean> COMPILE_FASTOPS = bool(COMPILER, "compile.fastops", false, "Turn on fast operators for Fixnum and Float.");
+    public static final Option<Boolean> COMPILE_FASTOPS = bool(COMPILER, "compile.fastops", true, "Turn on fast operators for Fixnum and Float.");
     public static final Option<Integer> COMPILE_CHAINSIZE = integer(COMPILER, "compile.chainsize", Constants.CHAINED_COMPILE_LINE_COUNT_DEFAULT, "Set the number of lines at which compiled bodies are \"chained\".");
     public static final Option<Boolean> COMPILE_LAZYHANDLES = bool(COMPILER, "compile.lazyHandles", false, "Generate method bindings (handles) for compiled methods lazily.");
     public static final Option<Boolean> COMPILE_PEEPHOLE = bool(COMPILER, "compile.peephole", true, "Enable or disable peephole optimizations.");
@@ -74,7 +108,7 @@ public class Options {
     public static final Option<Boolean> COMPILE_FASTEST = bool(COMPILER, "compile.fastest", false, "Compile with all \"mostly harmless\" compiler optimizations.");
     public static final Option<Boolean> COMPILE_FASTSEND = bool(COMPILER, "compile.fastsend", false, "Compile obj.__send__(<literal>, ...) as obj.<literal>(...).");
     public static final Option<Boolean> COMPILE_FASTMASGN = bool(COMPILER, "compile.fastMasgn", false, "Return true from multiple assignment instead of a new array.");
-    public static final Option<Boolean> COMPILE_INVOKEDYNAMIC = bool(COMPILER, "compile.invokedynamic", true, "Use invokedynamic for optimizing Ruby code");
+    public static final Option<Boolean> COMPILE_INVOKEDYNAMIC = bool(COMPILER, "compile.invokedynamic", INVOKEDYNAMIC_DEFAULT, "Use invokedynamic for optimizing Ruby code");
     
     public static final Option<Integer> INVOKEDYNAMIC_MAXFAIL = integer(INVOKEDYNAMIC, "invokedynamic.maxfail", 1000, "Maximum call site failures after which to inline cache.");
     public static final Option<Integer> INVOKEDYNAMIC_MAXPOLY = integer(INVOKEDYNAMIC, "invokedynamic.maxpoly", 2, "Maximum polymorphism of PIC binding.");
@@ -127,6 +161,7 @@ public class Options {
     
     public static final Option<String> COMPAT_VERSION = string(MISCELLANEOUS, "compat.version", new String[]{"1.8","1.9","2.0"}, Constants.DEFAULT_RUBY_VERSION, "Specify the major Ruby version to be compatible with.");
     public static final Option<Boolean> OBJECTSPACE_ENABLED = bool(MISCELLANEOUS, "objectspace.enabled", false, "Enable or disable ObjectSpace.each_object.");
+    public static final Option<Boolean> SIPHASH_ENABLED = bool(MISCELLANEOUS, "siphash.enabled", false, "Enable or disable SipHash for String hash function.");
     public static final Option<Boolean> LAUNCH_INPROC = bool(MISCELLANEOUS, "launch.inproc", false, "Set in-process launching of e.g. system('ruby ...').");
     public static final Option<String> BYTECODE_VERSION = string(MISCELLANEOUS, "bytecode.version", new String[]{"1.5","1.6","1.7"}, SafePropertyAccessor.getProperty("java.specification.version", "1.5"), "Specify the major Java bytecode version.");
     public static final Option<Boolean> MANAGEMENT_ENABLED = bool(MISCELLANEOUS, "management.enabled", false, "Set whether JMX management is enabled.");
@@ -149,6 +184,7 @@ public class Options {
     public static final Option<Boolean> DEBUG_LAUNCH = bool(DEBUG, "debug.launch", false, "Log externally-launched processes.");
     public static final Option<Boolean> DEBUG_FULLTRACE = bool(DEBUG, "debug.fullTrace", false, "Set whether full traces are enabled (c-call/c-return).");
     public static final Option<Boolean> DEBUG_SCRIPTRESOLUTION = bool(DEBUG, "debug.scriptResolution", false, "Print which script is executed by '-S' flag.");
+    public static final Option<Boolean> DEBUG_PARSER = bool(DEBUG, "debug.parser", false, "disables JRuby impl script loads and prints parse exceptions");
     public static final Option<Boolean> ERRNO_BACKTRACE = bool(DEBUG, "errno.backtrace", false, "Generate backtraces for heavily-used Errno exceptions (EAGAIN).");
     public static final Option<Boolean> LOG_EXCEPTIONS = bool(DEBUG, "log.exceptions", false, "Log every time an exception is constructed.");
     public static final Option<Boolean> LOG_BACKTRACES = bool(DEBUG, "log.backtraces", false, "Log every time an exception backtrace is generated.");
@@ -163,6 +199,7 @@ public class Options {
     public static final Option<Boolean> JAVA_HANDLES = bool(JAVA_INTEGRATION, "java.handles", false, "Use generated handles instead of reflection for calling Java.");
     public static final Option<Boolean> JI_NEWSTYLEEXTENSION = bool(JAVA_INTEGRATION, "ji.newStyleExtension", false, "Extend Java classes without using a proxy object.");
     public static final Option<Boolean> JI_OBJECTPROXYCACHE = bool(JAVA_INTEGRATION, "ji.objectProxyCache", true, "Cache Java object wrappers between calls.");
+    public static final Option<String> JI_PROXYCLASSFACTORY = string(JAVA_INTEGRATION, "ji.proxyClassFactory", null, null, "Allow external envs to replace JI proxy class factory");
 
     public static final Option<Integer> PROFILE_MAX_METHODS = integer(PROFILING, "profile.max.methods", 100000, "Maximum number of methods to consider for profiling.");
 
