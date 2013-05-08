@@ -50,21 +50,27 @@ public class CharsetTranscoder {
         } else {
             this.actions = actions;
         }
-    }    
+    }
     
     public ByteList transcode(ThreadContext context, ByteList value) {
         Encoding fromEncoding = forceEncoding != null ? forceEncoding : value.getEncoding();
         
-        return transcode(context.runtime, value, fromEncoding);
+        return transcode(context.runtime, value, fromEncoding, false);
     }
     
-    protected ByteList transcode(Ruby runtime, ByteList value, Encoding fromEncoding) {
+    public ByteList transcode(ThreadContext context, ByteList value, boolean is7BitASCII) {
+        Encoding fromEncoding = forceEncoding != null ? forceEncoding : value.getEncoding();
+        
+        return transcode(context.runtime, value, fromEncoding, is7BitASCII);
+    }
+    
+    protected ByteList transcode(Ruby runtime, ByteList value, Encoding fromEncoding, boolean is7BitASCII) {
         Encoding encoding = toEncoding != null ? toEncoding : value.getEncoding();
         String toName = encoding.toString();
         String fromName = fromEncoding.toString();
         
-        Charset from = transcodeCharsetFor(runtime, fromEncoding, fromName, toName);
-        Charset to = transcodeCharsetFor(runtime, encoding, fromName, toName);
+        Charset from = transcodeCharsetFor(runtime, fromEncoding, fromName, toName, is7BitASCII);
+        Charset to = transcodeCharsetFor(runtime, encoding, fromName, toName, is7BitASCII);
 
         CharsetEncoder encoder = getCharsetEncoder(to);
         CharsetDecoder decoder = getCharsetDecoder(from);
@@ -94,7 +100,14 @@ public class CharsetTranscoder {
             Encoding toEncoding, IRubyObject opts) {
         if (toEncoding == null) return value;
         
-        return new CharsetTranscoder(context, toEncoding, forceEncoding, getCodingErrorActions(context, opts)).transcode(context, value);
+        return new CharsetTranscoder(context, toEncoding, forceEncoding, getCodingErrorActions(context, opts)).transcode(context, value, false);
+    }
+    
+    public static ByteList transcode(ThreadContext context, ByteList value, Encoding forceEncoding,
+            Encoding toEncoding, IRubyObject opts, boolean is7BitASCII) {
+        if (toEncoding == null) return value;
+        
+        return new CharsetTranscoder(context, toEncoding, forceEncoding, getCodingErrorActions(context, opts)).transcode(context, value, is7BitASCII);
     }
 
     public static class CodingErrorActions {
@@ -204,7 +217,7 @@ public class CharsetTranscoder {
         return encoder;
     } 
 
-    private static Charset transcodeCharsetFor(Ruby runtime, Encoding encoding, String fromName, String toName) {
+    private static Charset transcodeCharsetFor(Ruby runtime, Encoding encoding, String fromName, String toName, boolean is7Bit) {
         if (encoding == ASCIIEncoding.INSTANCE) {
             return ISO8859_1Encoding.INSTANCE.getCharset();
         }
@@ -239,9 +252,13 @@ public class CharsetTranscoder {
         } catch (Exception e) {}
         
         if (from == null) {
-            throw runtime.newConverterNotFoundError("code converter not found (" + fromName + " to " + toName + ")");
+            if (is7Bit) {
+                from = Charset.forName("US-ASCII");
+            } else {
+                throw runtime.newConverterNotFoundError("code converter not found (" + fromName + " to " + toName + ")");
+            }
         }
 
         return from;
-    }    
+    }
 }

@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -26,11 +26,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -46,7 +46,7 @@ import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.javasupport.JavaUtil;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ClassIndex;
 import org.jruby.runtime.ObjectAllocator;
@@ -58,8 +58,9 @@ import org.jruby.util.ConvertDouble;
 import org.jruby.util.ConvertBytes;
 import static org.jruby.CompatVersion.*;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.OP_EQUAL;
+import static org.jruby.runtime.Helpers.invokedynamic;
+
+import org.jruby.runtime.invokedynamic.MethodNames;
 
 /**
  * Base class for all numerical types in ruby.
@@ -226,9 +227,6 @@ public class RubyNumeric extends RubyObject {
     /** rb_dbl2big + LONG2FIX at once (numeric.c)
      * 
      */
-    /** rb_dbl2big + LONG2FIX at once (numeric.c)
-     * 
-     */
     public static IRubyObject dbl2num(Ruby runtime, double val) {
         if (Double.isInfinite(val)) {
             throw runtime.newFloatDomainError(val < 0 ? "-Infinity" : "Infinity");
@@ -236,7 +234,7 @@ public class RubyNumeric extends RubyObject {
         if (Double.isNaN(val)) {
             throw runtime.newFloatDomainError("NaN");
         }
-        return convertToNum(val,runtime);
+        return convertToNum(val, runtime);
     }
 
     /** rb_num2dbl and NUM2DBL
@@ -623,6 +621,12 @@ public class RubyNumeric extends RubyObject {
      */
     @JRubyMethod(name = "div", compat = RUBY1_9)
     public IRubyObject div19(ThreadContext context, IRubyObject other) {
+        if (other instanceof RubyNumeric) {
+            RubyNumeric numeric = (RubyNumeric) other;
+            if (numeric.zero_p(context).isTrue()) {
+                throw context.runtime.newZeroDivisionError();
+            }
+        }
         return callMethod(context, "/", other).callMethod(context, "floor");
     }
 
@@ -645,7 +649,7 @@ public class RubyNumeric extends RubyObject {
     /** num_fdiv (1.9) */
     @JRubyMethod(name = "fdiv", compat = RUBY1_9)
     public IRubyObject fdiv(ThreadContext context, IRubyObject other) {
-        return RuntimeHelpers.invoke(context, this.convertToFloat(), "/", other);
+        return Helpers.invoke(context, this.convertToFloat(), "/", other);
     }
 
     /** num_modulo
@@ -708,7 +712,7 @@ public class RubyNumeric extends RubyObject {
      */
     @JRubyMethod(name = "to_int")
     public IRubyObject to_int(ThreadContext context) {
-        return RuntimeHelpers.invoke(context, this, "to_i");
+        return Helpers.invoke(context, this, "to_i");
     }
 
     /** num_real_p
@@ -888,7 +892,7 @@ public class RubyNumeric extends RubyObject {
         // it won't hurt fixnums
         if (this == other)  return getRuntime().getTrue();
 
-        return invokedynamic(context, other, OP_EQUAL, this);
+        return invokedynamic(context, other, MethodNames.OP_EQUAL, this);
     }
 
     /** num_numerator

@@ -10,6 +10,7 @@ import org.jruby.RubyModule;
 import org.jruby.RubyRange;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.internal.runtime.methods.DynamicMethod;
+import org.jruby.java.util.ArrayUtils;
 import org.jruby.javasupport.JavaArray;
 import org.jruby.javasupport.JavaClass;
 import org.jruby.javasupport.JavaUtil;
@@ -20,8 +21,15 @@ import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 
 public class ArrayJavaProxy extends JavaProxy {
-    public ArrayJavaProxy(Ruby runtime, RubyClass klazz) {
-        super(runtime, klazz);
+    private final JavaUtil.JavaConverter converter;
+    
+    public ArrayJavaProxy(Ruby runtime, RubyClass klazz, Object ary) {
+        this(runtime, klazz, ary, JavaUtil.getJavaConverter(ary.getClass().getComponentType()));
+    }
+    
+    public ArrayJavaProxy(Ruby runtime, RubyClass klazz, Object ary, JavaUtil.JavaConverter converter) {
+        super(runtime, klazz, ary);
+        this.converter = converter;
     }
     
     public static RubyClass createArrayJavaProxy(ThreadContext context) {
@@ -29,11 +37,7 @@ public class ArrayJavaProxy extends JavaProxy {
         
         RubyClass arrayJavaProxy = runtime.defineClass("ArrayJavaProxy",
                 runtime.getJavaSupport().getJavaProxyClass(),
-                new ObjectAllocator() {
-            public IRubyObject allocate(Ruby runtime, RubyClass klazz) {
-                return new ArrayJavaProxy(runtime, klazz);
-            }
-        });
+                ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
         
         RubyClass singleton = arrayJavaProxy.getSingletonClass();
         
@@ -48,7 +52,14 @@ public class ArrayJavaProxy extends JavaProxy {
     }
     
     public JavaArray getJavaArray() {
-        return (JavaArray)dataGetStruct();
+        JavaArray javaArray = (JavaArray)dataGetStruct();
+        
+        if (javaArray == null) {
+            javaArray = new JavaArray(getRuntime(), getObject());
+            dataWrapStruct(javaArray);
+        }
+        
+        return javaArray;
     }
     
     @JRubyMethod(name = {"length","size"})
@@ -65,7 +76,7 @@ public class ArrayJavaProxy extends JavaProxy {
     public IRubyObject op_aref(ThreadContext context, IRubyObject arg) {
         if (arg instanceof RubyInteger) {
             int index = (int)((RubyInteger)arg).getLongValue();
-            return getJavaArray().arefDirect(context.runtime, index);
+            return ArrayUtils.arefDirect(context.runtime, getObject(), converter, index);
         } else {
             return getRange(context, arg);
         }
@@ -75,7 +86,7 @@ public class ArrayJavaProxy extends JavaProxy {
     public IRubyObject op_aref(ThreadContext context, IRubyObject[] args) {
         if (args.length == 1 && args[0] instanceof RubyInteger) {
             int index = (int)((RubyInteger)args[0]).getLongValue();
-            return getJavaArray().arefDirect(context.runtime, index);
+            return ArrayUtils.arefDirect(context.runtime, getObject(), converter, index);
         } else {
             return getRange(context, args);
         }
@@ -83,23 +94,23 @@ public class ArrayJavaProxy extends JavaProxy {
     
     @JRubyMethod(name = "[]=")
     public IRubyObject op_aset(ThreadContext context, IRubyObject index, IRubyObject value) {
-        getJavaArray().asetDirect(context.runtime, (int)((RubyInteger)index).getLongValue(), value);
+        ArrayUtils.asetDirect(context.runtime, getObject(), converter, (int)((RubyInteger)index).getLongValue(), value);
         return value;
     }
     
     @JRubyMethod
     public IRubyObject at(ThreadContext context, IRubyObject indexObj) {
         Ruby runtime = context.runtime;
-        RubyFixnum lengthF = getJavaArray().length();
-        RubyInteger indexI = indexObj.convertToInteger();
+        Object array = getObject();
+        int length = Array.getLength(array);
+        long index = indexObj.convertToInteger().getLongValue();
         
-        if (indexI.getLongValue() < 0) {
-            indexI = RubyFixnum.newFixnum(runtime, indexI.getLongValue() + lengthF.getLongValue());
+        if (index < 0) {
+            index = index + length;
         }
-        long index = indexI.getLongValue();
         
-        if (index >= 0 && index < lengthF.getLongValue()) {
-            return getJavaArray().arefDirect(runtime, (int)indexI.getLongValue());
+        if (index >= 0 && index < length) {
+            return ArrayUtils.arefDirect(runtime, array, converter, (int)index);
         } else {
             return context.nil;
         }
@@ -107,24 +118,23 @@ public class ArrayJavaProxy extends JavaProxy {
     
     @JRubyMethod(name = "+")
     public IRubyObject op_plus(ThreadContext context, IRubyObject other) {
-        JavaClass arrayClass = JavaClass.get(context.runtime, getJavaArray().getComponentType());
         if (other instanceof ArrayJavaProxy) {
-            JavaArray otherArray = ((ArrayJavaProxy)other).getJavaArray();
+            Object otherArray = ((ArrayJavaProxy)other).getObject();
             
-            if (getJavaArray().getComponentType().isAssignableFrom(otherArray.getComponentType())) {
-                return arrayClass.concatArrays(context, getJavaArray(), otherArray);
+            if (getObject().getClass().getComponentType().isAssignableFrom(otherArray.getClass().getComponentType())) {
+                return ArrayUtils.concatArraysDirect(context, getObject(), otherArray);
             }
         }
-        return arrayClass.concatArrays(context, getJavaArray(), other);
+        return ArrayUtils.concatArraysDirect(context, getObject(), other);
     }
     
     @JRubyMethod
     public IRubyObject each(ThreadContext context, Block block) {
         Ruby runtime = context.runtime;
-        int length = (int)getJavaArray().length().getLongValue();
+        int length = Array.getLength(getObject());
 
         for (int i = 0; i < length; i++) {
-            IRubyObject rubyObj = getJavaArray().arefDirect(runtime, i);
+            IRubyObject rubyObj = ArrayUtils.arefDirect(runtime, getObject(), converter, i);
             block.yield(context, rubyObj);
         }
         return this;
@@ -138,9 +148,10 @@ public class ArrayJavaProxy extends JavaProxy {
     @JRubyMethod
     public IRubyObject inspect(ThreadContext context) {
         StringBuffer buffer = new StringBuffer();
-        JavaArray javaArray = getJavaArray();
-        Class componentClass = javaArray.getComponentType();
+        Class componentClass = getObject().getClass().getComponentType();
+        
         buffer.append(componentClass.getName());
+        
         if (componentClass.isPrimitive()) {
             switch (componentClass.getName().charAt(0)) {
                 case 'b':
@@ -185,8 +196,7 @@ public class ArrayJavaProxy extends JavaProxy {
     }
     
     public IRubyObject getRange(ThreadContext context, IRubyObject arg0) {
-        int length = (int)getJavaArray().length().getLongValue();
-        JavaClass arrayClass = JavaClass.get(context.runtime, getJavaArray().getComponentType());
+        int length = Array.getLength(getObject());
         
         if (arg0 instanceof RubyRange) {
             RubyRange range = (RubyRange)arg0;
@@ -200,10 +210,10 @@ public class ArrayJavaProxy extends JavaProxy {
                 if (range.exclude_end_p().isFalse()) newLength += 1;
                 
                 if (newLength <= 0) {
-                    return arrayClass.emptyJavaArray(context);
+                    return ArrayUtils.emptyJavaArrayDirect(context, getObject().getClass().getComponentType());
                 }
         
-                return arrayClass.javaArraySubarray(context, getJavaArray(), first, newLength);
+                return ArrayUtils.javaArraySubarrayDirect(context, getObject(), first, newLength);
             } else {
                 throw context.runtime.newTypeError("only Fixnum ranges supported");
             }
@@ -213,23 +223,21 @@ public class ArrayJavaProxy extends JavaProxy {
     }
     
     public IRubyObject getRange(ThreadContext context, IRubyObject firstObj, IRubyObject lengthObj) {
-        JavaClass arrayClass = JavaClass.get(context.runtime, getJavaArray().getComponentType());
-        
         if (firstObj instanceof RubyFixnum && lengthObj instanceof RubyFixnum) {
             int first = (int)((RubyFixnum)firstObj).getLongValue();
             int length = (int)((RubyFixnum)lengthObj).getLongValue();
 
-            if (length > getJavaArray().length().getLongValue()) {
+            if (length > Array.getLength(getObject())) {
                 throw context.runtime.newIndexError("length specifed is longer than array");
             }
 
-            first = first >= 0 ? first : (int)getJavaArray().length().getLongValue() + first;
+            first = first >= 0 ? first : Array.getLength(getObject()) + first;
 
             if (length <= 0) {
-                return arrayClass.emptyJavaArray(context);
+                return ArrayUtils.emptyJavaArrayDirect(context, getObject().getClass().getComponentType());
             }
 
-            return arrayClass.javaArraySubarray(context, getJavaArray(), first, length);
+            return ArrayUtils.javaArraySubarrayDirect(context, getObject(), first, length);
         } else {
             throw context.runtime.newTypeError("only Fixnum ranges supported");
         }
@@ -255,10 +263,5 @@ public class ArrayJavaProxy extends JavaProxy {
                 throw runtime.newTypeError(arg0, runtime.getJavaSupport().getJavaArrayClass());
             }
         }
-    }
-
-    @Deprecated
-    public IRubyObject at(int index) {
-        return getJavaArray().at(index);
     }
 }

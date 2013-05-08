@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.parser;
 
@@ -80,6 +80,12 @@ public abstract class StaticScope implements Serializable {
     private boolean isBackrefLastlineScope = false;
     
     private DynamicScope dummyScope;
+
+    public enum Type {
+        LOCAL,
+        BLOCK,
+        EVAL
+    }
 
     /**
      * Construct a new static scope. The array of strings should all be the
@@ -166,34 +172,50 @@ public abstract class StaticScope implements Serializable {
     }
 
     /* Note: Only used by compiler until it can use getConstant again or use some other refactoring */
-    public IRubyObject getConstantWithConstMissing(Ruby runtime, String internedName, RubyModule object) {
-        IRubyObject result = getConstantInner(runtime, internedName, object);
+    public IRubyObject getConstantWithConstMissing(String internedName) {
+        IRubyObject result = getConstantInner(internedName);
 
         // If we could not find the constant from cref..then try getting from inheritence hierarchy
         return result == null ? cref.getConstant(internedName) : result;        
     }
+
+    public boolean isConstantDefined(String internedName) {
+        return getConstant(internedName) != null;
+    }
     
-    public IRubyObject getConstant(Ruby runtime, String internedName, RubyModule object) {
-        IRubyObject result = getConstantInner(runtime, internedName, object);
+    public IRubyObject getConstant(String internedName) {
+        IRubyObject result = getConstantInner(internedName);
 
         // If we could not find the constant from cref..then try getting from inheritence hierarchy
         return result == null ? cref.getConstantNoConstMissing(internedName) : result;
     }
 
-    public IRubyObject getConstantInner(Ruby runtime, String internedName, RubyModule object) {
+    public IRubyObject getConstantInner(String internedName) {
         IRubyObject result = cref.fetchConstant(internedName);
 
         if (result != null) {
-            return result == RubyObject.UNDEF ? cref.resolveUndefConstant(runtime, internedName) : result;
+            return result == RubyObject.UNDEF ? cref.resolveUndefConstant(internedName) : result;
         }
 
-        return previousCRefScope == null ? null : previousCRefScope.getConstantInnerNoObject(runtime, internedName, object);
+        return previousCRefScope == null ? null : previousCRefScope.getConstantInnerNoObject(internedName);
     }
     
-    private IRubyObject getConstantInnerNoObject(Ruby runtime, String internedName, RubyModule object) {
+    private IRubyObject getConstantInnerNoObject(String internedName) {
         if (previousCRefScope == null) return null;
 
-        return getConstantInner(runtime, internedName, object);
+        return getConstantInner(internedName);
+    }
+
+    public IRubyObject setConstant(String internedName, IRubyObject result) {
+        RubyModule module;
+
+        if ((module = getModule()) != null) {
+            module.setConstant(internedName, result);
+            return result;
+        }
+
+        // TODO: wire into new exception handling mechanism
+        throw result.getRuntime().newTypeError("no class/module to define constant");
     }
     
     /**
@@ -414,4 +436,6 @@ public abstract class StaticScope implements Serializable {
             
         return buf.toString();
     }
+
+    public abstract Type getType();
 }

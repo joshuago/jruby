@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -25,36 +25,34 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.javasupport;
 
-import org.jruby.java.proxies.MapBasedProxyCache;
+import org.jruby.util.collections.MapBasedClassValue;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Member;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
 import org.jruby.RubyModule;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.exceptions.Unrescuable;
-import org.jruby.java.proxies.ProxyCache;
+import org.jruby.util.collections.ClassValue;
 import org.jruby.javasupport.proxy.JavaProxyClass;
 import org.jruby.javasupport.util.ObjectProxyCache;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.WeakIdentityHashMap;
 import org.jruby.util.cli.Options;
+import org.jruby.util.collections.ClassValueCalculator;
 
 public class JavaSupport {
     private static final Map<String,Class> PRIMITIVE_CLASSES = new HashMap<String,Class>();
@@ -85,18 +83,19 @@ public class JavaSupport {
         }
     };
     
-    private final ProxyCache proxyCache;
-    private static final Constructor<? extends ProxyCache> PROXY_CACHE_CONSTRUCTOR;
+    private final ClassValue<JavaClass> javaClassCache;
+    private final ClassValue<RubyModule> proxyClassCache;
+    private static final Constructor<? extends ClassValue> CLASS_VALUE_CONSTRUCTOR;
     
     static {
-        Constructor<? extends ProxyCache> constructor = null;
+        Constructor<? extends ClassValue> constructor = null;
 
         if (Options.INVOKEDYNAMIC_CLASS_VALUES.load()) {
             try {
                 // try to load the ClassValue class. If it succeeds, we can use our
                 // ClassValue-based cache.
                 Class.forName("java.lang.ClassValue");
-                constructor = (Constructor<ProxyCache>)Class.forName("org.jruby.java.proxies.ClassValueProxyCache").getConstructor(Ruby.class);
+                constructor = (Constructor<ClassValue>)Class.forName("org.jruby.java.proxies.ClassValueProxyCache").getConstructor(ClassValueCalculator.class);
             }
             catch (Exception ex) {
                 // fall through to Map version
@@ -105,13 +104,13 @@ public class JavaSupport {
 
         if (constructor == null) {
             try {
-                constructor = MapBasedProxyCache.class.getConstructor(Ruby.class);
+                constructor = MapBasedClassValue.class.getConstructor(ClassValueCalculator.class);
             } catch (Exception ex2) {
                 throw new RuntimeException(ex2);
             }
         }
 
-        PROXY_CACHE_CONSTRUCTOR = constructor;
+        CLASS_VALUE_CONSTRUCTOR = constructor;
     }
 
     private RubyModule javaModule;
@@ -139,11 +138,22 @@ public class JavaSupport {
     // A cache of all JavaProxyClass objects created for this runtime
     private Map<Set<?>, JavaProxyClass> javaProxyClassCache = Collections.synchronizedMap(new HashMap<Set<?>, JavaProxyClass>());
     
-    public JavaSupport(Ruby ruby) {
+    public JavaSupport(final Ruby ruby) {
         this.runtime = ruby;
         
         try {
-            this.proxyCache = PROXY_CACHE_CONSTRUCTOR.newInstance(ruby);
+            this.javaClassCache = CLASS_VALUE_CONSTRUCTOR.newInstance(new ClassValueCalculator<JavaClass>() {
+                @Override
+                public JavaClass computeValue(Class<?> cls) {
+                    return new JavaClass(runtime, cls);
+                }
+            });
+            this.proxyClassCache = CLASS_VALUE_CONSTRUCTOR.newInstance(new ClassValueCalculator<RubyModule>() {
+                @Override
+                public RubyModule computeValue(Class<?> cls) {
+                    return Java.createProxyClassForClass(runtime, cls);
+                }
+            });
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
@@ -190,7 +200,11 @@ public class JavaSupport {
     }
 
     public JavaClass getJavaClassFromCache(Class clazz) {
-        return proxyCache.get(clazz);
+        return javaClassCache.get(clazz);
+    }
+
+    public RubyModule getProxyClassFromCache(Class clazz) {
+        return proxyClassCache.get(clazz);
     }
 
     public void handleNativeException(Throwable exception, Member target) {

@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.runtime;
 
@@ -39,12 +39,12 @@ import org.jruby.internal.runtime.methods.CallConfiguration;
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.internal.runtime.methods.ReflectionMethodFactory;
 import org.jruby.internal.runtime.methods.InvocationMethodFactory;
-import org.jruby.internal.runtime.methods.DumpingInvocationMethodFactory;
+import org.jruby.internal.runtime.methods.InvokeDynamicMethodFactory;
 import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ClassCache.OneShotClassLoader;
-import org.jruby.util.SafePropertyAccessor;
+import org.jruby.util.cli.Options;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
@@ -115,7 +115,11 @@ public abstract class MethodFactory {
         if (reflection || !CAN_LOAD_BYTECODE) return new ReflectionMethodFactory();
 
         // otherwise, generate invokers at runtime
-        return new InvocationMethodFactory(classLoader);
+        if (Options.COMPILE_INVOKEDYNAMIC.load() && Options.INVOKEDYNAMIC_HANDLES.load()) {
+            return new InvokeDynamicMethodFactory(classLoader);
+        } else {
+            return new InvocationMethodFactory(classLoader);
+        }
     }
     
     /**
@@ -125,7 +129,8 @@ public abstract class MethodFactory {
      * provided as a separate way to define such method handles.
      * 
      * @param implementationClass The class to which the method will be bound.
-     * @param method The name of the method
+     * @param rubyName The Ruby method name to which the method will bind
+     * @param javaName The name of the method
      * @param arity The Arity of the method
      * @param visibility The method's visibility on the target type.
      * @param scope The methods static scoping information.
@@ -135,7 +140,7 @@ public abstract class MethodFactory {
      * @return A new method handle for the target compiled method.
      */
     public abstract DynamicMethod getCompiledMethod(
-            RubyModule implementationClass, String method, 
+            RubyModule implementationClass, String rubyName, String javaName, 
             Arity arity, Visibility visibility, StaticScope scope, 
             Object scriptObject, CallConfiguration callConfig,
             ISourcePosition position, String parameterDesc);
@@ -146,7 +151,8 @@ public abstract class MethodFactory {
      * to generate all the handles ahead of time, as when doing a full system
      * precompile.
      *
-     * @param method The name of the method
+     * @param rubyName The Ruby method name to which the method will bind
+     * @param javaName The name of the method
      * @param classPath The path-like (with / instead of .) name of the class
      * @param invokerPath The path-line name of the invoker to generate
      * @param arity The Arity of the method
@@ -156,7 +162,7 @@ public abstract class MethodFactory {
      * @return
      */
     public byte[] getCompiledMethodOffline(
-            String method, String classPath, String invokerPath,
+            String rubyName, String javaName, String classPath, String invokerPath,
             Arity arity, StaticScope scope,
             CallConfiguration callConfig, String filename, int line) {
         return null;
@@ -170,7 +176,8 @@ public abstract class MethodFactory {
      * instantiated.
      * 
      * @param implementationClass The class to which the method will be bound.
-     * @param method The name of the method
+     * @param rubyName The Ruby method name to which the method will bind
+     * @param javaName The name of the method
      * @param arity The Arity of the method
      * @param visibility The method's visibility on the target type.
      * @param scope The methods static scoping information.
@@ -179,7 +186,7 @@ public abstract class MethodFactory {
      * @return A new method handle for the target compiled method.
      */
     public abstract DynamicMethod getCompiledMethodLazily(
-            RubyModule implementationClass, String method, 
+            RubyModule implementationClass, String rubyName, String javaName, 
             Arity arity, Visibility visibility, StaticScope scope, 
             Object scriptObject, CallConfiguration callConfig,
             ISourcePosition position, String parameterDesc);

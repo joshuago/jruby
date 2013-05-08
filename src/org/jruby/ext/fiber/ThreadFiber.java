@@ -1,6 +1,7 @@
 package org.jruby.ext.fiber;
 
 import java.util.concurrent.Exchanger;
+import java.util.concurrent.Future;
 
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
@@ -21,20 +22,28 @@ public class ThreadFiber extends Fiber {
         super(runtime, type);
     }
     
+    @Override
     protected void initFiber(ThreadContext context) {
         final Ruby runtime = context.runtime;
         
         Runnable runnable = new Runnable() {
 
+            @Override
             public void run() {
                 // initialize and yield back to launcher
                 ThreadContext context = runtime.getCurrentContext();
                 context.setFiber(ThreadFiber.this);
+                
+                // yield gets Fiber#resume argument for first resume
                 IRubyObject result = yield(context, context.nil);
 
                 try {
                     // first resume, dive into the block
-                    result = block.yieldArray(context, result, null, null);
+                    if (result == NEVER) {
+                        result = block.yieldSpecific(context);
+                    } else {
+                        result = block.yieldArray(context, result, null, null);
+                    }
                 } catch (JumpException.RetryJump rtry) {
                     // FIXME: technically this should happen before the block is executed
                     parent.raise(new IRubyObject[]{runtime.newSyntaxError("Invalid retry").getException()}, Block.NULL_BLOCK);
@@ -58,14 +67,16 @@ public class ThreadFiber extends Fiber {
         };
 
         // submit job and wait to be resumed
-        context.runtime.getExecutor().execute(runnable);
+        context.runtime.getExecutor().submit(runnable);
         try {
+            // kick the fiber into "YIELDED" mode, waiting for resume
             exchanger.exchange(context.nil);
         } catch (InterruptedException ie) {
             throw runtime.newConcurrencyError("interrupted while waiting for fiber to start");
         }
     }
 
+    @Override
     protected IRubyObject resumeOrTransfer(ThreadContext context, IRubyObject arg, boolean transfer) {
         try {
             switch (state) {
@@ -73,11 +84,15 @@ public class ThreadFiber extends Fiber {
                     if (isRoot()) {
                         state = ThreadFiberState.RUNNING;
                         return arg;
-                    } else if (context.getThread() != parent) {
+                    } else if (!isSameParentThread(context)) {
                         throw context.runtime.newFiberError("resuming fiber from different thread");
                     }
                     throw context.runtime.newRuntimeError("BUG: resume before fiber is started");
                 case YIELDED:
+                    if (!isSameParentThread(context)) {
+                        throw context.runtime.newFiberError("resuming fiber from different thread");
+                    }
+                    
                     if (!transfer && transferredTo != null) {
                         throw context.runtime.newFiberError("double resume");
                     }
@@ -126,6 +141,7 @@ public class ThreadFiber extends Fiber {
         }
     }
 
+    @Override
     public IRubyObject yield(ThreadContext context, IRubyObject res) {
         try {
             state = ThreadFiberState.YIELDED;
@@ -141,8 +157,13 @@ public class ThreadFiber extends Fiber {
         }
     }
     
+    @Override
     public boolean isAlive() {
         return state != ThreadFiberState.FINISHED;
+    }
+    
+    private boolean isSameParentThread(ThreadContext context) {
+        return context.getThread() == parent || (context.getFiber() != null && context.getFiber().getParentThread() == parent);
     }
     
 }

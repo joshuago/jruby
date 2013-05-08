@@ -1,5 +1,5 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Common Public
  * License Version 1.0 (the "License"); you may not use this file
@@ -25,17 +25,16 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
-import java.util.ArrayList;
 import java.util.Arrays;
 
 import org.jruby.Ruby;
@@ -59,12 +58,6 @@ public class TestRuby extends TestRubyBase {
     
     public TestRuby(String name) {
         super(name);
-    }
-
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        runtime = Ruby.newInstance();
     }
     
     public void testArgvIsNonNil() throws Exception {
@@ -127,8 +120,7 @@ public class TestRuby extends TestRubyBase {
             runtime.evalScriptlet("require 'tempfile'; file = Tempfile.open(['foo', '" + extensionSuffix + "']); file.close; require file.path");
             fail();
         } catch (RaiseException re) {
-            assertTrue(re.getException().message.asJavaString().startsWith(
-                    "C extensions are disabled"));
+            assertEquals(re.getException().getType(), runtime.getLoadError());
         }
     }
     

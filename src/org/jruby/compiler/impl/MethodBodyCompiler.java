@@ -18,8 +18,8 @@ import static org.objectweb.asm.Opcodes.*;
 public class MethodBodyCompiler extends RootScopedBodyCompiler {
     protected boolean specificArity;
 
-    public MethodBodyCompiler(StandardASMCompiler scriptCompiler, String rubyName, String javaName, ASTInspector inspector, StaticScope scope) {
-        super(scriptCompiler, javaName, rubyName, inspector, scope);
+    public MethodBodyCompiler(StandardASMCompiler scriptCompiler, String rubyName, String javaName, ASTInspector inspector, StaticScope scope, int scopeIndex) {
+        super(scriptCompiler, javaName, rubyName, inspector, scope, scopeIndex);
     }
 
     public boolean isSpecificArity() {
@@ -75,7 +75,7 @@ public class MethodBodyCompiler extends RootScopedBodyCompiler {
         annotation.visit("frame", true);
         annotation.visit("required", scope.getRequiredArgs());
         annotation.visit("optional", scope.getOptionalArgs());
-        annotation.visit("rest", scope.getRestArg());
+        annotation.visit("rest", scope.getRestArg() >= 0);
         // TODO: reads/writes from frame
         // TODO: information on scoping
         // TODO: visibility?

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.jcodings.Encoding;
 import org.joda.time.DateTime;
+import org.jruby.CompatVersion;
 import org.jruby.Ruby;
 import org.jruby.RubyBoolean;
 import org.jruby.RubyClass;
@@ -20,12 +21,13 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
 import org.jruby.util.CharsetTranscoder;
+import org.jruby.util.io.IOEncodable;
 
 /**
  *
  */
 @JRubyClass(name = "Zlib::GzipFile")
-public class RubyGzipFile extends RubyObject {
+public class RubyGzipFile extends RubyObject implements IOEncodable {
     @JRubyClass(name = "Zlib::GzipFile::Error", parent = "Zlib::Error")
     public static class Error {}
 
@@ -63,7 +65,7 @@ public class RubyGzipFile extends RubyObject {
         return newArgs.toArray(new IRubyObject[0]);
     }
 
-    @JRubyMethod(meta = true)
+    @JRubyMethod(meta = true, name = "wrap", compat = CompatVersion.RUBY1_8)
     public static IRubyObject wrap(ThreadContext context, IRubyObject recv, IRubyObject io, Block block) {
         Ruby runtime = recv.getRuntime();
         RubyGzipFile instance;
@@ -77,8 +79,25 @@ public class RubyGzipFile extends RubyObject {
 
         return wrapBlock(context, instance, block);
     }
+    
+    @JRubyMethod(meta = true, name = "wrap", required = 1, optional = 1, compat = CompatVersion.RUBY1_9)
+    public static IRubyObject wrap19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
+        Ruby runtime = recv.getRuntime();
+        RubyGzipFile instance;
+
+        // TODO: People extending GzipWriter/reader will break.  Find better way here.
+        if (recv == runtime.getModule("Zlib").getClass("GzipWriter")) {
+            instance = JZlibRubyGzipWriter.newInstance(recv, args, block);
+        } else {
+            instance = JZlibRubyGzipReader.newInstance(recv, args, block);
+        }
+
+        return wrapBlock(context, instance, block);
+    }
+    
     protected static final ObjectAllocator GZIPFILE_ALLOCATOR = new ObjectAllocator() {
 
+        @Override
         public IRubyObject allocate(Ruby runtime, RubyClass klass) {
             return new RubyGzipFile(runtime, klass);
         }
@@ -94,18 +113,7 @@ public class RubyGzipFile extends RubyObject {
 
         return result;
     }
-    protected boolean closed = false;
-    protected boolean finished = false;
-    protected byte osCode = Zlib.OS_UNKNOWN;
-    protected int level = -1;
-    protected RubyString nullFreeOrigName;
-    protected RubyString nullFreeComment;
-    protected IRubyObject realIo;
-    protected RubyTime mtime;
-    protected Encoding readEncoding;    // enc
-    protected Encoding writeEncoding;   // enc2
-    protected boolean sync = false;
-
+    
     public RubyGzipFile(Ruby runtime, RubyClass type) {
         super(runtime, type);
         mtime = RubyTime.newTime(runtime, new DateTime());
@@ -206,4 +214,34 @@ public class RubyGzipFile extends RubyObject {
         sync = ((RubyBoolean) arg).isTrue();
         return sync ? getRuntime().getTrue() : getRuntime().getFalse();
     }
+    
+    @Override
+    public void setReadEncoding(Encoding readEncoding) {
+        this.readEncoding = readEncoding;
+    }
+    
+    @Override
+    public void setWriteEncoding(Encoding writeEncoding) {
+        this.writeEncoding = writeEncoding;
+    }
+    
+    @Override
+    public void setBOM(boolean bom) {
+        this.hasBOM = bom;
+    }
+    
+    protected boolean closed = false;
+    protected boolean finished = false;
+    protected boolean hasBOM;
+    protected byte osCode = Zlib.OS_UNKNOWN;
+    protected int level = -1;
+    protected RubyString nullFreeOrigName;
+    protected RubyString nullFreeComment;
+    protected IRubyObject realIo;
+    protected RubyTime mtime;
+    protected Encoding readEncoding;    // enc
+    protected Encoding writeEncoding;   // enc2
+    protected boolean sync = false;
+    protected CharsetTranscoder readTranscoder = null;
+    protected CharsetTranscoder writeTranscoder = null;    
 }

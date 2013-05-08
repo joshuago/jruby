@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -27,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -68,6 +68,7 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.encoding.EncodingCapable;
+import org.jruby.runtime.encoding.MarshalEncoding;
 import org.jruby.runtime.marshal.MarshalStream;
 import org.jruby.runtime.marshal.UnmarshalStream;
 import org.jruby.util.ByteList;
@@ -79,7 +80,7 @@ import org.jruby.util.StringSupport;
 import org.jruby.util.TypeConverter;
 
 @JRubyClass(name="Regexp")
-public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable {
+public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable, MarshalEncoding {
     private Regex pattern;
     private ByteList str = ByteList.EMPTY_BYTELIST;
     private RegexpOptions options;
@@ -126,6 +127,14 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
     public void setEncoding(Encoding encoding) {
         // FIXME: Which encoding should be changed here?  
         // FIXME: transcode?
+    }
+
+    public boolean shouldMarshalEncoding() {
+        return getEncoding() != ASCIIEncoding.INSTANCE;
+    }
+
+    public Encoding getMarshalEncoding() {
+        return getEncoding();
     }
 
     private static final class RegexpCache {
@@ -1274,8 +1283,8 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
             return initializeByRegexp19((RubyRegexp)arg0);
         }
         
-        options = RegexpOptions.fromJoniOptions(objectAsJoniOptions(arg1));        
-        return initializeCommon19(arg0.convertToString(), options);
+        return initializeCommon19(arg0.convertToString(), 
+                RegexpOptions.fromJoniOptions(objectAsJoniOptions(arg1)));
     }
 
     @JRubyMethod(name = "initialize", visibility = Visibility.PRIVATE, compat = CompatVersion.RUBY1_9)
@@ -1284,8 +1293,8 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
             getRuntime().getWarnings().warn(ID.REGEXP_IGNORED_FLAGS, "flags ignored");            
             return initializeByRegexp19((RubyRegexp)arg0);
         }
-        int optionsInt = objectAsJoniOptions(arg1);
-        RegexpOptions newOptions = RegexpOptions.fromJoniOptions(optionsInt);
+
+        RegexpOptions newOptions = RegexpOptions.fromJoniOptions(objectAsJoniOptions(arg1));
 
         if (!arg2.isNil()) {
             ByteList kcodeBytes = arg2.convertToString().getByteList();
@@ -1312,6 +1321,7 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
 
     // rb_reg_initialize_str
     private RubyRegexp initializeCommon19(RubyString str, RegexpOptions options) {
+        if (isLiteral()) throw getRuntime().newSecurityError("can't modify literal regexp");
         ByteList bytes = str.getByteList();
         Encoding enc = bytes.getEncoding();
         if (options.isEncodingNone()) {
@@ -1503,35 +1513,55 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
 
     @JRubyMethod(name = "match", reads = BACKREF, compat = CompatVersion.RUBY1_9)
     public IRubyObject match_m19(ThreadContext context, IRubyObject str, Block block) {
-        return match19Common(context, str, 0, block);
+        return match19Common(context, str, 0, true, block);
+    }
+    
+    public IRubyObject match_m19(ThreadContext context, IRubyObject str, boolean useBackref, Block block) {
+        return match19Common(context, str, 0, useBackref, block);
     }
 
     @JRubyMethod(name = "match", reads = BACKREF, compat = CompatVersion.RUBY1_9)
     public IRubyObject match_m19(ThreadContext context, IRubyObject str, IRubyObject pos, Block block) {
-        return match19Common(context, str, RubyNumeric.num2int(pos), block);
+        return match19Common(context, str, RubyNumeric.num2int(pos), true, block);
+    }
+    
+    public static class MatchDataHolder {
+        public RubyMatchData matchData;
     }
 
-    private IRubyObject match19Common(ThreadContext context, IRubyObject arg, int pos, Block block) {
-        DynamicScope scope = context.getCurrentScope();
+    private IRubyObject match19Common(ThreadContext context, IRubyObject arg, int pos, boolean useBackref, Block block) {
+        DynamicScope scope = null;
+        
+        if (useBackref) scope = context.getCurrentScope();
         if (arg.isNil()) {
-            scope.setBackRef(arg);
+            if (useBackref) scope.setBackRef(arg);
             return arg;
         }
         Ruby runtime = context.runtime;
         RubyString str = operandCheck(runtime, arg);
+        MatchDataHolder backrefHolder = useBackref ? null : new MatchDataHolder();
 
-        if (matchPos(context, str, pos) < 0) {
-            scope.setBackRef(runtime.getNil());
+        if (matchPos(context, str, pos, backrefHolder) < 0) {
+            if (useBackref) scope.setBackRef(runtime.getNil());
             return runtime.getNil();
         }
 
-        IRubyObject backref = scope.getBackRef(runtime);
-        ((RubyMatchData)backref).use();
+        IRubyObject backref = null;
+        if (useBackref) {
+            backref = scope.getBackRef(runtime);
+            ((RubyMatchData)backref).use();
+        } else {
+            backref = backrefHolder.matchData;
+        }
         if (block.isGiven()) return block.yield(context, backref);
         return backref;
     }
 
     private int matchPos(ThreadContext context, RubyString str, int pos) {
+        return matchPos(context, str, pos, null);
+    }
+
+    private int matchPos(ThreadContext context, RubyString str, int pos, MatchDataHolder backrefHolder) {
         if (pos != 0) {
             if (pos < 0) {
                 pos += str.strLength();
@@ -1539,7 +1569,7 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
             }
             pos = StringSupport.offset(str, pos);
         }
-        return search19(context, str, pos, false);
+        return search19(context, str, pos, false, backrefHolder);
     }
 
     /** rb_reg_search
@@ -1556,7 +1586,7 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
 
             int result = matcher.search(begin + pos, begin + (reverse ? 0 : realSize), Option.NONE);
             if (result >= 0) {
-                updateBackRef(context, str, scope, matcher);
+                updateBackRef(context, str, scope, matcher, true);
                 return result;
             }
         }
@@ -1565,21 +1595,30 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
         return -1;
     }
 
-    private RubyMatchData updateBackRef(ThreadContext context, RubyString str, DynamicScope scope, Matcher matcher) {
-        RubyMatchData match = updateBackRef(context, str, scope, matcher, pattern);
+    private RubyMatchData updateBackRef(ThreadContext context, RubyString str, DynamicScope scope, Matcher matcher, boolean useBackref) {
+        RubyMatchData match = updateBackRef(context, str, scope, matcher, pattern, useBackref);
         match.regexp = this;
         match.infectBy(this);
         return match;
     }
 
     static final RubyMatchData updateBackRef(ThreadContext context, RubyString str, DynamicScope scope, Matcher matcher, Regex pattern) {
+        return updateBackRef(context, str, scope, matcher, pattern, true);
+    }
+
+    static final RubyMatchData updateBackRef(ThreadContext context, RubyString str, DynamicScope scope, Matcher matcher, Regex pattern, boolean useBackref) {
         Ruby runtime = context.runtime;
-        IRubyObject backref = scope.getBackRef(runtime);
+        IRubyObject backref;
+        if (useBackref) {
+            backref = scope.getBackRef(runtime);
+        } else {
+            backref = context.nil;
+        }
         final RubyMatchData match;
         boolean setBackRef = false;
         if (backref.isNil() || ((RubyMatchData)backref).used()) {
             match = new RubyMatchData(runtime);
-            setBackRef = true;
+            setBackRef = useBackref;
         } else {
             match = (RubyMatchData)backref;
             match.setTaint(false);
@@ -1608,8 +1647,13 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
     }
 
     public final int search19(ThreadContext context, RubyString str, int pos, boolean reverse) {
+        return search19(context, str, pos, reverse, null);
+    }
+
+    public final int search19(ThreadContext context, RubyString str, int pos, boolean reverse, MatchDataHolder backrefHolder) {
         check();
-        DynamicScope scope = context.getCurrentScope();
+        DynamicScope scope = null;
+        if (backrefHolder == null) scope = context.getCurrentScope();
         ByteList value = str.getByteList();
 
         if (pos <= value.getRealSize() && pos >= 0) {
@@ -1619,24 +1663,32 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
 
             int result = matcher.search(begin + pos, begin + (reverse ? 0 : realSize), Option.NONE);
             if (result >= 0) {
-                updateBackRef(context, str, scope, matcher).charOffsetUpdated = false;;
+                RubyMatchData matchData = updateBackRef(context, str, scope, matcher, backrefHolder == null);
+                matchData.charOffsetUpdated = false;
+                if (backrefHolder != null) backrefHolder.matchData = matchData;
                 return result;
             }
         }
 
-        scope.setBackRef(context.runtime.getNil());
+        if (backrefHolder == null) scope.setBackRef(context.runtime.getNil());
         return -1;
     }
 
     static final RubyMatchData updateBackRef19(ThreadContext context, RubyString str, DynamicScope scope, Matcher matcher, Regex pattern) {
-        RubyMatchData match = updateBackRef(context, str, scope, matcher, pattern);
+        RubyMatchData match = updateBackRef(context, str, scope, matcher, pattern, true);
+        match.charOffsetUpdated = false;
+        return match;
+    }
+
+    static final RubyMatchData updateBackRef19(ThreadContext context, RubyString str, DynamicScope scope, Matcher matcher, Regex pattern, boolean useBackref) {
+        RubyMatchData match = updateBackRef(context, str, scope, matcher, pattern, useBackref);
         match.charOffsetUpdated = false;
         return match;
     }
 
     @JRubyMethod(name = "options")
     public IRubyObject options() {
-        return getRuntime().newFixnum(getOptions().toJoniOptions());
+        return getRuntime().newFixnum(getOptions().toOptions());
     }
 
     @JRubyMethod(name = "casefold?")
@@ -2320,6 +2372,11 @@ public class RubyRegexp extends RubyObject implements ReOptions, EncodingCapable
     public static void marshalTo(RubyRegexp regexp, MarshalStream output) throws java.io.IOException {
         output.registerLinkTarget(regexp);
         output.writeString(regexp.str);
-        output.writeByte(regexp.pattern.getOptions() & EMBEDDABLE);
+        
+        int options = regexp.pattern.getOptions() & EMBEDDABLE;
+
+        if (regexp.getOptions().isFixed()) options |= ARG_ENCODING_FIXED;
+        
+        output.writeByte(options);
     }
 }

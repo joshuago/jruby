@@ -1,11 +1,11 @@
 /*
  **** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -29,11 +29,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -57,17 +57,18 @@ import org.jcodings.specific.USASCIIEncoding;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings.ID;
-import org.jruby.java.addons.ArrayJavaAddons;
 import org.jruby.javasupport.JavaUtil;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.BlockBody;
 import org.jruby.runtime.ClassIndex;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
+
 import static org.jruby.runtime.Visibility.*;
 import static org.jruby.CompatVersion.*;
+import org.jruby.java.util.ArrayUtils;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.encoding.EncodingCapable;
 import org.jruby.runtime.invokedynamic.MethodNames;
@@ -79,7 +80,7 @@ import org.jruby.util.Qsort;
 import org.jruby.util.RecursiveComparator;
 import org.jruby.util.TypeConverter;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.Helpers.invokedynamic;
 import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
 import static org.jruby.runtime.invokedynamic.MethodNames.OP_CMP;
 
@@ -163,13 +164,13 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     
     public static final RubyArray newArray(final Ruby runtime, final int len) {
         RubyArray array = new RubyArray(runtime, len);
-        RuntimeHelpers.fillNil(array.values, 0, array.values.length, runtime);
+        Helpers.fillNil(array.values, 0, array.values.length, runtime);
         return array;
     }
 
     public static final RubyArray newArrayLight(final Ruby runtime, final int len) {
         RubyArray array = new RubyArray(runtime, len, false);
-        RuntimeHelpers.fillNil(array.values, 0, array.values.length, runtime);
+        Helpers.fillNil(array.values, 0, array.values.length, runtime);
         return array;
     }
 
@@ -260,6 +261,9 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     private volatile boolean isShared = false;
     private int begin = 0;
     private int realLength = 0;
+    
+    private static final ByteList EMPTY_ARRAY_BYTELIST = new ByteList(ByteList.plain("[]"), USASCIIEncoding.INSTANCE);
+    private static final ByteList RECURSIVE_ARRAY_BYTELIST = new ByteList(ByteList.plain("[...]"), USASCIIEncoding.INSTANCE);
 
     /*
      * plain internal array assignment
@@ -308,12 +312,12 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     
     protected RubyArray(Ruby runtime, int length) {
         super(runtime, runtime.getArray());
-        values = new IRubyObject[length];
+        values = length == 0 ? IRubyObject.NULL_ARRAY : new IRubyObject[length];
     }
 
     private RubyArray(Ruby runtime, int length, boolean objectspace) {
         super(runtime, runtime.getArray(), objectspace);
-        values = new IRubyObject[length];
+        values = length == 0 ? IRubyObject.NULL_ARRAY : new IRubyObject[length];
     }
 
     /* NEWOBJ and OBJSETUP equivalent
@@ -332,7 +336,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
      */
     private RubyArray(Ruby runtime, RubyClass klass, int length) {
         super(runtime, klass);
-        values = new IRubyObject[length];
+        values = length == 0 ? IRubyObject.NULL_ARRAY : new IRubyObject[length];
     }
 
     private RubyArray(Ruby runtime, RubyClass klass, IRubyObject[]vals, boolean objectspace) {
@@ -358,8 +362,8 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     }
 
     private void alloc(int length) {
-        final IRubyObject[] newValues = new IRubyObject[length];
-        RuntimeHelpers.fillNil(newValues, getRuntime());
+        IRubyObject[] newValues = length == 0 ? IRubyObject.NULL_ARRAY : new IRubyObject[length];
+        Helpers.fillNil(newValues, getRuntime());
         values = newValues;
         begin = 0;
     }
@@ -367,7 +371,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     private void realloc(int newLength, int valuesLength) {
         IRubyObject[] reallocated = new IRubyObject[newLength];
         if (newLength > valuesLength) {
-            RuntimeHelpers.fillNil(reallocated, valuesLength, newLength, getRuntime());
+            Helpers.fillNil(reallocated, valuesLength, newLength, getRuntime());
             safeArrayCopy(values, begin, reallocated, 0, valuesLength); // elements and trailing nils
         } else {
             safeArrayCopy(values, begin, reallocated, 0, newLength); // ???
@@ -415,8 +419,8 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
 
     public IRubyObject[] toJavaArrayMaybeUnsafe() {
         return (!isShared && begin == 0 && values.length == realLength) ? values : toJavaArray();
-    }    
-
+    }
+    
     /** rb_ary_make_shared
     *
     */
@@ -573,7 +577,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         } else {
             try {
                 if (arg1 == null) {
-                    RuntimeHelpers.fillNil(values, begin, begin + ilen, runtime);
+                    Helpers.fillNil(values, begin, begin + ilen, runtime);
                 } else {
                     fill(values, begin, begin + ilen, arg1);
                 }
@@ -863,7 +867,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             len = beg + rlen;
             if (len >= valuesLength) spliceRealloc((int)len, valuesLength);
             try {
-                RuntimeHelpers.fillNil(values, begin + realLength, begin + ((int)beg), getRuntime());
+                Helpers.fillNil(values, begin + realLength, begin + ((int) beg), getRuntime());
             } catch (ArrayIndexOutOfBoundsException e) {
                 concurrentModification();
             }
@@ -896,7 +900,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         if (beg >= realLength) {
             int len = (int)beg + 1;
             if (len >= valuesLength) spliceRealloc((int)len, valuesLength);
-            RuntimeHelpers.fillNil(values, begin + realLength, begin + ((int)beg), getRuntime());
+            Helpers.fillNil(values, begin + realLength, begin + ((int) beg), getRuntime());
             realLength = (int) len;
         } else {
             int len = beg > realLength ? realLength - (int)beg : 0;
@@ -919,7 +923,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         System.arraycopy(values, begin, vals, 0, realLength);
         
         // only fill if there actually will remain trailing storage
-        if (len > length) RuntimeHelpers.fillNil(vals, length, len, getRuntime());
+        if (len > length) Helpers.fillNil(vals, length, len, getRuntime());
         begin = 0;
         values = vals;
     }
@@ -1026,7 +1030,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         int elen = -1;
         int end = begin + alen;
         for (int i = begin; i < end; i++) {
-            tmp = elt(i).convertToArray();
+            tmp = elt(i - begin).convertToArray();
             if (elen < 0) {
                 elen = tmp.realLength;
                 result = new RubyArray(runtime, elen);
@@ -1072,7 +1076,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             result.append(entry(RubyNumeric.num2long(args[i])));
         }
 
-        RuntimeHelpers.fillNil(result.values, result.realLength, result.values.length, getRuntime());
+        Helpers.fillNil(result.values, result.realLength, result.values.length, getRuntime());
         return result;
     }
 
@@ -1251,7 +1255,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
                 newLength += valuesLength;
                 IRubyObject[]vals = new IRubyObject[newLength];
                 safeArrayCopy(values, begin, vals, 1, valuesLength);
-                RuntimeHelpers.fillNil(vals, valuesLength + 1, newLength, getRuntime());
+                Helpers.fillNil(vals, valuesLength + 1, newLength, getRuntime());
                 values = vals;
                 begin = 0;
             } else {
@@ -1478,6 +1482,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             if (i > 0) str.cat((byte)',').cat((byte)' ');
 
             RubyString str2 = inspect(context, safeArrayRef(values, begin + i));
+            if (i == 0 && str2.getEncoding() != encoding) str.setEncoding(str2.getEncoding());
             if (str2.isTaint()) tainted = true;
             if (str2.isUntrusted()) untrust = true;
             
@@ -1501,8 +1506,8 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
     @JRubyMethod(name = "inspect")
     @Override
     public IRubyObject inspect() {
-        if (realLength == 0) return getRuntime().newString("[]");
-        if (getRuntime().isInspecting(this)) return  getRuntime().newString("[...]");
+        if (realLength == 0) return RubyString.newStringShared(getRuntime(), EMPTY_ARRAY_BYTELIST);
+        if (getRuntime().isInspecting(this)) return  RubyString.newStringShared(getRuntime(), RECURSIVE_ARRAY_BYTELIST);
 
         try {
             getRuntime().registerInspecting(this);
@@ -1718,7 +1723,8 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
 
         if (sep.isNil()) sep = runtime.getGlobalVariables().get("$,");
 
-        boolean taint = isTaint() || sep.isTaint();
+        boolean sepTainted =  sep.isTaint();
+        boolean taint = isTaint();
         boolean untrusted = isUntrusted() || sep.isUntrusted();
 
         int len = 1;
@@ -1736,6 +1742,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             len += sepBytes.getRealSize() * (realLength - 1);
         }
 
+        boolean appended = false;
         ByteList buf = new ByteList(len);
         for (int i = 0; i < realLength; i++) {
             // do not coarsen the "safe" catch, since it will misinterpret AIOOBE from inspect.
@@ -1753,10 +1760,14 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
                 }
             }
 
-            if (i > 0 && sepBytes != null) buf.append(sepBytes);
+            if (i > 0 && sepBytes != null) {
+                buf.append(sepBytes);
+                appended = true;
+            }
 
             buf.append(tmp.asString().getByteList());
-            if (tmp.isTaint()) taint = true;
+            if (tmp.isTaint()) taint |= true;
+            if (appended) taint |= sepTainted;
             if (tmp.isUntrusted()) untrusted = true;
         }
 
@@ -1945,7 +1956,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             if (!obj.respondsTo("to_ary")) {
                 return runtime.getFalse();
             }
-            return RuntimeHelpers.rbEqual(context, obj, this);
+            return Helpers.rbEqual(context, obj, this);
         }
         return RecursiveComparator.compare(context, MethodNames.OP_EQUAL, this, obj);
     }
@@ -1958,7 +1969,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             if (!other.respondsTo("to_ary")) {
                 return runtime.getFalse();
             } else {
-                return RuntimeHelpers.rbEqual(context, other, this);
+                return Helpers.rbEqual(context, other, this);
             }
         }
 
@@ -2056,7 +2067,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         } else {
             try {
                 begin = 0;
-                RuntimeHelpers.fillNil(values, 0, realLength, getRuntime());
+                Helpers.fillNil(values, 0, realLength, getRuntime());
             } catch (ArrayIndexOutOfBoundsException e) {
                 concurrentModification();
             }
@@ -2214,6 +2225,52 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         }
 
         return runtime.getNil();
+    }
+    
+    @JRubyMethod(compat = RUBY2_0)
+    public IRubyObject bsearch(ThreadContext context, Block block) {
+        Ruby runtime = context.runtime;
+        
+        if (!block.isGiven()) {
+            return enumeratorize(context.runtime, this, "bsearch");
+        }
+        
+        int low = 0, high = realLength, mid;
+        boolean smaller = false, satisfied = false;
+        IRubyObject v, val;
+        
+        while (low < high) {
+            mid = low + ((high - low) / 2);
+            val = eltOk(mid);
+            v = block.yieldSpecific(context, val);
+            
+            if (v instanceof RubyFixnum) {
+                long fixValue = ((RubyFixnum)v).getLongValue();
+                if (fixValue == 0) return val;
+                smaller = fixValue < 0;
+            } else if (v == runtime.getTrue()) {
+                satisfied = true;
+                smaller = true;
+            } else if (v == runtime.getFalse() || v == runtime.getNil()) {
+                smaller = false;
+            } else if (runtime.getNumeric().isInstance(v)) {
+                switch (RubyComparable.cmpint(context, invokedynamic(context, v, OP_CMP, RubyFixnum.zero(runtime)), v, RubyFixnum.zero(runtime))) {
+                    case 0: return val;
+                    case 1: smaller = true; break;
+                    case -1: smaller = false;
+                }
+            } else {
+                throw runtime.newTypeError("wrong argument type " + v.getType().getName() + " (must be numeric, true, false or nil");
+            }
+            if (smaller) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        if (low == realLength) return context.nil;
+        if (!satisfied) return context.nil;
+        return eltOk(low);
     }
 
     /** rb_ary_rindex
@@ -2407,7 +2464,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             if (block.yield(context, value).isTrue()) result.append(value);
         }
 
-        RuntimeHelpers.fillNil(result.values, result.realLength, result.values.length, runtime);
+        Helpers.fillNil(result.values, result.realLength, result.values.length, runtime);
         return result;
     }
 
@@ -2487,7 +2544,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         final IRubyObject[] myValues = this.values;
         try {
             if (myRealLength > i2) {
-                RuntimeHelpers.fillNil(myValues, myBegin + i2, myBegin + myRealLength, context.runtime);
+                Helpers.fillNil(myValues, myBegin + i2, myBegin + myRealLength, context.runtime);
                 this.realLength = i2;
                 int valuesLength = myValues.length - myBegin;
                 if (i2 << 1 < valuesLength && valuesLength > ARRAY_DEFAULT_SIZE) realloc(i2 << 1, valuesLength);
@@ -2496,7 +2553,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             concurrentModification();
         }
 
-        return value;
+        return context.is19 ? value : item;
     }
 
     /** rb_ary_delete_at
@@ -2579,7 +2636,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
 
         if (i2 < realLength) {
             try {
-                RuntimeHelpers.fillNil(values, begin + i2, begin + realLength, context.runtime);
+                Helpers.fillNil(values, begin + i2, begin + realLength, context.runtime);
             } catch (ArrayIndexOutOfBoundsException e) {
                 concurrentModification();
             }
@@ -2607,16 +2664,55 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         return block.isGiven() ? deleteIf(context, block) : enumeratorize(context.runtime, this, "delete_if");
     }
 
-
     /** rb_ary_zip
      *
      */
     @JRubyMethod(optional = 1, rest = true)
     public IRubyObject zip(ThreadContext context, IRubyObject[] args, Block block) {
-        Ruby runtime = context.runtime;
+        final Ruby runtime = context.runtime;
+        final int aLen = args.length + 1;
+        RubyClass array = runtime.getArray();
 
-        // Array#zip whether 1.8 or 1.9 uses to_ary unlike Enumerable version
-        args = RubyEnumerable.zipCommonConvert(runtime, args, "to_ary");
+        final IRubyObject[] newArgs = new IRubyObject[args.length];
+
+        boolean hasUncoercible = false;
+        for (int i = 0; i < args.length; i++) {
+            newArgs[i] = TypeConverter.convertToType(args[i], array, "to_ary", false);
+            if (newArgs[i].isNil()) {
+                hasUncoercible = true;
+            }
+        }
+
+        // Handle uncoercibles by trying to_enum conversion
+        if (hasUncoercible) {
+            RubySymbol each = runtime.newSymbol("each");
+            for (int i = 0; i < args.length; i++) {
+                newArgs[i] = args[i].callMethod(context, "to_enum", each);
+            }
+        }
+
+        if (hasUncoercible) {
+            return zipCommon(context, newArgs, block, new ArgumentVisitor() {
+                public IRubyObject visit(ThreadContext ctx, IRubyObject arg, int i) {
+                    return RubyEnumerable.zipEnumNext(ctx, arg);
+                }
+            });
+        } else {
+            return zipCommon(context, newArgs, block, new ArgumentVisitor() {
+                public IRubyObject visit(ThreadContext ctx, IRubyObject arg, int i) {
+                    return ((RubyArray) arg).elt(i);
+                }
+            });
+        }
+    }
+
+    // This can be shared with RubyEnumerable to clean #zipCommon{Enum,Arg} a little
+    public static interface ArgumentVisitor {
+        IRubyObject visit(ThreadContext ctx, IRubyObject arg, int i);
+    }
+
+    private IRubyObject zipCommon(ThreadContext context, IRubyObject[] args, Block block, ArgumentVisitor visitor) {
+        Ruby runtime = context.runtime;
 
         if (block.isGiven()) {
             for (int i = 0; i < realLength; i++) {
@@ -2625,7 +2721,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
                 // See JRUBY-5434
                 tmp[0] = safeArrayRef(values, begin + i);
                 for (int j = 0; j < args.length; j++) {
-                    tmp[j + 1] = ((RubyArray) args[j]).elt(i);
+                    tmp[j + 1] = visitor.visit(context, args[j], i);
                 }
                 block.yield(context, newArrayNoCopyLight(runtime, tmp));
             }
@@ -2638,7 +2734,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
                 IRubyObject[] tmp = new IRubyObject[args.length + 1];
                 tmp[0] = values[begin + i];
                 for (int j = 0; j < args.length; j++) {
-                    tmp[j + 1] = ((RubyArray) args[j]).elt(i);
+                    tmp[j + 1] = visitor.visit(context, args[j], i);
                 }
                 result[i] = newArrayNoCopyLight(runtime, tmp);
             }
@@ -2647,7 +2743,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         }
         return newArrayNoCopy(runtime, result);
     }
-    
+
     /** rb_ary_cmp
      *
      */
@@ -3187,7 +3283,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         } catch (ArrayIndexOutOfBoundsException aioob) {
             concurrentModification();
         }
-        RuntimeHelpers.fillNil(ary3.values, ary3.realLength, ary3.values.length, getRuntime());
+        Helpers.fillNil(ary3.values, ary3.realLength, ary3.values.length, getRuntime());
 
         return ary3;
     }
@@ -3206,7 +3302,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             if (hash.fastDelete(v)) ary3.append(v);
         }
 
-        RuntimeHelpers.fillNil(ary3.values, ary3.realLength, ary3.values.length, getRuntime());
+        Helpers.fillNil(ary3.values, ary3.realLength, ary3.values.length, getRuntime());
 
         return ary3;
     }
@@ -3230,7 +3326,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             if (set.fastDelete(v)) ary3.append(v);
         }
 
-        RuntimeHelpers.fillNil(ary3.values, ary3.realLength, ary3.values.length, getRuntime());
+        Helpers.fillNil(ary3.values, ary3.realLength, ary3.values.length, getRuntime());
 
         return ary3;
     }
@@ -3344,7 +3440,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
         if (!block.isGiven()) return enumeratorize(context.runtime, this, "sort_by!");
 
         modifyCheck();
-        RubyArray sorted = RuntimeHelpers.invoke(context, this, "sort_by", block).convertToArray();
+        RubyArray sorted = Helpers.invoke(context, this, "sort_by", block).convertToArray();
         values = sorted.values;
         isShared = false;
         begin = 0;
@@ -4102,7 +4198,7 @@ public class RubyArray extends RubyObject implements List, RandomAccess {
             Class type = target.getComponentType();
             Object rawJavaArray = Array.newInstance(type, realLength);
             try {
-                ArrayJavaAddons.copyDataToJavaArrayDirect(getRuntime().getCurrentContext(), this, rawJavaArray);
+                ArrayUtils.copyDataToJavaArrayDirect(getRuntime().getCurrentContext(), this, rawJavaArray);
             } catch (ArrayIndexOutOfBoundsException aioob) {
                 concurrentModification();
             }

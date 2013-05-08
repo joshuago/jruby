@@ -1,5 +1,5 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Common Public
  * License Version 1.0 (the "License"); you may not use this file
@@ -22,16 +22,19 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.test;
 
 import org.jruby.Ruby;
+import org.jruby.RubyFixnum;
 import org.jruby.RubyHash;
+import org.jruby.RubySymbol;
+import org.jruby.exceptions.RaiseException;
 
 /**
  * @author chadfowler
@@ -47,9 +50,6 @@ public class TestRubyHash extends TestRubyBase {
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        if (runtime == null) {
-        	runtime = Ruby.newInstance();
-        }
         eval("$h = {'foo' => 'bar'}");
     }
 
@@ -189,5 +189,21 @@ public class TestRubyHash extends TestRubyBase {
     public void testGet() {
         RubyHash rubyHash = new RubyHash(Ruby.getGlobalRuntime());
         assertEquals(null, rubyHash.get("Non matching key"));
+    }
+    
+    public void testJavaComparison() {
+        RubyHash rubyHash1 = new RubyHash(runtime);
+        RubyHash rubyHash2 = new RubyHash(runtime);
+        rubyHash1.put(
+                RubySymbol.newSymbol(runtime, "one"),
+                RubyFixnum.newFixnum(runtime, 1));
+        try {
+            int result = rubyHash1.compareTo(rubyHash2);
+            fail("compareTo did not throw IllegalArgumentException");
+        } catch (IllegalArgumentException ex) {
+            // this is correct
+        } catch (RaiseException ex) {
+            fail("Java call to compareTo raised a ruby exception");
+        }
     }
 }

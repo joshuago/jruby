@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -28,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.javasupport;
 
@@ -66,7 +66,6 @@ import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyBoolean;
 import org.jruby.RubyClass;
-import org.jruby.RubyFixnum;
 import org.jruby.RubyInstanceConfig;
 import org.jruby.RubyInteger;
 import org.jruby.RubyModule;
@@ -77,19 +76,17 @@ import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.internal.runtime.methods.JavaMethod.JavaMethodZero;
-import org.jruby.java.addons.ArrayJavaAddons;
 import org.jruby.java.proxies.ArrayJavaProxy;
 import org.jruby.java.invokers.ConstructorInvoker;
 import org.jruby.java.proxies.ConcreteJavaProxy;
-import org.jruby.javasupport.util.RuntimeHelpers;
-import org.jruby.runtime.Arity;
+import org.jruby.java.util.ArrayUtils;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import static org.jruby.runtime.Visibility.*;
 import org.jruby.runtime.builtin.IRubyObject;
-import org.jruby.runtime.callback.Callback;
 import org.jruby.util.ByteList;
 import org.jruby.util.IdUtil;
 import org.jruby.util.cli.Options;
@@ -608,30 +605,31 @@ public class JavaClass extends JavaObject {
             if (hasRun) return;
             hasRun = true;
 
-            Map<String, AssignedName> staticNames  = new HashMap<String, AssignedName>(STATIC_RESERVED_NAMES);
-            List<ConstantField> constants = new ArrayList<ConstantField>();
-            Map<String, NamedInstaller> staticCallbacks = new HashMap<String, NamedInstaller>();
+            InitializerState state = new InitializerState(getRuntime(), null);
             Field[] fields = getDeclaredFields(javaClass);
 
             for (int i = fields.length; --i >= 0; ) {
                 Field field = fields[i];
                 if (javaClass != field.getDeclaringClass()) continue;
-                if (ConstantField.isConstant(field)) constants.add(new ConstantField(field));
+                if (ConstantField.isConstant(field)) state.constantFields.add(new ConstantField(field));
 
                 int modifiers = field.getModifiers();
-                if (Modifier.isStatic(modifiers)) addField(staticCallbacks, staticNames, field, Modifier.isFinal(modifiers), true);
+                if (Modifier.isStatic(modifiers)) addField(state.staticCallbacks, state.staticNames, field, Modifier.isFinal(modifiers), true);
             }
+            
+            // Add in any Scala singleton methods
+            handleScalaSingletons(javaClass, state);
 
             // Now add all aliases for the static methods (fields) as appropriate
-            for (Map.Entry<String, NamedInstaller> entry : staticCallbacks.entrySet()) {
+            for (Map.Entry<String, NamedInstaller> entry : state.staticCallbacks.entrySet()) {
                 if (entry.getValue().type == NamedInstaller.STATIC_METHOD && entry.getValue().hasLocalMethod()) {
-                    assignAliases((MethodInstaller)entry.getValue(), staticNames);
+                    assignAliases((MethodInstaller)entry.getValue(), state.staticNames);
                 }
             }
 
-            JavaClass.this.staticAssignedNames = staticNames;
-            JavaClass.this.staticInstallers = staticCallbacks;
-            JavaClass.this.constantFields = constants;
+            JavaClass.this.staticAssignedNames = Collections.unmodifiableMap(state.staticNames);
+            JavaClass.this.staticInstallers = Collections.unmodifiableMap(state.staticCallbacks);
+            JavaClass.this.constantFields = Collections.unmodifiableList(state.constantFields);
         }
     };
 
@@ -695,7 +693,26 @@ public class JavaClass extends JavaObject {
         
         initializer.initialize();
 
-        proxy.defineFastMethod("__jsend!", __jsend_method);
+        proxy.addMethod("__jsend!", new org.jruby.internal.runtime.methods.JavaMethod.JavaMethodNBlock(proxy, PUBLIC) {
+            @Override
+            public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
+                String callName = args[0].asJavaString();
+                
+                DynamicMethod method = self.getMetaClass().searchMethod(callName);
+                int v = method.getArity().getValue();
+                
+                IRubyObject[] newArgs = new IRubyObject[args.length - 1];
+                System.arraycopy(args, 1, newArgs, 0, newArgs.length);
+
+                if(v < 0 || v == (newArgs.length)) {
+                    return Helpers.invoke(context, self, callName, newArgs, Block.NULL_BLOCK);
+                } else {
+                    RubyClass superClass = self.getMetaClass().getSuperClass();
+                    return Helpers.invokeAs(context, superClass, self, callName, newArgs, Block.NULL_BLOCK);
+                }
+            }
+        });
+        
         final Class<?> javaClass = javaClass();
         if (javaClass.isInterface()) {
             setupInterfaceProxy(proxy);
@@ -1224,34 +1241,11 @@ public class JavaClass extends JavaObject {
     public static JavaClass for_name(IRubyObject recv, IRubyObject name) {
         return forNameVerbose(recv.getRuntime(), name.asJavaString());
     }
-    
-    private static final Callback __jsend_method = new Callback() {
-            public IRubyObject execute(IRubyObject self, IRubyObject[] args, Block block) {
-                String name = args[0].asJavaString();
-                
-                DynamicMethod method = self.getMetaClass().searchMethod(name);
-                int v = method.getArity().getValue();
-                
-                IRubyObject[] newArgs = new IRubyObject[args.length - 1];
-                System.arraycopy(args, 1, newArgs, 0, newArgs.length);
-
-                if(v < 0 || v == (newArgs.length)) {
-                    return RuntimeHelpers.invoke(self.getRuntime().getCurrentContext(), self, name, newArgs, block);
-                } else {
-                    RubyClass superClass = self.getMetaClass().getSuperClass();
-                    return RuntimeHelpers.invokeAs(self.getRuntime().getCurrentContext(), superClass, self, name, newArgs, block);
-                }
-            }
-
-            public Arity getArity() {
-                return Arity.optional();
-            }
-        };
 
     @JRubyMethod
     public RubyModule ruby_class() {
         // Java.getProxyClass deals with sync issues, so we won't duplicate the logic here
-        return Java.getProxyClass(getRuntime(), this);
+        return Java.getProxyClass(getRuntime(), javaClass());
     }
 
     @JRubyMethod(name = "public?")
@@ -1782,34 +1776,11 @@ public class JavaClass extends JavaObject {
     }
    
     public IRubyObject emptyJavaArray(ThreadContext context) {
-        JavaArray javaArray = new JavaArray(getRuntime(), Array.newInstance(javaClass(), 0));
-        RubyClass newProxyClass = (RubyClass)Java.get_proxy_class(javaArray, array_class());
-
-        ArrayJavaProxy proxy = new ArrayJavaProxy(context.runtime, newProxyClass);
-        proxy.dataWrapStruct(javaArray);
-        
-        return proxy;
+        return ArrayUtils.emptyJavaArrayDirect(context, javaClass());
     }
    
     public IRubyObject javaArraySubarray(ThreadContext context, JavaArray fromArray, int index, int size) {
-        int actualLength = Array.getLength(fromArray.getValue());
-        if (index >= actualLength) {
-            return context.runtime.getNil();
-        } else {
-            if (index + size > actualLength) {
-                size = actualLength - index;
-            }
-            
-            Object newArray = Array.newInstance(javaClass(), size);
-            JavaArray javaArray = new JavaArray(getRuntime(), newArray);
-            System.arraycopy(fromArray.getValue(), index, newArray, 0, size);
-            RubyClass newProxyClass = (RubyClass)Java.get_proxy_class(javaArray, array_class());
-
-            ArrayJavaProxy proxy = new ArrayJavaProxy(context.runtime, newProxyClass);
-            proxy.dataWrapStruct(javaArray);
-
-            return proxy;
-        }
+        return ArrayUtils.javaArraySubarrayDirect(context, getValue(), index, size);
     }
    
     /**
@@ -1823,18 +1794,7 @@ public class JavaClass extends JavaObject {
      * @return
      */
     public IRubyObject concatArrays(ThreadContext context, JavaArray original, JavaArray additional) {
-        int oldLength = (int)original.length().getLongValue();
-        int addLength = (int)additional.length().getLongValue();
-        Object newArray = Array.newInstance(javaClass(), oldLength + addLength);
-        JavaArray javaArray = new JavaArray(getRuntime(), newArray);
-        System.arraycopy(original.getValue(), 0, newArray, 0, oldLength);
-        System.arraycopy(additional.getValue(), 0, newArray, oldLength, addLength);
-        RubyClass newProxyClass = (RubyClass)Java.get_proxy_class(javaArray, array_class());
-
-        ArrayJavaProxy proxy = new ArrayJavaProxy(context.runtime, newProxyClass);
-        proxy.dataWrapStruct(javaArray);
-
-        return proxy;
+        return ArrayUtils.concatArraysDirect(context, original.getValue(), additional.getValue());
     }
    
     /**
@@ -1846,22 +1806,7 @@ public class JavaClass extends JavaObject {
      * @return
      */
     public IRubyObject concatArrays(ThreadContext context, JavaArray original, IRubyObject additional) {
-        int oldLength = (int)original.length().getLongValue();
-        int addLength = (int)((RubyFixnum)RuntimeHelpers.invoke(context, additional, "length")).getLongValue();
-        Object newArray = Array.newInstance(javaClass(), oldLength + addLength);
-        JavaArray javaArray = new JavaArray(getRuntime(), newArray);
-        System.arraycopy(original.getValue(), 0, newArray, 0, oldLength);
-        RubyClass newProxyClass = (RubyClass)Java.get_proxy_class(javaArray, array_class());
-        ArrayJavaProxy proxy = new ArrayJavaProxy(context.runtime, newProxyClass);
-        proxy.dataWrapStruct(javaArray);
-
-        Ruby runtime = context.runtime;
-        for (int i = 0; i < addLength; i++) {
-            RuntimeHelpers.invoke(context, proxy, "[]=", runtime.newFixnum(oldLength + i), 
-                    RuntimeHelpers.invoke(context, additional, "[]", runtime.newFixnum(i)));
-        }
-
-        return proxy;
+        return ArrayUtils.concatArraysDirect(context, original.getValue(), additional);
     }
 
     public IRubyObject javaArrayFromRubyArray(ThreadContext context, IRubyObject fromArray) {
@@ -1869,26 +1814,32 @@ public class JavaClass extends JavaObject {
         if (!(fromArray instanceof RubyArray)) {
             throw runtime.newTypeError(fromArray, runtime.getArray());
         }
+        
+        Object newArray = javaArrayFromRubyArrayDirect(context, fromArray);
+        
+        return new ArrayJavaProxy(runtime, Java.getProxyClassForObject(runtime, newArray), newArray, JavaUtil.getJavaConverter(javaClass()));
+    }
+
+    public Object javaArrayFromRubyArrayDirect(ThreadContext context, IRubyObject fromArray) {
+        Ruby runtime = context.runtime;
+        if (!(fromArray instanceof RubyArray)) {
+            throw runtime.newTypeError(fromArray, runtime.getArray());
+        }
         RubyArray rubyArray = (RubyArray)fromArray;
-        JavaArray javaArray = new JavaArray(getRuntime(), Array.newInstance(javaClass(), rubyArray.size()));
+        Object newArray = Array.newInstance(javaClass(), rubyArray.size());
         
         if (javaClass().isArray()) {
             // if it's an array of arrays, recurse with the component type
             for (int i = 0; i < rubyArray.size(); i++) {
                 JavaClass componentType = component_type();
-                IRubyObject wrappedComponentArray = componentType.javaArrayFromRubyArray(context, rubyArray.eltInternal(i));
-                javaArray.setWithExceptionHandling(i, JavaUtil.unwrapJavaObject(wrappedComponentArray));
+                Object componentArray = componentType.javaArrayFromRubyArrayDirect(context, rubyArray.eltInternal(i));
+                ArrayUtils.setWithExceptionHandlingDirect(runtime, newArray, i, componentArray);
             }
         } else {
-            ArrayJavaAddons.copyDataToJavaArray(context, rubyArray, javaArray);
+            ArrayUtils.copyDataToJavaArrayDirect(context, rubyArray, newArray);
         }
         
-        RubyClass newProxyClass = (RubyClass)Java.get_proxy_class(javaArray, array_class());
-
-        ArrayJavaProxy proxy = new ArrayJavaProxy(runtime, newProxyClass);
-        proxy.dataWrapStruct(javaArray);
-        
-        return proxy;
+        return newArray;
     }
 
     @JRubyMethod

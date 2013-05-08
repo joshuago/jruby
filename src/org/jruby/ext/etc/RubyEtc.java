@@ -1,5 +1,6 @@
 package org.jruby.ext.etc;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyModule;
 import org.jruby.common.IRubyWarnings.ID;
@@ -52,6 +53,9 @@ public class RubyEtc {
         };
         
         runtime.setPasswdStruct(RubyStruct.newInstance(runtime.getStructClass(), args, Block.NULL_BLOCK));
+        if (runtime.is1_9()) {
+            runtime.getEtc().defineConstant("Passwd", runtime.getPasswdStruct());
+        }
     }
 
     private static void defineGroupStruct(Ruby runtime) {
@@ -64,6 +68,9 @@ public class RubyEtc {
         };
         
         runtime.setGroupStruct(RubyStruct.newInstance(runtime.getStructClass(), args, Block.NULL_BLOCK));
+        if (runtime.is1_9()) {
+            runtime.getEtc().defineConstant("Group", runtime.getGroupStruct());
+        }
     }
     
     private static IRubyObject setupPasswd(Ruby runtime, Passwd passwd) {
@@ -162,12 +169,21 @@ public class RubyEtc {
             posix.getpwent();
             if(block.isGiven()) {
                 ThreadContext context = runtime.getCurrentContext();
-                posix.setpwent();
-                Passwd pw;
-                while((pw = posix.getpwent()) != null) {
-                    block.yield(context, setupPasswd(runtime, pw));
+                
+                if (!iteratingPasswd.compareAndSet(false, true)) {
+                    throw runtime.newRuntimeError("parallel passwd iteration");
                 }
-                posix.endpwent();
+                
+                posix.setpwent();
+                try {
+                    Passwd pw;
+                    while((pw = posix.getpwent()) != null) {
+                        block.yield(context, setupPasswd(runtime, pw));
+                    }
+                } finally {
+                    posix.endpwent();
+                    iteratingPasswd.set(false);
+                }
             }
 
             Passwd pw = posix.getpwent();
@@ -418,4 +434,6 @@ public class RubyEtc {
         
         return ret;
     }
+    
+    private static final AtomicBoolean iteratingPasswd = new AtomicBoolean(false);
 }

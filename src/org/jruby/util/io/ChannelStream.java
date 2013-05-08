@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -25,11 +25,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.util.io;
 
@@ -46,6 +46,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.IllegalBlockingModeException;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SelectableChannel;
+import java.util.LinkedList;
 
 import org.jruby.Finalizable;
 import org.jruby.Ruby;
@@ -54,8 +55,6 @@ import org.jruby.util.ByteList;
 import org.jruby.util.JRubyFile;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
-
-import java.nio.channels.spi.SelectorProvider;
 
 /**
  * This file implements a seekable IO file.
@@ -105,7 +104,7 @@ public class ChannelStream implements Stream, Finalizable {
     protected boolean reading; // are we reading or writing?
     private ChannelDescriptor descriptor;
     private boolean blocking = true;
-    protected int ungotc = -1;
+    private ByteList ungotChars = new ByteList();
     private volatile boolean closedExplicitly = false;
 
     private volatile boolean eof = false;
@@ -184,7 +183,11 @@ public class ChannelStream implements Stream, Finalizable {
     }
 
     public boolean readDataBuffered() {
-        return reading && (ungotc != -1 || buffer.hasRemaining());
+        return reading && (hasUngotChars() || buffer.hasRemaining());
+    }
+
+    private boolean hasUngotChars() {
+        return ungotChars.length() > 0;
     }
 
     public boolean writeDataBuffered() {
@@ -287,12 +290,17 @@ public class ChannelStream implements Stream, Finalizable {
 
         int totalRead = 0;
         boolean found = false;
-        if (ungotc != -1) {
-            dst.append((byte) ungotc);
-            found = ungotc == terminator;
-            ungotc = -1;
-            ++totalRead;
+        
+        if (hasUngotChars()) {
+            for(int i = 0; i < ungotChars.length(); i++){
+                byte ungotc = (byte) ungotChars.get(i);
+                dst.append(ungotc);
+                found = ungotc == terminator;
+                ++totalRead;
+            }
+            clearUngotChars();
         }
+        
         while (!found) {
             final byte[] bytes = buffer.array();
             final int begin = buffer.arrayOffset() + buffer.position();
@@ -326,13 +334,18 @@ public class ChannelStream implements Stream, Finalizable {
 
         int totalRead = 0;
         boolean found = false;
-        if (ungotc != -1) {
-            dst.append((byte) ungotc);
-            found = ungotc == terminator;
-            ungotc = -1;
-            limit--;
-            ++totalRead;
+        
+        if (hasUngotChars()) {
+            for(int i = 0; i < ungotChars.length(); i++){
+                byte ungotc = (byte) ungotChars.get(i);
+                dst.append(ungotc);
+                found = ungotc == terminator;
+                limit--;
+                ++totalRead;
+            }
+            clearUngotChars();
         }
+        
         while (!found) {
             final byte[] bytes = buffer.array();
             final int begin = buffer.arrayOffset() + buffer.position();
@@ -359,6 +372,15 @@ public class ChannelStream implements Stream, Finalizable {
             }
         }
         return totalRead;
+    }
+
+    /**
+     * 
+     */
+    private void clearUngotChars() {
+        if(ungotChars.length() > 0) {
+            ungotChars.delete(0, ungotChars.length());
+        }
     }
 
     /**
@@ -454,10 +476,13 @@ public class ChannelStream implements Stream, Finalizable {
      */
     private final int copyBufferedBytes(ByteBuffer dst) {
         final int bytesToCopy = dst.remaining();
-
-        if (ungotc != -1 && dst.hasRemaining()) {
-            dst.put((byte) ungotc);
-            ungotc = -1;
+        
+        if (hasUngotChars() && dst.hasRemaining()) {
+            for(int i = 0; i < ungotChars.length(); i++){
+                byte ungotc = (byte) ungotChars.get(i);
+                dst.put(ungotc);
+            }
+            clearUngotChars();
         }
 
         if (buffer.hasRemaining() && dst.hasRemaining()) {
@@ -490,11 +515,14 @@ public class ChannelStream implements Stream, Finalizable {
      */
     private final int copyBufferedBytes(byte[] dst, int off, int len) {
         int bytesCopied = 0;
-
-        if (ungotc != -1 && len > 0) {
-            dst[off++] = (byte) ungotc;
-            ungotc = -1;
-            ++bytesCopied;
+        
+        if (hasUngotChars() && len > 0) {
+            for(int i = 0; i < ungotChars.length(); i++){
+                byte ungotc = (byte) ungotChars.get(i);
+                dst[off++] = ungotc;
+                ++bytesCopied;
+            }
+            clearUngotChars();
         }
 
         final int n = Math.min(len - bytesCopied, buffer.remaining());
@@ -515,11 +543,14 @@ public class ChannelStream implements Stream, Finalizable {
         int bytesCopied = 0;
 
         dst.ensure(Math.min(len, bufferedInputBytesRemaining()));
-
-        if (bytesCopied < len && ungotc != -1) {
-            ++bytesCopied;
-            dst.append((byte) ungotc);
-            ungotc = -1;
+        
+        if (hasUngotChars() && hasUngotChars()) {
+            for(int i = 0; i < ungotChars.length(); i++){
+                byte ungotc = (byte) ungotChars.get(i);
+                ++bytesCopied;
+                dst.append(ungotc);
+            }
+            clearUngotChars();
         }
 
         //
@@ -540,7 +571,7 @@ public class ChannelStream implements Stream, Finalizable {
      * @return The number of bytes that can be read without reading the underlying stream.
      */
     private final int bufferedInputBytesRemaining() {
-        return reading ? (buffer.remaining() + (ungotc != -1 ? 1 : 0)) : 0;
+        return reading ? (buffer.remaining() + (ungotChars.length())) : 0;
     }
 
     /**
@@ -549,7 +580,7 @@ public class ChannelStream implements Stream, Finalizable {
      * @return <tt>true</tt> if there are bytes available in the read buffer.
      */
     private final boolean hasBufferedInputBytes() {
-        return reading && (buffer.hasRemaining() || ungotc != -1);
+        return reading && (buffer.hasRemaining() || hasUngotChars());
     }
 
     /**
@@ -728,7 +759,7 @@ public class ChannelStream implements Stream, Finalizable {
             // Adjust for buffered data
             if (reading) {
                 pos -= buffer.remaining();
-                return pos - (pos > 0 && ungotc != -1 ? 1 : 0);
+                return pos - (pos > 0 && hasUngotChars() ? ungotChars.length() : 0);
             } else {
                 return pos + buffer.position();
             }
@@ -750,7 +781,7 @@ public class ChannelStream implements Stream, Finalizable {
     public synchronized void lseek(long offset, int type) throws IOException, InvalidValueException, PipeException, BadDescriptorException {
         if (descriptor.isSeekable()) {
             FileChannel fileChannel = (FileChannel)descriptor.getChannel();
-            ungotc = -1;
+            clearUngotChars();
             int adj = 0;
             if (reading) {
                 // for SEEK_CUR, need to adjust for buffered data
@@ -1122,18 +1153,18 @@ public class ChannelStream implements Stream, Finalizable {
         }
         invalidateBuffer();
         FileChannel fileChannel = (FileChannel)ch;
+        long position = fileChannel.position();
         if (newLength > fileChannel.size()) {
             // truncate can't lengthen files, so we save position, seek/write, and go back
-            long position = fileChannel.position();
             int difference = (int)(newLength - fileChannel.size());
 
             fileChannel.position(fileChannel.size());
             // FIXME: This worries me a bit, since it could allocate a lot with a large newLength
             fileChannel.write(ByteBuffer.allocate(difference));
-            fileChannel.position(position);
         } else {
             fileChannel.truncate(newLength);
         }
+        fileChannel.position(position);
     }
 
     /**
@@ -1215,7 +1246,7 @@ public class ChannelStream implements Stream, Finalizable {
         eof = false;
 
         // save the ungot
-        ungotc = c;
+        ungotChars.prepend((byte)c);
 
         return c;
     }
@@ -1350,9 +1381,9 @@ public class ChannelStream implements Stream, Finalizable {
         try {
             descriptor.checkOpen();
 
-            if (ungotc >= 0) {
-                int c = ungotc;
-                ungotc = -1;
+            if (hasUngotChars()) {
+                int c = ungotChars.get(0);
+                ungotChars.delete(0,1);
                 return c;
             }
 
@@ -1456,7 +1487,8 @@ public class ChannelStream implements Stream, Finalizable {
     }
 
     private static Stream maybeWrapWithLineEndingWrapper(Stream stream, ModeFlags modes) {
-        if (Platform.IS_WINDOWS && stream.getDescriptor().getChannel() instanceof FileChannel && !modes.isBinary()) {
+        if (modes.isText() || // FIXME: Remove this one textmode is part of transcoding.
+                (Platform.IS_WINDOWS && stream.getDescriptor().getChannel() instanceof FileChannel && !modes.isBinary())) {
             return new CRLFStreamWrapper(stream);
         }
         return stream;

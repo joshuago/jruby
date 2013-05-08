@@ -4,6 +4,7 @@
 require 'rbconfig'
 require 'java'
 require 'jruby'
+require 'mspec/runner/formatters'
 
 IKVM = java.lang.System.get_property('java.vm.name') =~ /IKVM\.NET/
 WINDOWS = RbConfig::CONFIG['host_os'] =~ /mswin/

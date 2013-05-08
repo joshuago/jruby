@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -22,11 +22,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -35,7 +35,6 @@ import static org.jruby.RubyFile.file;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 
 import org.jruby.anno.JRubyMethod;
@@ -45,6 +44,7 @@ import org.jruby.platform.Platform;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.JRubyFile;
+import org.jruby.util.TypeConverter;
 
 @JRubyModule(name = "FileTest")
 public class RubyFileTest {
@@ -89,8 +89,12 @@ public class RubyFileTest {
 
     public static IRubyObject directory_p(ThreadContext context, IRubyObject filename) {
         Ruby runtime = context.runtime;
-        if (!(filename instanceof RubyFile)) {
-            filename = get_path(context, filename);
+        if (!(filename instanceof RubyFile || filename instanceof RubyIO)) {
+            if (filename.respondsTo("to_io")) {
+                filename = (RubyIO) TypeConverter.convertToType(filename, context.runtime.getIO(), "to_io");
+            } else {
+                filename = get_path(context, filename);
+            }
         }
 
         ZipEntry entry = file_in_archive(filename);
@@ -276,7 +280,11 @@ public class RubyFileTest {
     public static IRubyObject size(ThreadContext context, IRubyObject recv, IRubyObject filename) {
         Ruby runtime = recv.getRuntime();
         if (!(filename instanceof RubyFile)) {
-            filename = get_path(context, filename);
+            if (filename.respondsTo("to_io")) {
+                filename = (RubyIO) TypeConverter.convertToType(filename, runtime.getIO(), "to_io");
+            } else {
+                filename = get_path(context, filename);
+            }
         }
         
         ZipEntry entry = file_in_archive(filename);
@@ -301,7 +309,11 @@ public class RubyFileTest {
     public static IRubyObject size_p(ThreadContext context, IRubyObject recv, IRubyObject filename) {
         Ruby runtime = context.runtime;
         if (!(filename instanceof RubyFile)) {
-            filename = get_path(context, filename);
+            if (filename.respondsTo("to_io")) {
+                filename = (RubyIO) TypeConverter.convertToType(filename, runtime.getIO(), "to_io");
+            } else {
+                filename = get_path(context, filename);
+            }
         }
         
         ZipEntry entry = file_in_archive(filename);
@@ -566,7 +578,7 @@ public class RubyFileTest {
     private static ZipEntry file_in_archive(IRubyObject path) {
         Ruby runtime = path.getRuntime();
 
-        if (path instanceof RubyFile) {
+        if (path instanceof RubyFile || path instanceof RubyIO) {
             return null;
         }
 
@@ -580,11 +592,17 @@ public class RubyFileTest {
         if (pathJStr.startsWith("file:")) {
             String file = pathJStr.substring(5);
             int bang = file.indexOf('!');
-            if (bang == -1 || bang == file.length() - 1) {
+            if (bang == -1) {
                 return null;
+            }
+            if (bang == file.length() - 1) {
+                file = file + "/";
             }
             String jar = file.substring(0, bang);
             String after = file.substring(bang + 2);
+            if (after.length() > 0 && after.charAt(after.length() - 1) == '/') {
+                after = after.substring(0, after.length() -1);
+            }
             try {
                 return RubyFile.getDirOrFileEntry(jar, after);
             } catch (Exception e) {

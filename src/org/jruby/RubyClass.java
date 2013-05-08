@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -22,11 +22,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -59,11 +59,10 @@ import org.jruby.anno.JRubyMethod;
 import org.jruby.compiler.impl.SkinnyMethodAdapter;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.internal.runtime.methods.DynamicMethod;
-import org.jruby.internal.runtime.methods.ProfilingDynamicMethod;
 import org.jruby.java.codegen.RealClassGenerator;
 import org.jruby.java.codegen.Reified;
 import org.jruby.javasupport.Java;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.CallSite;
 import org.jruby.runtime.CallType;
@@ -272,11 +271,10 @@ public class RubyClass extends RubyModule {
         return variableAccessors;
     }
     
-    private volatile VariableAccessor objectIdAccessor = VariableAccessor.DUMMY_ACCESSOR;
-    
-    private volatile VariableAccessor cextHandleAccessor = VariableAccessor.DUMMY_ACCESSOR;
-
-    private volatile VariableAccessor ffiHandleAccessor = VariableAccessor.DUMMY_ACCESSOR;
+    private final VariableAccessorField objectIdVariableAccessorField = new VariableAccessorField("object_id");
+    private final VariableAccessorField cextHandleVariableAccessorField = new VariableAccessorField("cext");
+    private final VariableAccessorField ffiHandleVariableAccessorField = new VariableAccessorField("ffi");
+    private final VariableAccessorField objectGroupVariableAccessorField = new VariableAccessorField("objectspace_group");
 
     private synchronized final VariableAccessor allocateVariableAccessor(String name) {
         String[] myVariableNames = variableNames;
@@ -317,30 +315,31 @@ public class RubyClass extends RubyModule {
         return ivarAccessor;
     }
 
-    private synchronized VariableAccessor allocateIdAccessor() {
-        if (objectIdAccessor == VariableAccessor.DUMMY_ACCESSOR) {
-            objectIdAccessor = allocateVariableAccessor("object_id");
+    public final class VariableAccessorField {
+        private final String name;
+        private volatile VariableAccessor variableAccessor = VariableAccessor.DUMMY_ACCESSOR;
+
+        private VariableAccessorField(String name) {
+            this.name = name;
         }
 
-        return objectIdAccessor;
-    }
-
-    private synchronized VariableAccessor allocateCExtHandleAccessor() {
-        if (cextHandleAccessor == VariableAccessor.DUMMY_ACCESSOR) {
-            cextHandleAccessor = allocateVariableAccessor("cext");
+        public VariableAccessor getVariableAccessorForRead() {
+            return variableAccessor;
         }
 
-        return cextHandleAccessor;
-    }
-
-    private synchronized VariableAccessor allocateFFIHandleAccessor() {
-        if (ffiHandleAccessor == VariableAccessor.DUMMY_ACCESSOR) {
-            ffiHandleAccessor = allocateVariableAccessor("ffi");
+        public VariableAccessor getVariableAccessorForWrite() {
+            return variableAccessor != VariableAccessor.DUMMY_ACCESSOR
+                    ? variableAccessor : allocateVariableAccessor();
         }
 
-        return ffiHandleAccessor;
-    }
+        private synchronized VariableAccessor allocateVariableAccessor() {
+            if (variableAccessor == VariableAccessor.DUMMY_ACCESSOR) {
+                variableAccessor = RubyClass.this.allocateVariableAccessor(name);
+            }
 
+            return variableAccessor;
+        }
+    }
 
     public VariableAccessor getVariableAccessorForRead(String name) {
         VariableAccessor accessor = getVariableAccessorsForRead().get(name);
@@ -348,31 +347,20 @@ public class RubyClass extends RubyModule {
         return accessor;
     }
 
-    public VariableAccessor getObjectIdAccessorForWrite() {
-        VariableAccessor accessor = objectIdAccessor;
-        return accessor != VariableAccessor.DUMMY_ACCESSOR ? accessor : allocateIdAccessor();
+    public VariableAccessorField getObjectIdAccessorField() {
+        return objectIdVariableAccessorField;
     }
 
-    public VariableAccessor getObjectIdAccessorForRead() {
-        return objectIdAccessor;
+    public VariableAccessorField getNativeHandleAccessorField() {
+        return cextHandleVariableAccessorField;
     }
 
-    public VariableAccessor getNativeHandleAccessorForWrite() {
-        VariableAccessor accessor = cextHandleAccessor;
-        return accessor != VariableAccessor.DUMMY_ACCESSOR ? accessor : allocateCExtHandleAccessor();
+    public VariableAccessorField getFFIHandleAccessorField() {
+        return ffiHandleVariableAccessorField;
     }
 
-    public VariableAccessor getNativeHandleAccessorForRead() {
-        return cextHandleAccessor;
-    }
-
-    public VariableAccessor getFFIHandleAccessorForWrite() {
-        VariableAccessor accessor = ffiHandleAccessor;
-        return accessor != VariableAccessor.DUMMY_ACCESSOR ? accessor : allocateFFIHandleAccessor();
-    }
-
-    public VariableAccessor getFFIHandleAccessorForRead() {
-        return ffiHandleAccessor;
+    public VariableAccessorField getObjectGroupAccessorField() {
+        return objectGroupVariableAccessorField;
     }
 
     public int getVariableTableSize() {
@@ -577,7 +565,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, block);
         }
         return method.call(context, self, this, name, block);
     }
@@ -585,7 +573,7 @@ public class RubyClass extends RubyModule {
     public IRubyObject finvoke(ThreadContext context, IRubyObject self, String name, Block block) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, block);
         }
         return method.call(context, self, this, name, block);
     }
@@ -596,7 +584,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, args, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, args, block);
         }
         return method.call(context, self, this, name, args, block);
     }
@@ -606,7 +594,7 @@ public class RubyClass extends RubyModule {
         assert args != null;
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, args, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, args, block);
         }
         return method.call(context, self, this, name, args, block);
     }
@@ -616,7 +604,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg, block);
         }
         return method.call(context, self, this, name, arg, block);
     }
@@ -625,7 +613,7 @@ public class RubyClass extends RubyModule {
             IRubyObject arg, Block block) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg, block);
         }
         return method.call(context, self, this, name, arg, block);
     }
@@ -635,7 +623,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, block);
         }
         return method.call(context, self, this, name, arg0, arg1, block);
     }
@@ -644,7 +632,7 @@ public class RubyClass extends RubyModule {
             IRubyObject arg0, IRubyObject arg1, Block block) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, block);
         }
         return method.call(context, self, this, name, arg0, arg1, block);
     }
@@ -654,7 +642,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, arg2, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, arg2, block);
         }
         return method.call(context, self, this, name, arg0, arg1, arg2, block);
     }
@@ -663,7 +651,7 @@ public class RubyClass extends RubyModule {
             IRubyObject arg0, IRubyObject arg1, IRubyObject arg2, Block block) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, arg2, block);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, arg2, block);
         }
         return method.call(context, self, this, name, arg0, arg1, arg2, block);
     }
@@ -673,7 +661,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name);
     }
@@ -681,7 +669,7 @@ public class RubyClass extends RubyModule {
     public IRubyObject finvoke(ThreadContext context, IRubyObject self, String name) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name);
     }
@@ -695,7 +683,7 @@ public class RubyClass extends RubyModule {
             }
 
             try {
-                return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, Block.NULL_BLOCK);
+                return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, Block.NULL_BLOCK);
             } catch(RaiseException e) {
                 if(context.runtime.getNoMethodError().isInstance(e.getException())) {
                     if(self.respondsTo(name)) {
@@ -719,7 +707,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, args, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, args, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, args);
     }
@@ -729,7 +717,7 @@ public class RubyClass extends RubyModule {
         assert args != null;
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, args, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, args, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, args);
     }
@@ -739,7 +727,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, arg);
     }
@@ -748,7 +736,7 @@ public class RubyClass extends RubyModule {
             IRubyObject arg) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, arg);
     }
@@ -758,7 +746,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, arg0, arg1);
     }
@@ -767,7 +755,7 @@ public class RubyClass extends RubyModule {
             IRubyObject arg0, IRubyObject arg1) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, arg0, arg1);
     }
@@ -777,7 +765,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = searchMethod(name);
         IRubyObject caller = context.getFrameSelf();
         if (shouldCallMethodMissing(method, name, caller, callType)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, arg2, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, callType, arg0, arg1, arg2, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, arg0, arg1, arg2);
     }
@@ -786,7 +774,7 @@ public class RubyClass extends RubyModule {
             IRubyObject arg0, IRubyObject arg1, IRubyObject arg2) {
         DynamicMethod method = searchMethod(name);
         if (shouldCallMethodMissing(method)) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, arg2, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), name, CallType.FUNCTIONAL, arg0, arg1, arg2, Block.NULL_BLOCK);
         }
         return method.call(context, self, this, name, arg0, arg1, arg2);
     }
@@ -845,7 +833,7 @@ public class RubyClass extends RubyModule {
         DynamicMethod method = getMetaClass().searchMethod("inherited");
 
         if (method.isUndefined()) {
-            return RuntimeHelpers.callMethodMissing(context, self, method.getVisibility(), "inherited", CallType.FUNCTIONAL, Block.NULL_BLOCK);
+            return Helpers.callMethodMissing(context, self, method.getVisibility(), "inherited", CallType.FUNCTIONAL, Block.NULL_BLOCK);
         }
 
         return method.call(context, self, getMetaClass(), "inherited", subclass, Block.NULL_BLOCK);

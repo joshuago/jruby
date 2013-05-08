@@ -19,8 +19,21 @@
 
     <patternset id="dist.lib.files">
         <include name="lib/ruby/1.8/**"/>
+        <exclude name="lib/ruby/1.8/openssl/**" if="exclude_openssl"/>
         <include name="lib/ruby/1.9/**"/>
+        <exclude name="lib/ruby/1.9/openssl/**" if="exclude_openssl"/>
+        <include name="lib/ruby/2.0/**"/>
+        <exclude name="lib/ruby/2.0/openssl/**" if="exclude_openssl"/>
         <include name="lib/ruby/shared/**"/>
+        <exclude name="lib/ruby/shared/bc*.jar" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/bouncy-castle-java.rb" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/jopenssl.jar" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/jopenssl/**" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/krypt/**" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/krypt" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/*openssl*" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/openssl/**" if="exclude_openssl"/>
+        <exclude name="lib/ruby/shared/rubygems/gem_openssl.rb" if="exclude_openssl"/>
     </patternset>
 
     <patternset id="dist.files">
@@ -32,6 +45,8 @@
         <include name="README"/>
         <exclude name="lib/ruby/**"/>
         <exclude name="dist/**"/>
+        <!-- test/prawn is 37M -->
+        <exclude name="test/prawn/**"/>
     </patternset>
 
     <patternset id="dist.bin.files">
@@ -72,10 +87,20 @@
         <include name="jruby.bnd.template"/>
         <include name="pom.xml"/>
         <include name="maven/**"/>
+        
         <include name="gems/jruby-jars/**"/>
         <exclude name="gems/jruby-jars/pkg/**"/>
         <exclude name="gems/jruby-jars/lib/jruby*.jar"/>
         <exclude name="gems/jruby-jars/lib/jruby-jars/**"/>
+        
+        <include name="gems/jruby-openssl/**"/>
+        <exclude name="gems/jruby-openssl/pkg/**"/>
+        <exclude name="gems/jruby-openssl/*.gem"/>
+        
+        <include name="gems/bouncy-castle-java/**"/>
+        <exclude name="gems/jruby-openssl/*.gem"/>
+        <exclude name="gems/bouncy-castle-java/lib/**"/>
+        
         <exclude name="lib/jruby*.jar"/>
     </patternset>
 
@@ -185,10 +210,12 @@
             </tarfileset>
             <tarfileset dir="${basedir}" prefix="jruby-${version.jruby}">
                 <patternset refid="dist.src.files"/>
+            </tarfileset>
+            <tarfileset dir="${basedir}" prefix="jruby-${version.jruby}">
                 <patternset refid="dist.nailgun.files"/>
-                <include name="spi/**"/>
             </tarfileset>
             <tarfileset dir="${basedir}" mode="755" prefix="jruby-${version.jruby}">
+                <include name="spi/**"/>
                 <include name="tool/nailgun/configure"/>
                 <include name="test/testapp/testapp"/>
                 <include name="test/testapp/testapp.exe"/>
@@ -204,10 +231,12 @@
             </zipfileset>
             <zipfileset dir="${basedir}" prefix="jruby-${version.jruby}">
                 <patternset refid="dist.src.files"/>
+            </zipfileset>
+            <zipfileset dir="${basedir}" prefix="jruby-${version.jruby}">
                 <patternset refid="dist.nailgun.files"/>
-                <include name="spi/**"/>
             </zipfileset>
             <zipfileset dir="${basedir}" filemode="755" prefix="jruby-${version.jruby}">
+                <include name="spi/**"/>
                 <include name="tool/nailgun/configure"/>
                 <include name="test/testapp/testapp"/>
                 <include name="test/testapp/testapp.exe"/>
@@ -254,6 +283,13 @@
         <rake task="installer"/>
     </target>
 
+    <target name="dist-jar-complete" depends="jar-jruby-complete">
+        <mkdir dir="${dist.dir}"/>
+        <move file="${dest.lib.dir}/jruby-complete.jar" tofile="${dist.dir}/jruby-complete-${version.jruby}.jar"/>
+        <checksum file="${dist.dir}/jruby-complete-${version.jruby}.jar" algorithm="md5"/>
+        <checksum file="${dist.dir}/jruby-complete-${version.jruby}.jar" algorithm="sha1"/>
+    </target>
+
     <target name="dist-gem" depends="install-dev-gems,dist-jar-complete">
         <rake task="gem:jruby-jars"/>
         <rake task="gem:jruby-openssl"/>
@@ -261,6 +297,6 @@
 
     <target name="dist-clean">
         <delete dir="${dist.dir}"/>
-        <delete dir="gem/jruby-jars/pkg"/>
+        <delete dir="gems/jruby-jars/pkg"/>
     </target>
 </project>

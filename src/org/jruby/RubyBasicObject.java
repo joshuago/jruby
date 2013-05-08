@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -19,11 +19,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -31,14 +31,12 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
-import java.security.AccessControlException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings.ID;
@@ -47,7 +45,7 @@ import org.jruby.exceptions.JumpException;
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.javasupport.JavaObject;
 import org.jruby.javasupport.JavaUtil;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.CallType;
 import org.jruby.runtime.ClassIndex;
@@ -57,6 +55,7 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import static org.jruby.runtime.Visibility.*;
 import static org.jruby.CompatVersion.*;
+import org.jruby.exceptions.RaiseException;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.builtin.InstanceVariables;
 import org.jruby.runtime.builtin.InternalVariables;
@@ -67,8 +66,9 @@ import org.jruby.util.IdUtil;
 import org.jruby.util.TypeConverter;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
+import org.jruby.util.unsafe.UnsafeHolder;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.Helpers.invokedynamic;
 import static org.jruby.runtime.invokedynamic.MethodNames.OP_EQUAL;
 import static org.jruby.runtime.invokedynamic.MethodNames.OP_CMP;
 import static org.jruby.runtime.invokedynamic.MethodNames.EQL;
@@ -114,7 +114,13 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     protected int flags;
 
     // variable table, lazily allocated as needed (if needed)
-    private transient volatile Object[] varTable;
+    private transient Object[] varTable;
+    
+    // locking stamp for Unsafe ops updating the vartable
+    private transient volatile int varTableStamp;
+    
+    private static final long VAR_TABLE_OFFSET = UnsafeHolder.fieldOffset(RubyBasicObject.class, "varTable");
+    private static final long STAMP_OFFSET = UnsafeHolder.fieldOffset(RubyBasicObject.class, "varTableStamp");
 
     /**
      * The error message used when some one tries to modify an
@@ -335,14 +341,14 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * method missing exists. Otherwise returns null. 1.9: rb_check_funcall
      */
     public final IRubyObject checkCallMethod(ThreadContext context, String name) {
-        return RuntimeHelpers.invokeChecked(context, this, name);
+        return Helpers.invokeChecked(context, this, name);
     }
 
     /**
      * Will invoke a named method with no arguments and no block.
      */
     public final IRubyObject callMethod(ThreadContext context, String name) {
-        return RuntimeHelpers.invoke(context, this, name);
+        return Helpers.invoke(context, this, name);
     }
 
     /**
@@ -350,7 +356,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * functional invocation.
      */
      public final IRubyObject callMethod(ThreadContext context, String name, IRubyObject arg) {
-        return RuntimeHelpers.invoke(context, this, name, arg);
+        return Helpers.invoke(context, this, name, arg);
     }
 
     /**
@@ -358,15 +364,15 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * block with functional invocation.
      */
     public final IRubyObject callMethod(ThreadContext context, String name, IRubyObject[] args) {
-        return RuntimeHelpers.invoke(context, this, name, args);
+        return Helpers.invoke(context, this, name, args);
     }
 
     public final IRubyObject callMethod(String name, IRubyObject... args) {
-        return RuntimeHelpers.invoke(getRuntime().getCurrentContext(), this, name, args);
+        return Helpers.invoke(getRuntime().getCurrentContext(), this, name, args);
     }
 
     public final IRubyObject callMethod(String name) {
-        return RuntimeHelpers.invoke(getRuntime().getCurrentContext(), this, name);
+        return Helpers.invoke(getRuntime().getCurrentContext(), this, name);
     }
 
     /**
@@ -374,7 +380,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * supplied block with functional invocation.
      */
     public final IRubyObject callMethod(ThreadContext context, String name, IRubyObject[] args, Block block) {
-        return RuntimeHelpers.invoke(context, this, name, args, block);
+        return Helpers.invoke(context, this, name, args, block);
     }
 
     /**
@@ -658,7 +664,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * instead.
      */
     public RubyString asString() {
-        IRubyObject str = RuntimeHelpers.invoke(getRuntime().getCurrentContext(), this, "to_s");
+        IRubyObject str = Helpers.invoke(getRuntime().getCurrentContext(), this, "to_s");
 
         if (!(str instanceof RubyString)) return (RubyString)anyToString();
         if (isTaint()) str.setTaint(true);
@@ -969,16 +975,16 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      */
     protected long getObjectId() {
         RubyClass realClass = metaClass.getRealClass();
-        RubyClass.VariableAccessor objectIdAccessor = realClass.getObjectIdAccessorForRead();
+        RubyClass.VariableAccessor objectIdAccessor = realClass.getObjectIdAccessorField().getVariableAccessorForRead();
         Long id = (Long)objectIdAccessor.get(this);
         if (id != null) return id;
         
         synchronized (this) {
-            objectIdAccessor = realClass.getObjectIdAccessorForRead();
+            objectIdAccessor = realClass.getObjectIdAccessorField().getVariableAccessorForRead();
             id = (Long)objectIdAccessor.get(this);
             if (id != null) return id;
 
-            return initObjectId(realClass.getObjectIdAccessorForWrite());
+            return initObjectId(realClass.getObjectIdAccessorField().getVariableAccessorForWrite());
         }
     }
 
@@ -1030,7 +1036,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         }
 
         if (isNil()) return RubyNil.inspect(this);
-        return RuntimeHelpers.invoke(runtime.getCurrentContext(), this, "to_s");
+        return Helpers.invoke(runtime.getCurrentContext(), this, "to_s");
     }
 
     public IRubyObject hashyInspect() {
@@ -1099,8 +1105,33 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         return context.runtime.newBoolean(!invokedynamic(context, this, OP_EQUAL, other).isTrue());
     }
 
+    /**
+     * Compares this Ruby object with another.
+     *
+     * @param other another IRubyObject
+     * @return 0 if equal,
+     *         &lt; 0 if this is less than other,
+     *         &gt; 0 if this is greater than other
+     * @throws IllegalArgumentException if the objects cannot be compared.
+     */
     public int compareTo(IRubyObject other) {
-        return (int)invokedynamic(getRuntime().getCurrentContext(), this, OP_CMP, other).convertToInteger().getLongValue();
+        try {
+            IRubyObject cmp = invokedynamic(getRuntime().getCurrentContext(),
+                    this, OP_CMP, other);
+            // if RubyBasicObject#op_cmp is used, the result may be nil
+            if (cmp.isNil()) {
+                throw new IllegalArgumentException(
+                        "Incomparable objects: " + cmp.inspect() + " <=> " +
+                        other.inspect() + " returned nil");
+            } else {
+                return (int) cmp.convertToInteger().getLongValue();
+            }
+        } catch (RaiseException ex) {
+            // NoMethodError was raised, but the call came from java. The
+            // correct java exception is IllegalArgumentException. Otherwise,
+            // the ruby stack trace makes no sense because ruby didn't call <=>
+            throw new IllegalArgumentException("Incomparable objects", ex);
+        }
     }
 
     public IRubyObject op_equal(ThreadContext context, IRubyObject obj) {
@@ -1186,130 +1217,111 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         return varTable;
     }
 
-    private static final AtomicReferenceFieldUpdater VARTABLE_UPDATER;
-
-    static {
-        AtomicReferenceFieldUpdater updater = null;
-        try {
-            updater = AtomicReferenceFieldUpdater.newUpdater(RubyBasicObject.class, Object[].class, "varTable");
-        } catch (RuntimeException re) {
-            if (re.getCause() instanceof AccessControlException) {
-                // security prevented creation; fall back on synchronized assignment
-            } else {
-                throw re;
-            }
-        }
-        VARTABLE_UPDATER = updater;
-    }
-
-
-    /**
-     * Get variable table for write purposes. Initializes if uninitialized, and
-     * resizes if necessary.
-     */
-    protected final Object[] getVariableTableForWrite(int index) {
-        if (VARTABLE_UPDATER == null) {
-            return getVariableTableForWriteSynchronized(index);
-        } else {
-            return getVariableTableForWriteAtomic(index);
-        }
-    }
-
-    /**
-     * Get the variable table for write. If it is not set or not of the right size,
-     * synchronize against the object and prepare it accordingly.
-     *
-     * @param index the index of the value soon to be set
-     * @return the var table, ready for setting
-     */
-    private Object[] getVariableTableForWriteSynchronized(int index) {
-        Object[] myVarTable = varTable;
-        if (myVarTable == null || myVarTable.length <= index) {
-            synchronized (this) {
-                myVarTable = varTable;
-
-                if (myVarTable == null) {
-                    return varTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
-                } else if (myVarTable.length <= index) {
-                    Object[] newTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
-                    System.arraycopy(myVarTable, 0, newTable, 0, myVarTable.length);
-                    return varTable = newTable;
-                } else {
-                    return myVarTable;
-                }
-            }
-        }
-
-        return varTable;
-    }
-
-
-    /**
-     * Get the variable table for write. If it is not set or not of the right size,
-     * atomically update it with an appropriate value.
-     *
-     * @param index the index of the value soon to be set
-     * @return the var table, ready for setting
-     */
-    private Object[] getVariableTableForWriteAtomic(int index) {
-        while (true) {
-            Object[] myVarTable = varTable;
-            Object[] newTable;
-
-            if (myVarTable == null) {
-                newTable = new Object[metaClass.getRealClass().getVariableTableSizeWithExtras()];
-            } else if (myVarTable.length <= index) {
-                newTable = new Object[metaClass.getRealClass().getVariableTableSizeWithExtras()];
-                System.arraycopy(myVarTable, 0, newTable, 0, myVarTable.length);
-            } else {
-                return myVarTable;
-            }
-
-            // proceed with atomic update of table, or retry
-            if (VARTABLE_UPDATER.compareAndSet(this, myVarTable, newTable)) {
-                return newTable;
-            }
-        }
-    }
-
     public Object getVariable(int index) {
 		Object[] ivarTable;
         if (index < 0 || (ivarTable = getVariableTableForRead()) == null) return null;
         if (ivarTable.length > index) return ivarTable[index];
         return null;
     }
-
+    
     public void setVariable(int index, Object value) {
         ensureInstanceVariablesSettable();
         if (index < 0) return;
-        Object[] ivarTable = getVariableTableForWrite(index);
-        ivarTable[index] = value;
+        setVariableInternal(index, value);
     }
+    
+    protected final void setVariableInternal(int index, Object value) {
+        if(UnsafeHolder.U == null)
+            setVariableSynchronized(index,value);
+        else
+            setVariableStamped(index,value);
+    }
+
+    private void setVariableSynchronized(int index, Object value) {
+        synchronized (this) {
+            Object[] currentTable = varTable;
+
+            if (currentTable == null) {
+                varTable = currentTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
+            } else if (currentTable.length <= index) {
+                Object[] newTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
+                System.arraycopy(currentTable, 0, newTable, 0, currentTable.length);
+                varTable = newTable;
+            }
+            
+            varTable[index] = value;
+        }
+    }
+    
+    private void setVariableStamped(int index, Object value) {
+        
+        for(;;) {
+            int currentStamp = varTableStamp;
+            // spin-wait if odd
+            if((currentStamp & 0x01) != 0)
+               continue;
+            
+            Object[] currentTable = (Object[]) UnsafeHolder.U.getObjectVolatile(this, VAR_TABLE_OFFSET);
+            
+            if(currentTable == null || index >= currentTable.length)
+            {
+                // try to acquire exclusive access to the varTable field
+                if(!UnsafeHolder.U.compareAndSwapInt(this, STAMP_OFFSET, currentStamp, ++currentStamp))
+                    continue;
+                
+                Object[] newTable = new Object[getMetaClass().getRealClass().getVariableTableSizeWithExtras()];
+                if(currentTable != null)
+                    System.arraycopy(currentTable, 0, newTable, 0, currentTable.length);
+                newTable[index] = value;
+                UnsafeHolder.U.putOrderedObject(this, VAR_TABLE_OFFSET, newTable);
+                
+                // release exclusive access
+                varTableStamp = currentStamp + 1;
+            } else {
+                // shared access to varTable field.
+                
+                if(UnsafeHolder.SUPPORTS_FENCES) {
+                    currentTable[index] = value;
+                    UnsafeHolder.fullFence();
+                } else {
+                    // TODO: maybe optimize by read and checking current value before setting
+                    UnsafeHolder.U.putObjectVolatile(currentTable, UnsafeHolder.ARRAY_OBJECT_BASE_OFFSET + UnsafeHolder.ARRAY_OBJECT_INDEX_SCALE * index, value);
+                }
+                
+                // validate stamp. redo on concurrent modification
+                if(varTableStamp != currentStamp)
+                    continue;
+                
+            }
+            
+            break;
+        }
+        
+        
+    }
+    
 
     private void setObjectId(int index, long value) {
         if (index < 0) return;
-        Object[] ivarTable = getVariableTableForWrite(index);
-        ivarTable[index] = value;
+        setVariableInternal(index, value);
     }
     
     public final Object getNativeHandle() {
-        return getMetaClass().getRealClass().getNativeHandleAccessorForRead().get(this);
+        return getMetaClass().getRealClass().getNativeHandleAccessorField().getVariableAccessorForRead().get(this);
     }
 
     public final void setNativeHandle(Object value) {
-        int index = getMetaClass().getRealClass().getNativeHandleAccessorForWrite().getIndex();
-        Object[] ivarTable = getVariableTableForWrite(index);
-        ivarTable[index] = value;
+        int index = getMetaClass().getRealClass().getNativeHandleAccessorField().getVariableAccessorForWrite().getIndex();
+        setVariableInternal(index, value);
     }
 
     public final Object getFFIHandle() {
-        return getMetaClass().getRealClass().getFFIHandleAccessorForRead().get(this);
+        return getMetaClass().getRealClass().getFFIHandleAccessorField().getVariableAccessorForRead().get(this);
     }
 
     public final void setFFIHandle(Object value) {
-        int index = getMetaClass().getRealClass().getFFIHandleAccessorForWrite().getIndex();
-        Object[] ivarTable = getVariableTableForWrite(index);
-        ivarTable[index] = value;
+        int index = getMetaClass().getRealClass().getFFIHandleAccessorField().getVariableAccessorForWrite().getIndex();
+        setVariableInternal(index, value);
     }
 
     //
@@ -1460,7 +1472,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         assert !IdUtil.isRubyVariable(name);
         return variableTableRemove(name);
     }
-
+    
     /**
      * Sync one this object's variables with other's - this is used to make
      * rbClone work correctly.
@@ -1471,17 +1483,39 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         boolean sameTable = otherRealClass == realClass;
 
         if (sameTable) {
-            RubyClass.VariableAccessor objIdAccessor = otherRealClass.getObjectIdAccessorForRead();
+            int idIndex = otherRealClass.getObjectIdAccessorField().getVariableAccessorForRead().getIndex();
+            
+            
             Object[] otherVars = ((RubyBasicObject) other).varTable;
-            int otherLength = otherVars.length;
-            Object[] myVars = getVariableTableForWrite(otherLength - 1);
-            System.arraycopy(otherVars, 0, myVars, 0, otherLength);
+            
+            if(UnsafeHolder.U == null)
+            {
+                synchronized (this) {
+                    varTable = makeSyncedTable(varTable, otherVars, idIndex);
+                }
+            } else {
+                for(;;) {
+                    int oldStamp = varTableStamp;
+                    // wait for read mode
+                    if((oldStamp & 0x01) == 1)
+                        continue;
+                    // acquire exclusive write mode
+                    if(!UnsafeHolder.U.compareAndSwapInt(this, STAMP_OFFSET, oldStamp, ++oldStamp))
+                        continue;
+                    
+                    Object[] currentTable = (Object[]) UnsafeHolder.U.getObjectVolatile(this, VAR_TABLE_OFFSET);
+                    Object[] newTable = makeSyncedTable(currentTable,otherVars, idIndex);
+                    
+                    UnsafeHolder.U.putOrderedObject(this, VAR_TABLE_OFFSET, newTable);
+                    
+                    // release write mode
+                    varTableStamp = oldStamp+1;
+                    break;
+                }
 
-            // null out object ID so we don't share it
-            int objIdIndex = objIdAccessor.getIndex();
-            if (objIdIndex > 0 && objIdIndex < myVars.length) {
-                myVars[objIdIndex] = null;
+                
             }
+
         } else {
             for (Map.Entry<String, RubyClass.VariableAccessor> entry : otherRealClass.getVariableAccessorsForRead().entrySet()) {
                 RubyClass.VariableAccessor accessor = entry.getValue();
@@ -1498,7 +1532,20 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         }
     }
 
-
+    private static Object[] makeSyncedTable(Object[] currentTable, Object[] otherTable, int objectIdIdx) {
+        if(currentTable == null || currentTable.length < otherTable.length)
+            currentTable = otherTable.clone();
+        else
+            System.arraycopy(otherTable, 0, currentTable, 0, otherTable.length);
+    
+        // null out object ID so we don't share it
+        if (objectIdIdx >= 0 && objectIdIdx < currentTable.length) {
+            currentTable[objectIdIdx] = null;
+        }
+        
+        return currentTable;
+    }
+    
     //
     // INSTANCE VARIABLE API METHODS
     //
@@ -1516,7 +1563,6 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * @see org.jruby.runtime.builtin.InstanceVariables#hasInstanceVariable
      */
     public boolean hasInstanceVariable(String name) {
-        assert IdUtil.isInstanceVariable(name);
         return variableTableContains(name);
     }
 
@@ -1524,7 +1570,6 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * @see org.jruby.runtime.builtin.InstanceVariables#getInstanceVariable
      */
     public IRubyObject getInstanceVariable(String name) {
-        assert IdUtil.isInstanceVariable(name);
         return (IRubyObject)variableTableFetch(name);
     }
 
@@ -1533,7 +1578,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
     * @see org.jruby.runtime.builtin.InstanceVariables#setInstanceVariable
     */
     public IRubyObject setInstanceVariable(String name, IRubyObject value) {
-        assert IdUtil.isInstanceVariable(name) && value != null;
+        assert value != null;
         ensureInstanceVariablesSettable();
         return (IRubyObject)variableTableStore(name, value);
     }
@@ -1542,7 +1587,6 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      * @see org.jruby.runtime.builtin.InstanceVariables#removeInstanceVariable
      */
     public IRubyObject removeInstanceVariable(String name) {
-        assert IdUtil.isInstanceVariable(name);
         ensureInstanceVariablesSettable();
         return (IRubyObject)variableTableRemove(name);
     }
@@ -1963,7 +2007,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         }
         
         private void callFinalizer(IRubyObject finalizer) {
-            RuntimeHelpers.invoke(
+            Helpers.invoke(
                     finalizer.getRuntime().getCurrentContext(),
                     finalizer, "call", id);
         }
@@ -2053,7 +2097,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         String name = mname.asJavaString();
         IRubyObject respond = getRuntime().newBoolean(getMetaClass().isMethodBound(name, true, true));
         if (!respond.isTrue()) {
-            respond = RuntimeHelpers.invoke(getRuntime().getCurrentContext(), this, "respond_to_missing?", mname, getRuntime().getFalse());
+            respond = Helpers.invoke(getRuntime().getCurrentContext(), this, "respond_to_missing?", mname, getRuntime().getFalse());
             respond = getRuntime().newBoolean(respond.isTrue());
         }
         return respond;
@@ -2085,7 +2129,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
         String name = mname.asJavaString();
         IRubyObject respond = getRuntime().newBoolean(getMetaClass().isMethodBound(name, !includePrivate.isTrue()));
         if (!respond.isTrue()) {
-            respond = RuntimeHelpers.invoke(getRuntime().getCurrentContext(), this, "respond_to_missing?", mname, includePrivate);
+            respond = Helpers.invoke(getRuntime().getCurrentContext(), this, "respond_to_missing?", mname, includePrivate);
             respond = getRuntime().newBoolean(respond.isTrue());
         }
         return respond;
@@ -2496,10 +2540,9 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
             all = args[0].isTrue();
         }
 
-        RubyArray singletonMethods;
         if (getMetaClass().isSingleton()) {
             IRubyObject[] methodsArgs = new IRubyObject[]{context.runtime.getFalse()};
-            singletonMethods = collect.instanceMethods(getMetaClass(), methodsArgs);
+            RubyArray singletonMethods = collect.instanceMethods(getMetaClass(), methodsArgs);
 
             if (all) {
                 RubyClass superClass = getMetaClass().getSuperClass();
@@ -2508,11 +2551,12 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
                     superClass = superClass.getSuperClass();
                 }
             }
-        } else {
-            singletonMethods = context.runtime.newEmptyArray();
+
+            singletonMethods.uniq_bang(context);
+            return singletonMethods;
         }
 
-        return singletonMethods;
+        return context.runtime.newEmptyArray();
     }
 
     private abstract static class MethodsCollector {
@@ -2883,7 +2927,7 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
      *     fred.inspect                             #=> "#<Fred:0x401b3da8 @a=\"dog\", @b=99, @c=\"cat\">"
      */
     public IRubyObject instance_variable_set(IRubyObject name, IRubyObject value) {
-        ensureInstanceVariablesSettable();
+        // no need to check for ensureInstanceVariablesSettable() here, that'll happen downstream in setVariable
         return (IRubyObject)variableTableStore(validateInstanceVariable(name.asJavaString()), value);
     }
 
@@ -3054,17 +3098,17 @@ public class RubyBasicObject implements Cloneable, IRubyObject, Serializable, Co
 
     @Deprecated
     public IRubyObject callSuper(ThreadContext context, IRubyObject[] args, Block block) {
-        return RuntimeHelpers.invokeSuper(context, this, args, block);
+        return Helpers.invokeSuper(context, this, args, block);
     }
 
     @Deprecated
     public final IRubyObject callMethod(ThreadContext context, int methodIndex, String name) {
-        return RuntimeHelpers.invoke(context, this, name);
+        return Helpers.invoke(context, this, name);
     }
 
     @Deprecated
     public final IRubyObject callMethod(ThreadContext context, int methodIndex, String name, IRubyObject arg) {
-        return RuntimeHelpers.invoke(context, this, name, arg, Block.NULL_BLOCK);
+        return Helpers.invoke(context, this, name, arg, Block.NULL_BLOCK);
     }
 
     @Deprecated

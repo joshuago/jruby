@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -29,14 +29,15 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import static org.jruby.util.Numeric.f_abs;
 import static org.jruby.util.Numeric.f_add;
@@ -70,7 +71,7 @@ import org.jruby.util.ByteList;
 import org.jruby.util.ConvertDouble;
 import org.jruby.util.Sprintf;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.Helpers.invokedynamic;
 import static org.jruby.runtime.invokedynamic.MethodNames.OP_EQUAL;
 
 /**
@@ -824,9 +825,30 @@ public class RubyFloat extends RubyNumeric {
     @JRubyMethod(name = "round", optional = 1, compat = CompatVersion.RUBY1_9)
     public IRubyObject round(ThreadContext context, IRubyObject[] args) {
         if (args.length == 0) return round();
-        double digits = num2dbl(args[0]);
+        // truncate floats.
+        double digits = num2long(args[0]);
+        
         double magnifier = Math.pow(10.0, Math.abs(digits));
         double number = value;
+        
+        if (Double.isInfinite(value)) {
+            if (digits <= 0) throw getRuntime().newFloatDomainError(value < 0 ? "-Infinity" : "Infinity");
+            return this;
+        }
+        
+        if (Double.isNaN(value)) {
+            if (digits <= 0) throw getRuntime().newFloatDomainError("NaN");
+            return this;
+        }
+        
+        // MRI flo_round logic to deal with huge precision numbers.
+        double binexp = Math.ceil(Math.log(value)/Math.log(2));
+        if (digits >= (DIG+2) - (binexp > 0 ? binexp / 4 : binexp / 3 - 1)) {
+            return RubyFloat.newFloat(context.runtime, number);
+        }
+        if (digits < -(binexp > 0 ? binexp / 3 + 1 : binexp / 4)) {
+            return RubyFixnum.zero(context.runtime);
+        }
         
         if (Double.isInfinite(magnifier)) {
             if (digits < 0) number = 0;
@@ -836,7 +858,8 @@ public class RubyFloat extends RubyNumeric {
             } else {
                 number *= magnifier;
             }
-            number = Math.round(number);
+
+            number = Math.round(Math.abs(number))*Math.signum(number);
             if (digits < 0) {
                 number *= magnifier;
             } else {
@@ -847,6 +870,12 @@ public class RubyFloat extends RubyNumeric {
         if (digits > 0) {
             return RubyFloat.newFloat(context.runtime, number);
         } else {
+            if (number > Long.MAX_VALUE || number < Long.MIN_VALUE) {
+                // The only way to get huge precise values with BigDecimal is 
+                // to convert the double to String first.
+                BigDecimal roundedNumber = new BigDecimal(Double.toString(number));
+                return RubyBignum.newBignum(context.runtime, roundedNumber.toBigInteger());
+            }
             return dbl2num(context.runtime, (long)number);
         }
     }

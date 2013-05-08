@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -24,11 +24,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -98,7 +98,7 @@ public class RubyNil extends RubyObject {
      *
      */
     @JRubyMethod(name = "to_i")
-    public static RubyFixnum to_i(IRubyObject recv) {
+    public static RubyFixnum to_i(ThreadContext context, IRubyObject recv) {
         return RubyFixnum.zero(recv.getRuntime());
     }
     
@@ -107,24 +107,29 @@ public class RubyNil extends RubyObject {
      *
      */
     @JRubyMethod(name = "to_f")
-    public static RubyFloat to_f(IRubyObject recv) {
-        return RubyFloat.newFloat(recv.getRuntime(), 0.0D);
+    public static RubyFloat to_f(ThreadContext context, IRubyObject recv) {
+        return RubyFloat.newFloat(context.runtime, 0.0D);
     }
     
     /** nil_to_s
      *
      */
     @JRubyMethod(name = "to_s")
-    public static RubyString to_s(IRubyObject recv) {
-        return RubyString.newEmptyString(recv.getRuntime());
+    public static RubyString to_s(ThreadContext context, IRubyObject recv) {
+        return RubyString.newEmptyString(context.runtime);
     }
     
     /** nil_to_a
      *
      */
     @JRubyMethod(name = "to_a")
-    public static RubyArray to_a(IRubyObject recv) {
-        return recv.getRuntime().newEmptyArray();
+    public static RubyArray to_a(ThreadContext context, IRubyObject recv) {
+        return context.runtime.newEmptyArray();
+    }
+    
+    @JRubyMethod(name = "to_h")
+    public static RubyHash to_h(ThreadContext context, IRubyObject recv) {
+        return RubyHash.newSmallHash(context.runtime);
     }
     
     /** nil_inspect

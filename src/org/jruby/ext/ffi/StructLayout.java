@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -19,11 +19,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 
 package org.jruby.ext.ffi;
@@ -40,6 +40,7 @@ import java.util.Map;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
+import org.jruby.RubyFixnum;
 import org.jruby.RubyHash;
 import org.jruby.RubyInteger;
 import org.jruby.RubyModule;
@@ -49,10 +50,13 @@ import org.jruby.RubyString;
 import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
+import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.runtime.callsite.CachingCallSite;
+import org.jruby.runtime.callsite.FunctionalCachingCallSite;
 import org.jruby.util.ByteList;
 import static org.jruby.runtime.Visibility.*;
 
@@ -98,8 +102,12 @@ public final class StructLayout extends Type {
                 ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR, module);
         layoutClass.defineAnnotatedMethods(StructLayout.class);
         layoutClass.defineAnnotatedConstants(StructLayout.class);
+        layoutClass.setReifiedClass(StructLayout.class);
 
-        RubyClass arrayClass = runtime.defineClassUnder("ArrayProxy", runtime.getObject(),
+        RubyClass inlineArrayClass = module.getClass("Struct").defineClassUnder("InlineArray", 
+                runtime.getObject(), ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
+        
+        RubyClass arrayClass = runtime.defineClassUnder("ArrayProxy", inlineArrayClass,
                 ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR, layoutClass);
         arrayClass.includeModule(runtime.getEnumerable());
         arrayClass.defineAnnotatedMethods(ArrayProxy.class);
@@ -139,10 +147,6 @@ public final class StructLayout extends Type {
         RubyClass arrayFieldClass = runtime.defineClassUnder("Array", fieldClass,
                 ArrayFieldAllocator.INSTANCE, layoutClass);
         arrayFieldClass.defineAnnotatedMethods(ArrayField.class);
-
-        RubyClass variableLengthArrayProxyClass = runtime.defineClassUnder("VariableLengthArrayProxy", runtime.getObject(),
-                ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR, layoutClass);
-        variableLengthArrayProxyClass.defineAnnotatedMethods(VariableLengthArrayProxy.class);
 
         RubyClass mappedFieldClass = runtime.defineClassUnder("Mapped", fieldClass,
                 MappedFieldAllocator.INSTANCE, layoutClass);
@@ -551,13 +555,15 @@ public final class StructLayout extends Type {
 
     static final class DefaultFieldIO implements FieldIO {
         public static final FieldIO INSTANCE = new DefaultFieldIO();
+        private final CachingCallSite getCallSite = new FunctionalCachingCallSite("get");
+        private final CachingCallSite putCallSite = new FunctionalCachingCallSite("put");
 
         public IRubyObject get(ThreadContext context, Storage cache, Member m, AbstractMemory ptr) {
-            return m.field.callMethod(context, "get", ptr);
+            return getCallSite.call(context, m.field, m.field, ptr);
         }
 
         public void put(ThreadContext context, Storage cache, Member m, AbstractMemory ptr, IRubyObject value) {
-            m.field.callMethod(context, "put", new IRubyObject[] { ptr, value });
+            putCallSite.call(context, m.field, m.field, ptr, value);
         }
 
         public final boolean isCacheable() {
@@ -948,11 +954,13 @@ public final class StructLayout extends Type {
 
         ArrayProxy(Ruby runtime, RubyClass klass, IRubyObject ptr, long offset, Type.Array type, MemoryOp aio) {
             super(runtime, klass);
-            this.ptr = ((AbstractMemory) ptr).slice(runtime, offset, type.getNativeSize());
+            this.ptr = type.length() > 0 
+                    ? ((AbstractMemory) ptr).slice(runtime, offset, type.getNativeSize())
+                    : ((AbstractMemory) ptr).slice(runtime, offset);
             this.arrayType = type;
             this.aio = aio;
-            this.cacheable = type.getComponentType() instanceof Type.Array 
-                    || type.getComponentType() instanceof StructByValue;
+            this.cacheable = type.length() > 0 && (type.getComponentType() instanceof Type.Array 
+                    || type.getComponentType() instanceof StructByValue);
         }
 
         private final long getOffset(IRubyObject index) {
@@ -960,7 +968,7 @@ public final class StructLayout extends Type {
         }
 
         private final long getOffset(int index) {
-            if (index < 0 || index >= arrayType.length()) {
+            if (index < 0 || (index >= arrayType.length() && arrayType.length() > 0)) {
                 throw getRuntime().newIndexError("index " + index + " out of bounds");
             }
 
@@ -1054,50 +1062,6 @@ public final class StructLayout extends Type {
         }
     }
 
-    @JRubyClass(name="FFI::StructLayout::VariableLengthArrayProxy", parent="Object")
-    public static class VariableLengthArrayProxy extends RubyObject {
-        protected final AbstractMemory ptr;
-        final MemoryOp aio;
-        private final Type componentType;
-
-        VariableLengthArrayProxy(Ruby runtime, IRubyObject ptr, long offset, Type.Array type, MemoryOp aio) {
-            this(runtime, runtime.getFFI().ffiModule.getClass(CLASS_NAME).getClass("VariableLengthArrayProxy"),
-                    ptr, offset, type, aio);
-        }
-
-        VariableLengthArrayProxy(Ruby runtime, RubyClass klass, IRubyObject ptr, long offset, Type.Array type, MemoryOp aio) {
-            super(runtime, klass);
-            this.ptr = ((AbstractMemory) ptr).slice(runtime, offset);
-            this.aio = aio;
-            this.componentType = type.getComponentType();
-        }
-
-        private long getOffset(int index) {
-            if (index < 0) {
-                throw getRuntime().newIndexError("index " + index + " out of bounds");
-            }
-
-            return (long) (index * componentType.getNativeSize());
-        }
-
-
-        @JRubyMethod(name = "[]")
-        public IRubyObject get(ThreadContext context, IRubyObject index) {
-            return aio.get(context, ptr, getOffset(Util.int32Value(index)));
-        }
-
-        @JRubyMethod(name = "[]=")
-        public IRubyObject put(ThreadContext context, IRubyObject index, IRubyObject value) {
-            aio.put(context, ptr, getOffset(Util.int32Value(index)), value);
-            return value;
-        }
-
-        @JRubyMethod(name = { "to_ptr" })
-        public IRubyObject to_ptr(ThreadContext context) {
-            return ptr;
-        }
-    }
-
     /**
      * Primitive (byte, short, int, long, float, double) types are all handled by
      * a PrimitiveMember type.
@@ -1167,27 +1131,30 @@ public final class StructLayout extends Type {
         public static final FieldIO INSTANCE = new PointerFieldIO();
         
         public void put(ThreadContext context, StructLayout.Storage cache, Member m, AbstractMemory ptr, IRubyObject value) {
+            DynamicMethod conversionMethod;
             if (value instanceof Pointer) {
                 ptr.getMemoryIO().putMemoryIO(m.offset, ((Pointer) value).getMemoryIO());
             } else if (value instanceof Struct) {
                 MemoryIO mem = ((Struct) value).getMemoryIO();
 
-                if (!(mem instanceof DirectMemoryIO)) {
+                if (!mem.isDirect()) {
                     throw context.runtime.newArgumentError("Struct memory not backed by a native pointer");
                 }
                 ptr.getMemoryIO().putMemoryIO(m.offset, mem);
 
             } else if (value instanceof RubyInteger) {
                 ptr.getMemoryIO().putAddress(m.offset, Util.int64Value(ptr));
-            } else if (value.respondsTo("to_ptr")) {
-                IRubyObject addr = value.callMethod(context, "to_ptr");
+
+            } else if (value.isNil()) {
+                ptr.getMemoryIO().putAddress(m.offset, 0L);
+
+            } else if (!(conversionMethod = value.getMetaClass().searchMethod("to_ptr")).isUndefined()) {
+                IRubyObject addr = conversionMethod.call(context, value, value.getMetaClass(), "to_ptr");
                 if (addr instanceof Pointer) {
                     ptr.getMemoryIO().putMemoryIO(m.offset, ((Pointer) addr).getMemoryIO());
                 } else {
                     throw context.runtime.newArgumentError("Invalid pointer value");
                 }
-            } else if (value.isNil()) {
-                ptr.getMemoryIO().putAddress(m.offset, 0L);
             } else {
                 throw context.runtime.newArgumentError("Invalid pointer value");
             }
@@ -1195,7 +1162,7 @@ public final class StructLayout extends Type {
         }
 
         public IRubyObject get(ThreadContext context, StructLayout.Storage cache, Member m, AbstractMemory ptr) {
-            DirectMemoryIO memory = ((AbstractMemory) ptr).getMemoryIO().getMemoryIO(m.getOffset(ptr));
+            MemoryIO memory = ((AbstractMemory) ptr).getMemoryIO().getMemoryIO(m.getOffset(ptr));
             IRubyObject old = cache.getCachedValue(m);
             if (old instanceof Pointer) {
                 MemoryIO oldMemory = ((Pointer) old).getMemoryIO();
@@ -1436,13 +1403,10 @@ public final class StructLayout extends Type {
         public IRubyObject get(ThreadContext context, StructLayout.Storage cache, Member m, AbstractMemory ptr) {
             IRubyObject s = cache.getCachedValue(m);
             if (s == null) {
-                if (isVariableLength()) {
-                    s = new VariableLengthArrayProxy(context.runtime, ptr, m.offset, arrayType, op);
-                } else {
-                    s = isCharArray()
-                        ? new StructLayout.CharArrayProxy(context.runtime, ptr, m.offset, arrayType, op)
-                        : new StructLayout.ArrayProxy(context.runtime, ptr, m.offset, arrayType, op);
-                }
+                s = isCharArray()
+                    ? new StructLayout.CharArrayProxy(context.runtime, ptr, m.offset, arrayType, op)
+                    : new StructLayout.ArrayProxy(context.runtime, ptr, m.offset, arrayType, op);
+
                 cache.putCachedValue(m, s);
             }
 

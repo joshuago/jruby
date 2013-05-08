@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -18,11 +18,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.util.io;
 
@@ -282,51 +282,81 @@ public class SelectBlob {
             }
         }
     }
+    
+    private static final int READ_ACCEPT_OPS = SelectionKey.OP_READ | SelectionKey.OP_ACCEPT;
+    private static final int WRITE_CONNECT_OPS = SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT;
+    private static final int CANCELLED_OPS = SelectionKey.OP_READ | SelectionKey.OP_ACCEPT | SelectionKey.OP_CONNECT;
+    
+    private static boolean ready(int ops, int mask) {
+        return (ops & mask) != 0;
+    }
+    
+    private static boolean readAcceptReady(int ops) {
+        return ready(ops, READ_ACCEPT_OPS);
+    }
+    
+    private static boolean writeConnectReady(int ops) {
+        return ready(ops, WRITE_CONNECT_OPS);
+    }
+    
+    private static boolean cancelReady(int ops) {
+        return ready(ops, CANCELLED_OPS);
+    }
+    
+    private static boolean writeReady(int ops) {
+        return ready(ops, SelectionKey.OP_WRITE);
+    }
 
     @SuppressWarnings("unchecked")
     private void processSelectedKeys(Ruby runtime) throws IOException {
         for (Selector selector : selectors.values()) {
-            for (Iterator i = selector.selectedKeys().iterator(); i.hasNext();) {
-                SelectionKey key = (SelectionKey) i.next();
+            
+            for (SelectionKey key : selector.selectedKeys()) {
+                
                 int readIoIndex = 0;
                 int writeIoIndex = 0;
+                
                 try {
                     int interestAndReady = key.interestOps() & key.readyOps();
-                    if (readArray != null && (interestAndReady & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0) {
+                    
+                    if (readArray != null && readAcceptReady(interestAndReady)) {
                         readIoIndex = ((Map<Character,Integer>)key.attachment()).get('r');
+                        
                         getReadResults().append(readArray.eltOk(readIoIndex));
+                        
                         if (pendingReads != null) {
                             pendingReads[readIoIndex] = false;
                         }
                     }
-                    if (writeArray != null && (interestAndReady & (SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT)) != 0) {
+                    
+                    if (writeArray != null && writeConnectReady(interestAndReady)) {
                         writeIoIndex = ((Map<Character,Integer>)key.attachment()).get('w');
+                        
                         getWriteResults().append(writeArray.eltOk(writeIoIndex));
-
-                        // not-great logic for JRUBY-5165; we should move finishConnect into RubySocket logic, I think
-                        if (key.channel() instanceof SocketChannel) {
-                            SocketChannel socketChannel = (SocketChannel)key.channel();
-                            if (socketChannel.isConnectionPending()) {
-                                socketChannel.finishConnect();
-                            }
-                        }
                     }
+                    
                 } catch (CancelledKeyException cke) {
                     // TODO: is this the right thing to do?
                     int interest = key.interestOps();
-                    if (readArray != null && (interest & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT | SelectionKey.OP_CONNECT)) != 0) {
+                    
+                    if (readArray != null && cancelReady(interest)) {
+                        
                         if (pendingReads != null) {
                             pendingReads[readIoIndex] = false;
                         }
+                        
                         if (errorResults != null) {
                             errorResults = RubyArray.newArray(runtime, readArray.size() + writeArray.size());
                         }
+                        
                         if (fastSearch(errorResults.toJavaArrayUnsafe(), readIOs[readIoIndex]) == -1) {
                             // only add to error if not there
                             getErrorResults().append(readArray.eltOk(readIoIndex));
                         }
                     }
-                    if (writeArray != null && (interest & (SelectionKey.OP_WRITE)) != 0) {
+                    
+                    if (writeArray != null && writeReady(interest)) {
+                        
                         if (fastSearch(errorResults.toJavaArrayUnsafe(), writeIOs[writeIoIndex]) == -1) {
                             // only add to error if not there
                             errorResults.append(writeArray.eltOk(writeIoIndex));

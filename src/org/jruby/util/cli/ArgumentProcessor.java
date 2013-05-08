@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.util.cli;
 
@@ -240,10 +240,12 @@ public class ArgumentProcessor {
                     break;
                 case 'n':
                     config.setAssumeLoop(true);
+                    config.setKernelGsubDefined(true);
                     break;
                 case 'p':
                     config.setAssumePrinting(true);
                     config.setAssumeLoop(true);
+                    config.setKernelGsubDefined(true);
                     break;
                 case 'r':
                     config.getRequiredLibraries().add(grabValue(getArgumentError("-r must be followed by a package to require")));
@@ -393,28 +395,34 @@ public class ArgumentProcessor {
                         config.setCompileMode(RubyInstanceConfig.CompileMode.FORCE);
                         break FOR;
                     } else if (argument.startsWith("--profile")) {
+                        characterIndex = argument.length();
                         int dotIndex = argument.indexOf(".");
+                        
                         if (dotIndex == -1) {
                             config.setProfilingMode(RubyInstanceConfig.ProfilingMode.FLAT);
+                            
                         } else {
                             String profilingMode = argument.substring(dotIndex + 1, argument.length());
-                            try {
-                                config.setProfilingMode(RubyInstanceConfig.ProfilingMode.valueOf(profilingMode.toUpperCase()));
-                            } catch (IllegalArgumentException e) {
-                                throw new MainExitException(1, String.format("jruby: unknown profiler mode \"%s\"", profilingMode));
-                            }
-                        }
-                        if (config.getProfilingMode() != RubyInstanceConfig.ProfilingMode.API) {
-                            characterIndex = argument.length();
-                            if (argumentIndex < arguments.size() && !arguments.get(argumentIndex + 1).originalValue.startsWith("-")) {
-                                String outputFile = grabValue(""); // no error message, since we already checked that the arg exists
+                            
+                            if (profilingMode.equals("out")) {
+                                // output file for profiling results
+                                String outputFile = grabValue(getArgumentError("--profile.out requires an output file argument"));
+                                
                                 try {
                                     config.setProfileOutput(new ProfileOutput(new File(outputFile)));
                                 } catch (FileNotFoundException e) {
                                     throw new MainExitException(1, String.format("jruby: %s", e.getMessage()));
                                 }
+                                
+                            } else {
+                                try {
+                                    config.setProfilingMode(RubyInstanceConfig.ProfilingMode.valueOf(profilingMode.toUpperCase()));
+                                } catch (IllegalArgumentException e) {
+                                    throw new MainExitException(1, String.format("jruby: unknown profiler mode \"%s\"", profilingMode));
+                                }
                             }
                         }
+                        
                         break FOR;
                     } else if (argument.equals("--1.9")) {
                         config.setCompatVersion(CompatVersion.RUBY1_9);

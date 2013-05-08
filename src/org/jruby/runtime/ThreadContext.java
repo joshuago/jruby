@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -27,15 +27,16 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.runtime;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -241,6 +242,10 @@ public final class ThreadContext {
 
     public DynamicScope getCurrentScope() {
         return scopeStack[scopeIndex];
+    }
+
+    public StaticScope getCurrentStaticScope() {
+        return scopeStack[scopeIndex].getStaticScope();
     }
     
     public DynamicScope getPreviousScope() {
@@ -656,40 +661,34 @@ public final class ThreadContext {
         RubyModule parentModule = parentStack[parentIndex - 1];
         return parentModule.getNonIncludedClass();
     }
-    
-    public boolean getConstantDefined(String internedName) {
-        IRubyObject value = getConstant(internedName);
 
-        return value != null;
+    @Deprecated
+    public boolean getConstantDefined(String internedName) {
+        return getCurrentStaticScope().isConstantDefined(internedName);
     }
     
     /**
      * Used by the evaluator and the compiler to look up a constant by name
      */
+    @Deprecated
     public IRubyObject getConstant(String internedName) {
-        return getCurrentScope().getStaticScope().getConstant(runtime, internedName, runtime.getObject());
+        return getCurrentStaticScope().getConstant(internedName);
     }
-    
+
     /**
      * Used by the evaluator and the compiler to set a constant by name
      * This is for a null const decl
      */
+    @Deprecated
     public IRubyObject setConstantInCurrent(String internedName, IRubyObject result) {
-        RubyModule module;
-
-        if ((module = getCurrentScope().getStaticScope().getModule()) != null) {
-            module.setConstant(internedName, result);
-            return result;
-        }
-
-        // TODO: wire into new exception handling mechanism
-        throw runtime.newTypeError("no class/module to define constant");
+        return getCurrentStaticScope().setConstant(internedName, result);
     }
     
     /**
      * Used by the evaluator and the compiler to set a constant by name.
      * This is for a Colon2 const decl
      */
+    @Deprecated
     public IRubyObject setConstantInModule(String internedName, IRubyObject target, IRubyObject result) {
         if (!(target instanceof RubyModule)) {
             throw runtime.newTypeError(target.toString() + " is not a class/module");
@@ -704,6 +703,7 @@ public final class ThreadContext {
      * Used by the evaluator and the compiler to set a constant by name
      * This is for a Colon2 const decl
      */
+    @Deprecated
     public IRubyObject setConstantInObject(String internedName, IRubyObject result) {
         runtime.getObject().setConstant(internedName, result);
         
@@ -711,7 +711,7 @@ public final class ThreadContext {
     }
     
     private static void addBackTraceElement(Ruby runtime, RubyArray backtrace, RubyStackTraceElement element) {
-        RubyString str = RubyString.newString(runtime, element.getFileName() + ":" + element.getLineNumber() + ":in `" + element.getMethodName() + "'");
+        RubyString str = RubyString.newString(runtime, element.mriStyleString());
         backtrace.append(str);
     }
     
@@ -721,20 +721,73 @@ public final class ThreadContext {
      * @param level
      * @return an Array with the backtrace
      */
-    public IRubyObject createCallerBacktrace(Ruby runtime, int level) {
+    public IRubyObject createCallerBacktrace(int level, StackTraceElement[] stacktrace) {
+        return createCallerBacktrace(level, null, stacktrace);
+    }
+
+    /**
+     * Create an Array with backtrace information for Kernel#caller
+     * @param runtime
+     * @param level
+     * @param length
+     * @return an Array with the backtrace
+     */
+    public IRubyObject createCallerBacktrace(int level, Integer length, StackTraceElement[] stacktrace) {
         runtime.incrementCallerCount();
         
-        RubyStackTraceElement[] trace = gatherCallerBacktrace();
+        RubyStackTraceElement[] trace = getTraceSubset(level, length, stacktrace);
         
-        RubyArray newTrace = runtime.newArray(trace.length - level);
+        if (trace == null) return nil;
+        
+        RubyArray newTrace = runtime.newArray(trace.length);
 
-        for (int i = level; i < trace.length; i++) {
-            addBackTraceElement(runtime, newTrace, trace[i]);
+        for (int i = level; i - level < trace.length; i++) {
+            addBackTraceElement(runtime, newTrace, trace[i - level]);
         }
         
         if (RubyInstanceConfig.LOG_CALLERS) TraceType.dumpCaller(newTrace);
         
         return newTrace;
+    }
+
+    /**
+     * Create an array containing Thread::Backtrace::Location objects for the
+     * requested caller trace level and length.
+     * 
+     * @param level the level at which the trace should start
+     * @param length the length of the trace
+     * @return an Array with the backtrace locations
+     */
+    public IRubyObject createCallerLocations(int level, Integer length, StackTraceElement[] stacktrace) {
+        RubyStackTraceElement[] trace = getTraceSubset(level, length, stacktrace);
+        
+        if (trace == null) return nil;
+        
+        return RubyThread.Location.newLocationArray(runtime, trace);
+    }
+    
+    private RubyStackTraceElement[] getTraceSubset(int level, Integer length, StackTraceElement[] stacktrace) {
+        runtime.incrementCallerCount();
+        
+        if (length != null && length == 0) return new RubyStackTraceElement[0];
+        
+        RubyStackTraceElement[] trace =
+                TraceType.Gather.CALLER.getBacktraceData(this, stacktrace, false).getBacktrace(runtime);
+        
+        int traceLength = safeLength(level, length, trace);
+        
+        if (traceLength < 0) return null;
+        
+        trace = Arrays.copyOfRange(trace, level, level + traceLength);
+        
+        if (RubyInstanceConfig.LOG_CALLERS) TraceType.dumpCaller(trace);
+        
+        return trace;
+    }
+    
+    private static int safeLength(int level, Integer length, RubyStackTraceElement[] trace) {
+        int baseLength = trace.length - level;
+        return length != null ? Math.min(length, baseLength) : baseLength;
     }
 
     /**
@@ -1214,7 +1267,7 @@ public final class ThreadContext {
      */
     public Binding currentBinding() {
         Frame frame = getCurrentFrame();
-        return new Binding(frame, getRubyClass(), getCurrentScope(), backtrace[backtraceIndex].clone());
+        return new Binding(frame, parentIndex < 0 ? frame.getKlazz() : getRubyClass(), getCurrentScope(), backtrace[backtraceIndex].clone());
     }
 
     /**

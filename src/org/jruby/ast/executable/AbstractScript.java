@@ -67,17 +67,17 @@ public abstract class AbstractScript implements Script {
 
     public static final int NUMBERED_SCOPE_COUNT = 10;
 
-    public final StaticScope getScope(ThreadContext context, String varNamesDescriptor, int i) {return runtimeCache.getScope(context, varNamesDescriptor, i);}
-    public final StaticScope getScope0(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 0);}
-    public final StaticScope getScope1(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 1);}
-    public final StaticScope getScope2(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 2);}
-    public final StaticScope getScope3(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 3);}
-    public final StaticScope getScope4(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 4);}
-    public final StaticScope getScope5(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 5);}
-    public final StaticScope getScope6(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 6);}
-    public final StaticScope getScope7(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 7);}
-    public final StaticScope getScope8(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 8);}
-    public final StaticScope getScope9(ThreadContext context, String varNamesDescriptor) {return runtimeCache.getScope(context, varNamesDescriptor, 9);}
+    public final StaticScope getScope(ThreadContext context, StaticScope parent, String varNamesDescriptor, int i) {return runtimeCache.getScope(context, parent, varNamesDescriptor, i);}
+    public final StaticScope getScope0(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 0);}
+    public final StaticScope getScope1(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 1);}
+    public final StaticScope getScope2(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 2);}
+    public final StaticScope getScope3(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 3);}
+    public final StaticScope getScope4(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 4);}
+    public final StaticScope getScope5(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 5);}
+    public final StaticScope getScope6(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 6);}
+    public final StaticScope getScope7(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 7);}
+    public final StaticScope getScope8(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 8);}
+    public final StaticScope getScope9(ThreadContext context, StaticScope parent, String varNamesDescriptor) {return runtimeCache.getScope(context, parent, varNamesDescriptor, 9);}
 
     public final StaticScope getScope(int i) {return runtimeCache.getScope(i);}
     public final StaticScope getScope0() {return runtimeCache.getScope(0);}
@@ -107,29 +107,29 @@ public abstract class AbstractScript implements Script {
 
     public static final int NUMBERED_BLOCKBODY_COUNT = 10;
 
-    public final BlockBody getBlockBody(ThreadContext context, int i, String descriptor) {return runtimeCache.getBlockBody(this, context, i, descriptor);}
-    public final BlockBody getBlockBody0(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 0, descriptor);}
-    public final BlockBody getBlockBody1(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 1, descriptor);}
-    public final BlockBody getBlockBody2(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 2, descriptor);}
-    public final BlockBody getBlockBody3(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 3, descriptor);}
-    public final BlockBody getBlockBody4(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 4, descriptor);}
-    public final BlockBody getBlockBody5(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 5, descriptor);}
-    public final BlockBody getBlockBody6(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 6, descriptor);}
-    public final BlockBody getBlockBody7(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 7, descriptor);}
-    public final BlockBody getBlockBody8(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 8, descriptor);}
-    public final BlockBody getBlockBody9(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody(this, context, 9, descriptor);}
+    public final BlockBody getBlockBody(ThreadContext context, StaticScope scope, int i, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, i, descriptor);}
+    public final BlockBody getBlockBody0(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 0, descriptor);}
+    public final BlockBody getBlockBody1(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 1, descriptor);}
+    public final BlockBody getBlockBody2(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 2, descriptor);}
+    public final BlockBody getBlockBody3(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 3, descriptor);}
+    public final BlockBody getBlockBody4(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 4, descriptor);}
+    public final BlockBody getBlockBody5(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 5, descriptor);}
+    public final BlockBody getBlockBody6(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 6, descriptor);}
+    public final BlockBody getBlockBody7(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 7, descriptor);}
+    public final BlockBody getBlockBody8(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 8, descriptor);}
+    public final BlockBody getBlockBody9(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody(this, context, scope, 9, descriptor);}
 
-    public final BlockBody getBlockBody19(ThreadContext context, int i, String descriptor) {return runtimeCache.getBlockBody19(this, context, i, descriptor);}
-    public final BlockBody getBlockBody190(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 0, descriptor);}
-    public final BlockBody getBlockBody191(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 1, descriptor);}
-    public final BlockBody getBlockBody192(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 2, descriptor);}
-    public final BlockBody getBlockBody193(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 3, descriptor);}
-    public final BlockBody getBlockBody194(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 4, descriptor);}
-    public final BlockBody getBlockBody195(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 5, descriptor);}
-    public final BlockBody getBlockBody196(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 6, descriptor);}
-    public final BlockBody getBlockBody197(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 7, descriptor);}
-    public final BlockBody getBlockBody198(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 8, descriptor);}
-    public final BlockBody getBlockBody199(ThreadContext context, String descriptor) {return runtimeCache.getBlockBody19(this, context, 9, descriptor);}
+    public final BlockBody getBlockBody19(ThreadContext context, StaticScope scope, int i, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, i, descriptor);}
+    public final BlockBody getBlockBody190(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 0, descriptor);}
+    public final BlockBody getBlockBody191(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 1, descriptor);}
+    public final BlockBody getBlockBody192(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 2, descriptor);}
+    public final BlockBody getBlockBody193(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 3, descriptor);}
+    public final BlockBody getBlockBody194(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 4, descriptor);}
+    public final BlockBody getBlockBody195(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 5, descriptor);}
+    public final BlockBody getBlockBody196(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 6, descriptor);}
+    public final BlockBody getBlockBody197(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 7, descriptor);}
+    public final BlockBody getBlockBody198(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 8, descriptor);}
+    public final BlockBody getBlockBody199(ThreadContext context, StaticScope scope, String descriptor) {return runtimeCache.getBlockBody19(this, context, scope, 9, descriptor);}
 
     public static final int NUMBERED_BLOCKCALLBACK_COUNT = 10;
 
@@ -298,29 +298,29 @@ public abstract class AbstractScript implements Script {
 
     public static final int NUMBERED_CONSTANT_COUNT = 10;
 
-    public final IRubyObject getConstant(ThreadContext context, String name, int i) {return runtimeCache.getConstant(context, name, i);}
-    public final IRubyObject getConstant0(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 0);}
-    public final IRubyObject getConstant1(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 1);}
-    public final IRubyObject getConstant2(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 2);}
-    public final IRubyObject getConstant3(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 3);}
-    public final IRubyObject getConstant4(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 4);}
-    public final IRubyObject getConstant5(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 5);}
-    public final IRubyObject getConstant6(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 6);}
-    public final IRubyObject getConstant7(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 7);}
-    public final IRubyObject getConstant8(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 8);}
-    public final IRubyObject getConstant9(ThreadContext context, String name) {return runtimeCache.getConstant(context, name, 9);}
+    public final IRubyObject getConstant(ThreadContext context, StaticScope scope, String name, int i) {return runtimeCache.getConstant(context, scope, name, i);}
+    public final IRubyObject getConstant0(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 0);}
+    public final IRubyObject getConstant1(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 1);}
+    public final IRubyObject getConstant2(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 2);}
+    public final IRubyObject getConstant3(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 3);}
+    public final IRubyObject getConstant4(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 4);}
+    public final IRubyObject getConstant5(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 5);}
+    public final IRubyObject getConstant6(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 6);}
+    public final IRubyObject getConstant7(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 7);}
+    public final IRubyObject getConstant8(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 8);}
+    public final IRubyObject getConstant9(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstant(context, scope, name, 9);}
 
-    public final IRubyObject getConstantDefined(ThreadContext context, String name, int i) {return runtimeCache.getConstantDefined(context, name, i);}
-    public final IRubyObject getConstantDefined0(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 0);}
-    public final IRubyObject getConstantDefined1(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 1);}
-    public final IRubyObject getConstantDefined2(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 2);}
-    public final IRubyObject getConstantDefined3(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 3);}
-    public final IRubyObject getConstantDefined4(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 4);}
-    public final IRubyObject getConstantDefined5(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 5);}
-    public final IRubyObject getConstantDefined6(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 6);}
-    public final IRubyObject getConstantDefined7(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 7);}
-    public final IRubyObject getConstantDefined8(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 8);}
-    public final IRubyObject getConstantDefined9(ThreadContext context, String name) {return runtimeCache.getConstantDefined(context, name, 9);}
+    public final IRubyObject getConstantDefined(ThreadContext context, StaticScope scope, String name, int i) {return runtimeCache.getConstantDefined(context, scope, name, i);}
+    public final IRubyObject getConstantDefined0(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 0);}
+    public final IRubyObject getConstantDefined1(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 1);}
+    public final IRubyObject getConstantDefined2(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 2);}
+    public final IRubyObject getConstantDefined3(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 3);}
+    public final IRubyObject getConstantDefined4(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 4);}
+    public final IRubyObject getConstantDefined5(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 5);}
+    public final IRubyObject getConstantDefined6(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 6);}
+    public final IRubyObject getConstantDefined7(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 7);}
+    public final IRubyObject getConstantDefined8(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 8);}
+    public final IRubyObject getConstantDefined9(ThreadContext context, StaticScope scope, String name) {return runtimeCache.getConstantDefined(context, scope, name, 9);}
 
     public static final int NUMBERED_CONSTANTFROM_COUNT = 10;
 
@@ -413,6 +413,10 @@ public abstract class AbstractScript implements Script {
 
     public final void initFromDescriptor(String descriptor) {
         runtimeCache.initFromDescriptor(descriptor);
+    }
+
+    public void setRootScope(StaticScope scope) {
+        runtimeCache.scopes[0] = scope;
     }
 
     protected String filename;

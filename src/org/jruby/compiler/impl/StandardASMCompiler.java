@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 
 package org.jruby.compiler.impl;
@@ -34,8 +34,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,7 +48,7 @@ import org.jruby.compiler.BodyCompiler;
 import org.jruby.compiler.ScriptCompiler;
 import org.jruby.internal.runtime.methods.CallConfiguration;
 import org.jruby.internal.runtime.methods.InvocationMethodFactory;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
@@ -77,23 +75,6 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     public static final String RUBY = p(Ruby.class);
     public static final String IRUBYOBJECT = p(IRubyObject.class);
     public static final boolean VERIFY_CLASSFILES = false;
-
-    public static Class[] getStaticMethodArgs(Class target, int args) {
-        switch (args) {
-        case 0:
-            return new Class[] {target, ThreadContext.class, IRubyObject.class, Block.class};
-        case 1:
-            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject.class, Block.class};
-        case 2:
-            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class};
-        case 3:
-            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class};
-        case 4:
-            return new Class[] {target, ThreadContext.class, IRubyObject.class, IRubyObject[].class, Block.class};
-        default:
-            throw new RuntimeException("unsupported arity: " + args);
-        }
-    }
 
     public static String getStaticMethodSignature(String classname, int args) {
         switch (args) {
@@ -236,8 +217,9 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
 
     public void writeInvokers(File destination) throws IOException {
         for (InvokerDescriptor descriptor : invokerDescriptors) {
-            byte[] invokerBytes = RuntimeHelpers.defOffline(
-                    descriptor.getName(),
+            byte[] invokerBytes = Helpers.defOffline(
+                    descriptor.getRubyName(),
+                    descriptor.getJavaName(),
                     descriptor.getClassname(),
                     descriptor.getInvokerName(),
                     descriptor.getArity(),
@@ -252,7 +234,7 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
         }
 
         for (BlockCallbackDescriptor descriptor : blockCallbackDescriptors) {
-            byte[] callbackBytes = RuntimeHelpers.createBlockCallbackOffline(
+            byte[] callbackBytes = Helpers.createBlockCallbackOffline(
                     descriptor.getClassname(),
                     descriptor.getMethod(),
                     descriptor.getFile(),
@@ -264,7 +246,7 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
         }
 
         for (BlockCallbackDescriptor descriptor : blockCallback19Descriptors) {
-            byte[] callbackBytes = RuntimeHelpers.createBlockCallback19Offline(
+            byte[] callbackBytes = Helpers.createBlockCallback19Offline(
                     descriptor.getClassname(),
                     descriptor.getMethod(),
                     descriptor.getFile(),
@@ -310,7 +292,8 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     }
 
     public static class InvokerDescriptor {
-        private final String name;
+        private final String rubyName;
+        private final String javaName;
         private final String classname;
         private final String invokerName;
         private final Arity arity;
@@ -319,10 +302,11 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
         private final String file;
         private final int line;
         
-        public InvokerDescriptor(String name, String classname, Arity arity, StaticScope scope, CallConfiguration callConfig, String file, int line) {
-            this.name = name;
+        public InvokerDescriptor(String rubyName, String javaName, String classname, Arity arity, StaticScope scope, CallConfiguration callConfig, String file, int line) {
+            this.rubyName = rubyName;
+            this.javaName = javaName;
             this.classname = classname;
-            this.invokerName = InvocationMethodFactory.getCompiledCallbackName(classname, name);
+            this.invokerName = InvocationMethodFactory.getCompiledCallbackName(classname, javaName);
             this.arity = arity;
             this.scope = scope;
             this.callConfig = callConfig;
@@ -354,12 +338,16 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
             return line;
         }
 
-        public String getName() {
-            return name;
+        public String getJavaName() {
+            return javaName;
         }
 
         public StaticScope getScope() {
             return scope;
+        }
+        
+        public String getRubyName() {
+            return rubyName;
         }
     }
 
@@ -399,9 +387,9 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
         }
     }
 
-    public void addInvokerDescriptor(String newMethodName, int methodArity, StaticScope scope, CallConfiguration callConfig, String filename, int line) {
+    public void addInvokerDescriptor(String rubyName, String newMethodName, int methodArity, StaticScope scope, CallConfiguration callConfig, String filename, int line) {
         Arity arity = Arity.createArity(methodArity);
-        InvokerDescriptor descriptor = new InvokerDescriptor(newMethodName, classname, arity, scope, callConfig, filename, line);
+        InvokerDescriptor descriptor = new InvokerDescriptor(rubyName, newMethodName, classname, arity, scope, callConfig, filename, line);
 
         invokerDescriptors.add(descriptor);
     }
@@ -495,10 +483,15 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
 
             method.label(tryBegin);
             method.aload(THREADCONTEXT_INDEX);
-            String scopeNames = RuntimeHelpers.encodeScope(topLevelScope);
+            String scopeNames = Helpers.encodeScope(topLevelScope);
             method.ldc(scopeNames);
             method.iload(SELF_INDEX + 1);
-            method.invokestatic(p(RuntimeHelpers.class), "preLoad", sig(void.class, ThreadContext.class, String.class, boolean.class));
+            method.invokestatic(p(Helpers.class), "preLoad", sig(StaticScope.class, ThreadContext.class, String.class, boolean.class));
+
+            // store root scope
+            method.aload(THIS);
+            method.swap();
+            method.invokevirtual(p(AbstractScript.class), "setRootScope", sig(void.class, StaticScope.class));
 
             method.aload(THIS);
             method.aload(THREADCONTEXT_INDEX);
@@ -508,12 +501,12 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
 
             method.invokestatic(getClassname(),methodName, getStaticMethodSignature(getClassname(), 4));
             method.aload(THREADCONTEXT_INDEX);
-            method.invokestatic(p(RuntimeHelpers.class), "postLoad", sig(void.class, ThreadContext.class));
+            method.invokestatic(p(Helpers.class), "postLoad", sig(void.class, ThreadContext.class));
             method.areturn();
 
             method.label(tryFinally);
             method.aload(THREADCONTEXT_INDEX);
-            method.invokestatic(p(RuntimeHelpers.class), "postLoad", sig(void.class, ThreadContext.class));
+            method.invokestatic(p(Helpers.class), "postLoad", sig(void.class, ThreadContext.class));
             method.athrow();
 
             method.trycatch(tryBegin, tryFinally, tryFinally, null);
@@ -579,7 +572,7 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     }
 
     public static String buildStaticScopeNames(StaticScope scope) {
-        return RuntimeHelpers.encodeScope(scope);
+        return Helpers.encodeScope(scope);
     }
 
     private void beginInit() {
@@ -632,8 +625,8 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
         return cacheCompiler;
     }
     
-    public BodyCompiler startMethod(String rubyName, String javaName, CompilerCallback args, StaticScope scope, ASTInspector inspector) {
-        RootScopedBodyCompiler methodCompiler = new MethodBodyCompiler(this, rubyName, javaName, inspector, scope);
+    public BodyCompiler startMethod(String rubyName, String javaName, CompilerCallback args, StaticScope scope, ASTInspector inspector, int scopeIndex) {
+        RootScopedBodyCompiler methodCompiler = new MethodBodyCompiler(this, rubyName, javaName, inspector, scope, scopeIndex);
         
         methodCompiler.beginMethod(args, scope);
         
@@ -641,7 +634,11 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
     }
 
     public BodyCompiler startFileMethod(CompilerCallback args, StaticScope scope, ASTInspector inspector) {
-        MethodBodyCompiler methodCompiler = new MethodBodyCompiler(this, "__file__", "__file__", inspector, scope);
+        MethodBodyCompiler methodCompiler = new MethodBodyCompiler(this, "__file__", "__file__", inspector, scope, 0);
+
+        // allocate the 0 StaticScope slot in the cache
+        int reservedIndex = cacheCompiler.reserveStaticScope();
+        assert reservedIndex == 0 : "__file__ scope index was not zero";
         
         methodCompiler.beginMethod(args, scope);
         
@@ -678,14 +675,6 @@ public class StandardASMCompiler implements ScriptCompiler, Opcodes {
             method.areturn();
             method.end();
         }
-
-        return methodCompiler;
-    }
-
-    public BodyCompiler startRoot(String rubyName, String javaName, StaticScope scope, ASTInspector inspector) {
-        RootScopedBodyCompiler methodCompiler = new MethodBodyCompiler(this, rubyName, javaName, inspector, scope);
-
-        methodCompiler.beginMethod(null, scope);
 
         return methodCompiler;
     }

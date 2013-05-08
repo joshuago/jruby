@@ -48,9 +48,9 @@ public interface CacheCompiler {
 
     public void cacheDRegexp19(BaseBodyCompiler method, ArrayCallback arrayCallback, Object[] sourceArray, int options);
 
-    public void cacheClosure(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, ASTInspector inspector);
+    public int cacheClosure(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, ASTInspector inspector);
 
-    public void cacheClosure19(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, String parameterList, ASTInspector inspector);
+    public int cacheClosure19(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, String parameterList, ASTInspector inspector);
     
     public void cacheSpecialClosure(BaseBodyCompiler method, String closureMethod);
 
@@ -60,6 +60,8 @@ public interface CacheCompiler {
 
     public void cacheConstantFrom(BaseBodyCompiler method, String constantName);
 
+    public int reserveStaticScope();
+
     public int cacheStaticScope(BaseBodyCompiler method, StaticScope scope);
     
     public void loadStaticScope(BaseBodyCompiler method, int index);
@@ -67,6 +69,12 @@ public interface CacheCompiler {
     public void cacheMethod(BaseBodyCompiler method, String methodName);
 
     public void cacheMethod(BaseBodyCompiler method, String methodName, int receiverLocal);
+    
+    public void cacheGlobal(BaseBodyCompiler method, String globalName);
+    
+    public void cacheGlobalBoolean(BaseBodyCompiler method, String globalName);
+    
+    public void cacheConstantBoolean(BaseBodyCompiler method, String globalName);
 
     public void finish();
 }

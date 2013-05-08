@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -18,11 +18,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 
 package org.jruby.runtime.invokedynamic;
@@ -39,6 +39,7 @@ import org.jruby.runtime.CallType;
 import org.jruby.runtime.MethodIndex;
 import static java.lang.invoke.MethodHandles.*;
 import static java.lang.invoke.MethodType.*;
+import java.lang.invoke.SwitchPoint;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.callsite.CacheEntry;
@@ -115,13 +116,21 @@ public class MathLinker {
                 methodType(IRubyObject.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, JRubyCallSite.class, RubyFixnum.class));
         fallback = insertArguments(fallback, 3, site, context.runtime.newFixnum(value));
         
-        MethodHandle test = lookup().findStatic(MathLinker.class, "fixnumTest", methodType(boolean.class, Ruby.class, IRubyObject.class));
-        test = test.bindTo(context.runtime);
+        MethodHandle test = lookup().findStatic(MathLinker.class, "fixnumTest", methodType(boolean.class, IRubyObject.class));
         test = permuteArguments(test, methodType(boolean.class, ThreadContext.class, IRubyObject.class, IRubyObject.class), new int[] {2});
         
         if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tFixnum operation at site #" + site.siteID() + " (" + site.file() + ":" + site.line() + ") bound directly");
-        site.setTarget(guardWithTest(test, target, fallback));
-        return (IRubyObject)site.getTarget().invokeWithArguments(context, caller, self);
+        
+        // confirm it's a Fixnum
+        target = guardWithTest(test, target, fallback);
+        
+        // check Fixnum reopening
+        target = ((SwitchPoint)context.runtime.getFixnumInvalidator().getData())
+                .guardWithTest(target, fallback);
+        
+        site.setTarget(target);
+        
+        return (IRubyObject)target.invokeWithArguments(context, caller, self);
     }
     
     public static boolean fixnumBoolean(ThreadContext context, IRubyObject caller, IRubyObject self, JRubyCallSite site, long value) throws Throwable {
@@ -141,17 +150,25 @@ public class MathLinker {
                 methodType(boolean.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, JRubyCallSite.class, RubyFixnum.class));
         fallback = insertArguments(fallback, 3, site, context.runtime.newFixnum(value));
         
-        MethodHandle test = lookup().findStatic(MathLinker.class, "fixnumTest", methodType(boolean.class, Ruby.class, IRubyObject.class));
-        test = test.bindTo(context.runtime);
+        MethodHandle test = lookup().findStatic(MathLinker.class, "fixnumTest", methodType(boolean.class, IRubyObject.class));
         test = permuteArguments(test, methodType(boolean.class, ThreadContext.class, IRubyObject.class, IRubyObject.class), new int[] {2});
         
         if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tFixnum boolean operation at site #" + site.siteID() + " (" + site.file() + ":" + site.line() + ") bound directly");
-        site.setTarget(guardWithTest(test, target, fallback));
-        return (Boolean)site.getTarget().invokeWithArguments(context, caller, self);
+        
+        // confirm it's a Fixnum
+        target = guardWithTest(test, target, fallback);
+        
+        // check Fixnum reopening
+        target = ((SwitchPoint)context.runtime.getFixnumInvalidator().getData())
+                .guardWithTest(target, fallback);
+        
+        site.setTarget(target);
+        
+        return (Boolean)target.invokeWithArguments(context, caller, self);
     }
     
-    public static boolean fixnumTest(Ruby runtime, IRubyObject self) {
-        return self instanceof RubyFixnum && !runtime.isFixnumReopened();
+    public static boolean fixnumTest(IRubyObject self) {
+        return self instanceof RubyFixnum;
     }
     
     public static IRubyObject fixnumOperatorFail(ThreadContext context, IRubyObject caller, IRubyObject self, JRubyCallSite site, RubyFixnum value) throws Throwable {
@@ -269,7 +286,7 @@ public class MathLinker {
     
     public static IRubyObject floatOperator(ThreadContext context, IRubyObject caller, IRubyObject self, JRubyCallSite site, double value) throws Throwable {
         String operator = site.name();
-        String opMethod = MethodIndex.getFastFixnumOpsMethod(operator);
+        String opMethod = MethodIndex.getFastFloatOpsMethod(operator);
         String name = "float_" + opMethod;
         MethodType type = methodType(IRubyObject.class, ThreadContext.class, IRubyObject.class, IRubyObject.class);
         MethodHandle target = null;
@@ -284,17 +301,26 @@ public class MathLinker {
                 methodType(IRubyObject.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, JRubyCallSite.class, RubyFloat.class));
         fallback = insertArguments(fallback, 3, site, context.runtime.newFloat(value));
         
-        MethodHandle test = lookup().findStatic(MathLinker.class, "floatTest", methodType(boolean.class, Ruby.class, IRubyObject.class));
-        test = test.bindTo(context.runtime);
+        MethodHandle test = lookup().findStatic(MathLinker.class, "floatTest", methodType(boolean.class, IRubyObject.class));
         test = permuteArguments(test, methodType(boolean.class, ThreadContext.class, IRubyObject.class, IRubyObject.class), new int[] {2});
         
         if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tFloat operation at site #" + site.siteID() + " (" + site.file() + ":" + site.line() + ") bound directly");
         site.setTarget(guardWithTest(test, target, fallback));
-        return (IRubyObject)site.getTarget().invokeWithArguments(context, caller, self);
+        
+        // confirm it's a Float
+        target = guardWithTest(test, target, fallback);
+        
+        // check Float reopening
+        target = ((SwitchPoint)context.runtime.getFloatInvalidator().getData())
+                .guardWithTest(target, fallback);
+        
+        site.setTarget(target);
+        
+        return (IRubyObject)target.invokeWithArguments(context, caller, self);
     }
     
-    public static boolean floatTest(Ruby runtime, IRubyObject self) {
-        return self instanceof RubyFloat && !runtime.isFloatReopened();
+    public static boolean floatTest(IRubyObject self) {
+        return self instanceof RubyFloat;
     }
     
     public static IRubyObject floatOperatorFail(ThreadContext context, IRubyObject caller, IRubyObject self, JRubyCallSite site, RubyFloat value) throws Throwable {

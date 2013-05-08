@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 
 package org.jruby.compiler;
@@ -53,7 +53,7 @@ import org.jruby.ast.SValue19Node;
 import org.jruby.ast.SplatNode;
 import org.jruby.ast.StarNode;
 import org.jruby.ast.Yield19Node;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.BlockBody;
 import org.jruby.util.DefinedMessage;
@@ -102,13 +102,13 @@ public class ASTCompiler19 extends ASTCompiler {
     }
 
     @Override
-    public void compileAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileAssignment(Node node, BodyCompiler context) {
         switch (node.getNodeType()) {
             case MULTIPLEASGN19NODE:
-                compileMultipleAsgn19Assignment(node, context, expr);
+                compileMultipleAsgn19Assignment(node, context, false);
                 break;
             default:
-                super.compileAssignment(node, context, expr);
+                super.compileAssignment(node, context);
         }
     }
 
@@ -195,7 +195,7 @@ public class ASTCompiler19 extends ASTCompiler {
             public void nextValue(BodyCompiler context, Object object, int index) {
                     OptArgNode optArg = (OptArgNode)((ListNode) object).get(index);
 
-                    compileAssignment(optArg.getValue(), context, false);
+                    compileAssignment(optArg.getValue(), context);
                 }
             };
             optionalNotGiven = new ArrayCallback() {
@@ -311,10 +311,10 @@ public class ASTCompiler19 extends ASTCompiler {
         if (argsNodeId == null) {
             // no args, do not pass args processor
             context.createNewClosure19(iterNode.getPosition().getFile(), iterNode.getPosition().getStartLine(), iterNode.getScope(), Arity.procArityOf(iterNode.getVarNode()).getValue(),
-                    closureBody, null, hasMultipleArgsHead, argsNodeId, RuntimeHelpers.encodeParameterList(argsNode), inspector);
+                    closureBody, null, hasMultipleArgsHead, argsNodeId, Helpers.encodeParameterList(argsNode), inspector);
         } else {
             context.createNewClosure19(iterNode.getPosition().getFile(), iterNode.getPosition().getStartLine(), iterNode.getScope(), Arity.procArityOf(iterNode.getVarNode()).getValue(),
-                    closureBody, closureArgs, hasMultipleArgsHead, argsNodeId, RuntimeHelpers.encodeParameterList(argsNode), inspector);
+                    closureBody, closureArgs, hasMultipleArgsHead, argsNodeId, Helpers.encodeParameterList(argsNode), inspector);
         }
     }
 
@@ -368,7 +368,7 @@ public class ASTCompiler19 extends ASTCompiler {
                             }
                             context.reverseValues(size);
                             for (Node asgn : multipleAsgn19Node.getPre().childNodes()) {
-                                compileAssignment(asgn, context, false);
+                                compileAssignment(asgn, context);
                             }
                             return;
                         }
@@ -399,7 +399,7 @@ public class ASTCompiler19 extends ASTCompiler {
                         Node assignNode = nodes.get(index);
 
                         // perform assignment for the next node
-                        compileAssignment(assignNode, context, false);
+                        compileAssignment(assignNode, context);
                     }
                 };
 
@@ -412,7 +412,7 @@ public class ASTCompiler19 extends ASTCompiler {
                             context.consumeCurrentValue();
                         } else {
                             // assign to appropriate variable
-                            compileAssignment(argsNode, context, false);
+                            compileAssignment(argsNode, context);
                         }
                     }
                 };

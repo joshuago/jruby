@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -18,11 +18,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.compiler.impl;
 
@@ -39,7 +39,7 @@ import org.jruby.ast.NodeType;
 import org.jruby.ast.executable.AbstractScript;
 import org.jruby.compiler.ASTInspector;
 import org.jruby.compiler.CompilerCallback;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.BlockBody;
 import org.jruby.runtime.CallSite;
@@ -49,6 +49,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.invokedynamic.InvokeDynamicSupport;
 import org.jruby.util.ByteList;
 import static org.jruby.util.CodegenUtils.*;
+import org.jruby.util.JavaNameMangler;
 
 /**
  * A CacheCompiler that uses invokedynamic as a lazy thunk for literals and other
@@ -76,12 +77,40 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
             super.cacheConstant(method, constantName);
             return;
         }
-        
+
+        method.loadThis();
         method.loadThreadContext();
         method.method.invokedynamic(
                 constantName,
-                sig(IRubyObject.class, ThreadContext.class),
-                InvokeDynamicSupport.getConstantHandle());
+                sig(IRubyObject.class, AbstractScript.class, ThreadContext.class),
+                InvokeDynamicSupport.getConstantHandle(),
+                method.getScopeIndex());
+    }
+
+    /**
+     * Cache a constant boolean using invokedynamic.
+     * 
+     * This cache uses a java.lang.invoke.SwitchPoint as the invalidation
+     * mechanism in order to avoid the cost of constantly pinging a constant
+     * generation in org.jruby.Ruby. This allows a nearly free constant cache.
+     * 
+     * @param method the method compiler with which bytecode is emitted
+     * @param constantName the name of the constant to look up
+     */
+    @Override
+    public void cacheConstantBoolean(BaseBodyCompiler method, String constantName) {
+        if (!RubyInstanceConfig.INVOKEDYNAMIC_CONSTANTS) {
+            super.cacheConstantBoolean(method, constantName);
+            return;
+        }
+
+        method.loadThis();
+        method.loadThreadContext();
+        method.method.invokedynamic(
+                constantName,
+                sig(boolean.class, AbstractScript.class, ThreadContext.class),
+                InvokeDynamicSupport.getConstantBooleanHandle(),
+                method.getScopeIndex());
     }
 
     /**
@@ -99,7 +128,7 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
             return;
         }
         
-        String asString = RuntimeHelpers.rawBytesToString(contents.bytes());
+        String asString = Helpers.rawBytesToString(contents.bytes());
         String encodingName = new String(contents.getEncoding().getName());
         
         method.method.invokedynamic(
@@ -138,11 +167,10 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
      * Cache a closure body (BlockBody) using invokedynamic.
      */
     @Override
-    public void cacheClosure(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, ASTInspector inspector) {
-        String descriptor = RuntimeHelpers.buildBlockDescriptor(
+    public int cacheClosure(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, ASTInspector inspector) {
+        String descriptor = Helpers.buildBlockDescriptor(
                 closureMethod,
                 arity,
-                scope,
                 file,
                 line,
                 hasMultipleArgsHead,
@@ -151,23 +179,25 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
 
         method.loadThis();
         method.loadThreadContext();
+        int scopeIndex = cacheStaticScope(method, scope);
         
         method.method.invokedynamic(
                 "getBlockBody",
-                sig(BlockBody.class, Object.class, ThreadContext.class),
+                sig(BlockBody.class, Object.class, ThreadContext.class, StaticScope.class),
                 InvokeDynamicSupport.getBlockBodyHandle(),
                 descriptor);
+
+        return scopeIndex;
     }
 
     /**
      * Cache a closure body (BlockBody) for 1.9 mode using invokedynamic.
      */
     @Override
-    public void cacheClosure19(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, String parameterList, ASTInspector inspector) {
-        String descriptor = RuntimeHelpers.buildBlockDescriptor19(
+    public int cacheClosure19(BaseBodyCompiler method, String closureMethod, int arity, StaticScope scope, String file, int line, boolean hasMultipleArgsHead, NodeType argsNodeId, String parameterList, ASTInspector inspector) {
+        String descriptor = Helpers.buildBlockDescriptor19(
                 closureMethod,
                 arity,
-                scope,
                 file,
                 line,
                 hasMultipleArgsHead,
@@ -177,12 +207,15 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
 
         method.loadThis();
         method.loadThreadContext();
+        int scopeIndex = cacheStaticScope(method, scope);
         
         method.method.invokedynamic(
                 "getBlockBody19",
-                sig(BlockBody.class, Object.class, ThreadContext.class),
+                sig(BlockBody.class, Object.class, ThreadContext.class, StaticScope.class),
                 InvokeDynamicSupport.getBlockBody19Handle(),
                 descriptor);
+
+        return scopeIndex;
     }
 
     /**
@@ -199,7 +232,7 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
             return;
         }
         
-        String asString = RuntimeHelpers.rawBytesToString(pattern.bytes());
+        String asString = Helpers.rawBytesToString(pattern.bytes());
         String encodingName = new String(pattern.getEncoding().getName());
         
         method.loadThreadContext();
@@ -265,17 +298,18 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
      */
     @Override
     public int cacheStaticScope(BaseBodyCompiler method, StaticScope scope) {
-        String scopeString = RuntimeHelpers.encodeScope(scope);
+        String scopeString = Helpers.encodeScope(scope);
         
         int index = scopeCount;
         scopeCount++;
         
         method.loadThis();
         method.loadThreadContext();
+        method.loadStaticScope();
         
         method.method.invokedynamic(
                 "getStaticScope",
-                sig(StaticScope.class, AbstractScript.class, ThreadContext.class),
+                sig(StaticScope.class, AbstractScript.class, ThreadContext.class, StaticScope.class),
                 InvokeDynamicSupport.getStaticScopeHandle(),
                 scopeString,
                 index);
@@ -343,7 +377,7 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
             return;
         }
         
-        String asString = RuntimeHelpers.rawBytesToString(contents.bytes());
+        String asString = Helpers.rawBytesToString(contents.bytes());
         String encodingName = new String(contents.getEncoding().getName());
         
         method.loadThreadContext();
@@ -433,5 +467,25 @@ public class InvokeDynamicCacheCompiler extends InheritedCacheCompiler {
                 method.getScriptCompiler().getSourcename(),
                 method.getLastLine() + 1
         );
+    }
+    
+    public void cacheGlobal(BaseBodyCompiler method, String globalName) {
+        method.loadThreadContext();
+        method.method.invokedynamic(
+                "get:" + JavaNameMangler.mangleMethodName(globalName),
+                sig(IRubyObject.class, ThreadContext.class),
+                InvokeDynamicSupport.getGlobalHandle(),
+                method.getScriptCompiler().getSourcename(), 
+                method.getLastLine() + 1);
+    }
+    
+    public void cacheGlobalBoolean(BaseBodyCompiler method, String globalName) {
+        method.loadThreadContext();
+        method.method.invokedynamic(
+                "getBoolean:" + JavaNameMangler.mangleMethodName(globalName),
+                sig(boolean.class, ThreadContext.class),
+                InvokeDynamicSupport.getGlobalBooleanHandle(),
+                method.getScriptCompiler().getSourcename(), 
+                method.getLastLine() + 1);
     }
 }

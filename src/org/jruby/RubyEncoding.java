@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -17,11 +17,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -35,7 +35,6 @@ import java.nio.charset.CodingErrorAction;
 
 import org.jcodings.Encoding;
 import org.jcodings.EncodingDB.Entry;
-import org.jcodings.specific.ASCIIEncoding;
 import org.jcodings.specific.USASCIIEncoding;
 import org.jcodings.util.CaseInsensitiveBytesHash;
 import org.jcodings.util.Hash.HashEntryIterator;
@@ -80,7 +79,7 @@ public class RubyEncoding extends RubyObject {
     private final ByteList name;
     private final boolean isDummy;
 
-    private RubyEncoding(Ruby runtime, byte[]name, int p, int end, boolean isDummy) {
+    private RubyEncoding(Ruby runtime, byte[] name, int p, int end, boolean isDummy) {
         super(runtime, runtime.getEncoding());
         this.name = new ByteList(name, p, end);
         this.isDummy = isDummy;
@@ -97,11 +96,11 @@ public class RubyEncoding extends RubyObject {
         this.encoding = encoding;
     }
 
-    public static RubyEncoding newEncoding(Ruby runtime, byte[]name, int p, int end, boolean isDummy) {
+    public static RubyEncoding newEncoding(Ruby runtime, byte[] name, int p, int end, boolean isDummy) {
         return new RubyEncoding(runtime, name, p, end, isDummy);
     }
 
-    public static RubyEncoding newEncoding(Ruby runtime, byte[]name, boolean isDummy) {
+    public static RubyEncoding newEncoding(Ruby runtime, byte[] name, boolean isDummy) {
         return new RubyEncoding(runtime, name, isDummy);
     }
 
@@ -116,10 +115,26 @@ public class RubyEncoding extends RubyObject {
     }
 
     public static Encoding areCompatible(IRubyObject obj1, IRubyObject obj2) {
-        if (obj1 instanceof EncodingCapable && obj2 instanceof EncodingCapable) {
-            Encoding enc1 = ((EncodingCapable)obj1).getEncoding();
-            Encoding enc2 = ((EncodingCapable)obj2).getEncoding();
+        Encoding enc1 = null;
+        Encoding enc2 = null;
 
+        if (obj1 instanceof RubyEncoding) {
+            enc1 = ((RubyEncoding)obj1).getEncoding();
+        } else if (obj1 instanceof RubySymbol) {
+            enc1 = ((RubySymbol)obj1).asString().getEncoding();
+        } else if (obj1 instanceof EncodingCapable) {
+            enc1 = ((EncodingCapable)obj1).getEncoding();
+        }
+
+        if (obj2 instanceof RubyEncoding) {
+            enc2 = ((RubyEncoding)obj2).getEncoding();
+        } else if (obj2 instanceof RubySymbol) {
+            enc2 = ((RubySymbol)obj2).asString().getEncoding();
+        } else if (obj2 instanceof EncodingCapable) {
+            enc2 = ((EncodingCapable)obj2).getEncoding();
+        }
+
+        if (enc1 != null && enc2 != null) {
             if (enc1 == enc2) return enc1;
 
             if (obj2 instanceof RubyString && ((RubyString) obj2).getByteList().getRealSize() == 0) return enc1;
@@ -130,7 +145,7 @@ public class RubyEncoding extends RubyObject {
             if (!(obj2 instanceof RubyString) && enc2 instanceof USASCIIEncoding) return enc1;
             if (!(obj1 instanceof RubyString) && enc1 instanceof USASCIIEncoding) return enc2;
 
-            if(!(obj1 instanceof RubyString)) {
+            if (!(obj1 instanceof RubyString)) {
                 IRubyObject objTmp = obj1;
                 obj1 = obj2;
                 obj1 = objTmp;
@@ -158,10 +173,7 @@ public class RubyEncoding extends RubyObject {
             if (cr1 == StringSupport.CR_7BIT) return enc2;
             if (cr2 == StringSupport.CR_7BIT) return enc1;
         }
-        if (cr2 == StringSupport.CR_7BIT) {
-            if (enc1 instanceof ASCIIEncoding) return enc2;
-            return enc1;
-        }
+        if (cr2 == StringSupport.CR_7BIT) return enc1;
         if (cr1 == StringSupport.CR_7BIT) return enc2;
         return null;
     }
@@ -446,7 +458,7 @@ public class RubyEncoding extends RubyObject {
         Ruby runtime = recv.getRuntime();
         EncodingService service = runtime.getEncodingService();
         if (encoding.isNil()) {
-            throw recv.getRuntime().newArgumentError("default_external can not be nil");
+            throw runtime.newArgumentError("default_external can not be nil");
         }
         runtime.setDefaultExternalEncoding(service.getEncodingFromObject(encoding));
         return encoding;
@@ -461,10 +473,7 @@ public class RubyEncoding extends RubyObject {
     public static IRubyObject setDefaultInternal(IRubyObject recv, IRubyObject encoding) {
         Ruby runtime = recv.getRuntime();
         EncodingService service = runtime.getEncodingService();
-        if (encoding.isNil()) {
-            recv.getRuntime().newArgumentError("default_internal can not be nil");
-        }
-        recv.getRuntime().setDefaultInternalEncoding(service.getEncodingFromObject(encoding));
+        runtime.setDefaultInternalEncoding(service.getEncodingFromObject(encoding));
         return encoding;
     }
 

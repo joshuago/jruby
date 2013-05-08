@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -17,11 +17,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.internal.runtime.methods;
 
@@ -37,12 +37,14 @@ import org.jruby.runtime.builtin.IRubyObject;
 
 /**
  */
-public abstract class JavaMethod extends DynamicMethod implements Cloneable {
+public abstract class JavaMethod extends DynamicMethod implements Cloneable, MethodArgs2 {
     protected int arityValue;
     protected Arity arity = Arity.OPTIONAL;
     private String javaName;
     private boolean isSingleton;
     protected StaticScope staticScope;
+    private String parameterDesc;
+    private String[] parameterList;
 
     public static final Class[][] METHODS = {
         {JavaMethodZero.class, JavaMethodZeroOrOne.class, JavaMethodZeroOrOneOrTwo.class, JavaMethodZeroOrOneOrTwoOrThree.class},
@@ -217,14 +219,28 @@ public abstract class JavaMethod extends DynamicMethod implements Cloneable {
     public StaticScope getStaticScope() {
         return staticScope;
     }
+    
+    public void setParameterDesc(String parameterDesc) {
+        this.parameterDesc = parameterDesc;
+        this.parameterList = null;
+    }
+    
+    public void setParameterList(String[] parameterList) {
+        this.parameterDesc = null;
+        this.parameterList = parameterList;
+    }
+
+    public String[] getParameterList() {
+        if (parameterList == null && parameterDesc != null && parameterDesc.length() > 0) {
+            parameterList = parameterDesc.split(";");
+        } else {
+            return parameterList = new String[0];
+        }
+        return parameterList;
+    }
 
     protected static IRubyObject raiseArgumentError(JavaMethod method, ThreadContext context, String name, int given, int min, int max) {
-        try {
-            method.preBacktraceOnly(context, name);
-            Arity.raiseArgumentError(context.runtime, name, given, min, max);
-        } finally {
-            postBacktraceOnly(context);
-        }
+        Arity.raiseArgumentError(context.runtime, name, given, min, max);
         // never reached
         return context.runtime.getNil();
     }

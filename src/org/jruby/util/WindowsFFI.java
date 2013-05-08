@@ -1,12 +1,12 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
  * Copyright (C) 2007-2011 JRuby Team <team@jruby.org>
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -19,16 +19,22 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.util;
 
 import jnr.ffi.*;
 import jnr.ffi.LibraryOption;
+import jnr.ffi.Runtime;
+import jnr.ffi.annotations.Out;
+import jnr.ffi.byref.IntByReference;
+import jnr.ffi.types.intptr_t;
+import jnr.ffi.types.uintptr_t;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -37,19 +43,30 @@ import java.util.Map;
  */
 public class WindowsFFI {
     public static interface Kernel32 {
-        int GetProcessId(int handle);
+        public static final int PROCESS_QUERY_INFORMATION  = 0x0400;
+        public static final int ERROR_INVALID_PARAMETER = 0x57;
+        public static final int PROCESS_TERMINATE  = 0x0001;
+        public static final int STILL_ACTIVE = 259;
+        
+        int GetProcessId(@intptr_t long handle);
+        jnr.ffi.Pointer OpenProcess(int dwDesiredAccess, int bInheritHandle, int dwProcessId);
+        int CloseHandle(jnr.ffi.Pointer handle);
+        int GetLastError();
+        int GetExitCodeProcess(jnr.ffi.Pointer hProcess, @Out IntByReference pointerToExitCodeDword);
+        int TerminateProcess(jnr.ffi.Pointer hProcess, int uExitCode);
     }
 
     private static final class SingletonHolder {
-        static final Kernel32 Kernel32;
-        static {
-            Map<LibraryOption, Object> options = new HashMap<LibraryOption, Object>();
-            options.put(LibraryOption.CallingConvention, CallingConvention.STDCALL);
-            Kernel32 = Library.loadLibrary("Kernel32.dll", Kernel32.class, options);
-        }
+        static final Kernel32 Kernel32 = LibraryLoader.create(Kernel32.class)
+                .convention(CallingConvention.STDCALL)
+                .load("Kernel32");
     }
 
     public static Kernel32 getKernel32() {
+        return kernel32();
+    }
+
+    public static Kernel32 kernel32() {
         return SingletonHolder.Kernel32;
     }
 }

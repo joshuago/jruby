@@ -80,7 +80,6 @@ STDLIB_FILES = %w[
   test
   thwait.rb
   time.rb
-  tmpdir.rb
   tracer.rb
   tsort.rb
   un.rb
@@ -106,6 +105,5 @@ EXT_FILES = {
   'ext/digest/lib/sha1.rb' => 'sha1.rb',
   'ext/digest/sha2/lib/sha2.rb' => 'digest/sha2.rb',
   'ext/Win32API/lib/win32' => 'win32',
-  'ext/openssl/lib/openssl.rb' => 'openssl.rb',
   'ext/openssl/lib/openssl' => 'openssl'
 }

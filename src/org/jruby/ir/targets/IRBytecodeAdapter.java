@@ -10,7 +10,7 @@ import org.jruby.RubyClass;
 import org.jruby.RubyEncoding;
 import org.jruby.compiler.impl.SkinnyMethodAdapter;
 import org.jruby.ir.operands.UndefinedValue;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -53,12 +53,17 @@ public class IRBytecodeAdapter {
         });
     }
 
-    public void push(Long l) {
+    public void pushFixnum(Long l) {
         adapter.aload(0);
         adapter.invokedynamic("fixnum", sig(JVM.OBJECT, ThreadContext.class), Bootstrap.fixnum(), l);
     }
+    
+    public void pushFloat(Double d) {
+        adapter.aload(0);
+        adapter.invokedynamic("flote", sig(JVM.OBJECT, ThreadContext.class), Bootstrap.flote(), d);
+    }
 
-    public void push(ByteList bl) {
+    public void pushString(ByteList bl) {
         adapter.aload(0);
         adapter.invokedynamic("string", sig(JVM.OBJECT, ThreadContext.class), Bootstrap.string(), new String(bl.bytes(), RubyEncoding.ISO), bl.getEncoding().getIndex());
     }
@@ -67,12 +72,12 @@ public class IRBytecodeAdapter {
      * Push a symbol on the stack
      * @param sym the symbol's string identifier
      */
-    public void push(String sym) {
+    public void pushSymbol(String sym) {
         adapter.aload(0);
         adapter.invokedynamic("symbol", sig(JVM.OBJECT, ThreadContext.class), Bootstrap.symbol(), sym);
     }
 
-    public void pushRuntime() {
+    public void loadRuntime() {
         adapter.aload(0);
         adapter.getfield(p(ThreadContext.class), "runtime", ci(Ruby.class));
     }
@@ -129,12 +134,16 @@ public class IRBytecodeAdapter {
         adapter.invokevirtual(type.getInternalName(), method.getName(), method.getDescriptor());
     }
 
+    public void invokeStatic(Type type, Method method) {
+        adapter.invokestatic(type.getInternalName(), method.getName(), method.getDescriptor());
+    }
+
     public void invokeHelper(String name, Class... sig) {
-        adapter.invokestatic(p(RuntimeHelpers.class), name, sig(sig));
+        adapter.invokestatic(p(Helpers.class), name, sig(sig));
     }
 
     public void invokeHelper(String name, String sig) {
-        adapter.invokestatic(p(RuntimeHelpers.class), name, sig);
+        adapter.invokestatic(p(Helpers.class), name, sig);
     }
 
     public void searchConst(String name) {
@@ -186,8 +195,7 @@ public class IRBytecodeAdapter {
     }
 
     public void pushObjectClass() {
-        adapter.aload(0);
-        adapter.getfield(p(ThreadContext.class), "runtime", ci(Ruby.class));
+        loadRuntime();
         adapter.invokevirtual(p(Ruby.class), "getObject", sig(RubyClass.class));
     }
 

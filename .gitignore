@@ -19,7 +19,6 @@ lib/ruby/shared/rubygems/defaults/jruby_native.rb
 nbproject/private
 share
 latest_source_cache
-src_gen
 docs/api
 test/rails
 test/prawn
@@ -55,3 +54,6 @@ build_graph.png
 /.idea/
 /.rbx/
 *.sw[mnop]
+lib/ruby/shared/bcpkix-jdk15on-147.jar
+lib/ruby/shared/bcprov-jdk15on-147.jar
+lib/ruby/shared/jopenssl.jar

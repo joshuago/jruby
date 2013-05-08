@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -28,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -46,7 +46,7 @@ import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.exceptions.JumpException;
 import org.jruby.exceptions.RaiseException;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.BlockBody;
@@ -67,9 +67,9 @@ import org.jruby.runtime.marshal.UnmarshalStream;
 import org.jruby.util.ByteList;
 import org.jruby.util.TypeConverter;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
-import static org.jruby.runtime.MethodIndex.HASH;
-import static org.jruby.runtime.MethodIndex.OP_CMP;
+import static org.jruby.runtime.Helpers.invokedynamic;
+
+import org.jruby.runtime.invokedynamic.MethodNames;
 
 /**
  * @author jpetersen
@@ -209,7 +209,7 @@ public class RubyRange extends RubyObject {
     private void init(ThreadContext context, IRubyObject begin, IRubyObject end, boolean isExclusive) {
         if (!(begin instanceof RubyFixnum && end instanceof RubyFixnum)) {
             try {
-                IRubyObject result = invokedynamic(context, begin, OP_CMP, end);
+                IRubyObject result = invokedynamic(context, begin, MethodNames.OP_CMP, end);
                 if (result.isNil()) throw getRuntime().newArgumentError("bad value for range");
             } catch (RaiseException re) {
                 throw getRuntime().newArgumentError("bad value for range");
@@ -245,9 +245,9 @@ public class RubyRange extends RubyObject {
         long hash = isExclusive ? 1 : 0;
         long h = hash;
         
-        long v = invokedynamic(context, begin, HASH).convertToInteger().getLongValue();
+        long v = invokedynamic(context, begin, MethodNames.HASH).convertToInteger().getLongValue();
         hash ^= v << 1;
-        v = invokedynamic(context, end, HASH).convertToInteger().getLongValue();
+        v = invokedynamic(context, end, MethodNames.HASH).convertToInteger().getLongValue();
         hash ^= v << 9;
         hash ^= h << 24;
         return getRuntime().newFixnum(hash);
@@ -344,13 +344,13 @@ public class RubyRange extends RubyObject {
     }
 
     private IRubyObject rangeLt(ThreadContext context, IRubyObject a, IRubyObject b) {
-        IRubyObject result = invokedynamic(context, a, OP_CMP, b);
+        IRubyObject result = invokedynamic(context, a, MethodNames.OP_CMP, b);
         if (result.isNil()) return null;
         return RubyComparable.cmpint(context, result, a, b) < 0 ? getRuntime().getTrue() : null;
     }
 
     private IRubyObject rangeLe(ThreadContext context, IRubyObject a, IRubyObject b) {
-        IRubyObject result = invokedynamic(context, a, OP_CMP, b);
+        IRubyObject result = invokedynamic(context, a, MethodNames.OP_CMP, b);
         if (result.isNil()) return null;
         int c = RubyComparable.cmpint(context, result, a, b);
         if (c == 0) return RubyFixnum.zero(getRuntime());
@@ -453,7 +453,9 @@ public class RubyRange extends RubyObject {
         Ruby runtime = context.runtime;
         if (!block.isGiven()) return enumeratorize(runtime, this, "each");
 
-        if (begin instanceof RubyFixnum && end instanceof RubyFixnum) {
+        if (begin instanceof RubyTime) {
+            throw runtime.newTypeError("can't iterate from Time");
+        } else if (begin instanceof RubyFixnum && end instanceof RubyFixnum) {
             fixnumEach(context, runtime, block);
         } else if (begin instanceof RubyString) {
             ((RubyString) begin).uptoCommon19(context, end, isExclusive, block);
@@ -641,7 +643,7 @@ public class RubyRange extends RubyObject {
                 }
             }
         }
-        return RuntimeHelpers.invokeSuper(context, this, obj, Block.NULL_BLOCK);
+        return Helpers.invokeSuper(context, this, obj, Block.NULL_BLOCK);
     }
 
     @JRubyMethod(name = "===", compat = RUBY1_9)
@@ -657,9 +659,9 @@ public class RubyRange extends RubyObject {
     @JRubyMethod(compat = RUBY1_9, frame = true)
     public IRubyObject min(ThreadContext context, Block block) {
         if (block.isGiven()) {
-            return RuntimeHelpers.invokeSuper(context, this, block);
+            return Helpers.invokeSuper(context, this, block);
         } else {
-            int c = RubyComparable.cmpint(context, invokedynamic(context, begin, OP_CMP, end), begin, end);
+            int c = RubyComparable.cmpint(context, invokedynamic(context, begin, MethodNames.OP_CMP, end), begin, end);
             if (c > 0 || (c == 0 && isExclusive)) {
                 return context.runtime.getNil();
             }
@@ -673,9 +675,9 @@ public class RubyRange extends RubyObject {
             return context.runtime.getNil();
         }
         if (block.isGiven() || isExclusive && !(end instanceof RubyNumeric)) {
-            return RuntimeHelpers.invokeSuper(context, this, block);
+            return Helpers.invokeSuper(context, this, block);
         } else {
-            int c = RubyComparable.cmpint(context, invokedynamic(context, begin, OP_CMP, end), begin, end);
+            int c = RubyComparable.cmpint(context, invokedynamic(context, begin, MethodNames.OP_CMP, end), begin, end);
             Ruby runtime = context.runtime;
             if (isExclusive) {
                 if (!(end instanceof RubyInteger)) throw runtime.newTypeError("cannot exclude non Integer end value");
@@ -696,6 +698,9 @@ public class RubyRange extends RubyObject {
     public IRubyObject first(ThreadContext context, IRubyObject arg) {
         final Ruby runtime = context.runtime;
         final int num = RubyNumeric.num2int(arg);
+        if (num < 0) {
+            throw context.runtime.newArgumentError("negative array size (or size too big)");
+        }
         final RubyArray result = runtime.newArray(num);
         try {
             RubyEnumerable.callEach(runtime, context, this, Arity.ONE_ARGUMENT, new BlockCallback() {

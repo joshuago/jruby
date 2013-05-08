@@ -150,7 +150,9 @@ JAVA_ENCODING=""
 #declare -a java_args
 #declare -a ruby_args
 
-java_class=org.jruby.Main
+JAVA_CLASS_JRUBY_MAIN=org.jruby.Main
+java_class=$JAVA_CLASS_JRUBY_MAIN
+JAVA_CLASS_NGSERVER=com.martiansoftware.nailgun.NGServer
 
 # Split out any -J argument for passing to the JVM.
 # Scanning for args is aborted by '--'.
@@ -228,7 +230,7 @@ do
         java_args="${java_args} -Xprof" ;;
      --ng-server)
         # Start up as Nailgun server
-        java_class=com.martiansoftware.nailgun.NGServer
+        java_class=$JAVA_CLASS_NGSERVER
         VERIFY_JRUBY=true ;;
      --ng)
         # Use native Nailgun client to toss commands to server
@@ -256,17 +258,7 @@ set -- "${ruby_args}"
 
 JAVA_OPTS="$JAVA_OPTS $JAVA_VM $JAVA_MEM $JAVA_STACK"
 
-JFFI_BOOT=""
-if [ -d "$JRUBY_HOME/lib/native/" ]; then
-  for d in $JRUBY_HOME/lib/native/*`uname -s`; do
-    if [ -z "$JFFI_BOOT" ]; then
-      JFFI_BOOT="$d"
-    else
-      JFFI_BOOT="$JFFI_BOOT:$d"
-    fi
-  done
-fi
-JFFI_OPTS="-Djffi.boot.library.path=$JFFI_BOOT"
+JFFI_OPTS="-Djffi.boot.library.path=$JRUBY_HOME/lib/native"
 
 
 if [ "$nailgun_client" != "" ]; then
@@ -282,11 +274,17 @@ if [ "$VERIFY_JRUBY" != "" ]; then
       echo "Running with instrumented profiler"
   fi
 
-  "$JAVACMD" $PROFILE_ARGS $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -classpath "$JRUBY_CP$CP_DELIMITER$CP$CP_DELIMITER$CLASSPATH" \
+  if [ $java_class = $JAVA_CLASS_NGSERVER -a -n ${JRUBY_OPTS} ]; then
+    echo "warning: starting a nailgun server; discarding JRUBY_OPTS: ${JRUBY_OPTS}"
+    JRUBY_OPTS=''
+  fi
+
+
+  "$JAVACMD" $PROFILE_ARGS $JAVA_OPTS "$JFFI_OPTS" ${java_args[@]} -classpath "$JRUBY_CP$CP_DELIMITER$CP$CP_DELIMITER$CLASSPATH" \
     "-Djruby.home=$JRUBY_HOME" \
     "-Djruby.lib=$JRUBY_HOME/lib" -Djruby.script=jruby \
     "-Djruby.shell=$JRUBY_SHELL" \
-    $java_class $JRUBY_OPTS "$@"
+    $java_class $JRUBY_OPTS $@
 
   # Record the exit status immediately, or it will be overridden.
   JRUBY_STATUS=$?

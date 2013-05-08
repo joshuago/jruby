@@ -9,6 +9,7 @@ import static org.jruby.CompatVersion.RUBY1_9;
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
 import org.jruby.RubyKernel;
+import org.jruby.RubyModule;
 import org.jruby.RubyNumeric;
 import org.jruby.RubyObject;
 import org.jruby.RubyString;
@@ -16,19 +17,19 @@ import org.jruby.RubyTime;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.ext.stringio.RubyStringIO;
-import org.jruby.javasupport.util.RuntimeHelpers;
-import org.jruby.runtime.Arity;
+import org.jruby.internal.runtime.methods.JavaMethod;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
+import org.jruby.runtime.Visibility;
 import static org.jruby.runtime.Visibility.PRIVATE;
 import org.jruby.runtime.builtin.IRubyObject;
-import org.jruby.runtime.callback.Callback;
 import org.jruby.util.ByteList;
 import org.jruby.util.CharsetTranscoder;
 import org.jruby.util.IOOutputStream;
 import org.jruby.util.TypeConverter;
-import org.jruby.util.io.EncodingOption;
+import org.jruby.util.io.EncodingUtils;
 
 /**
  *
@@ -36,6 +37,7 @@ import org.jruby.util.io.EncodingOption;
 @JRubyClass(name = "Zlib::GzipWriter", parent = "Zlib::GzipFile")
 public class JZlibRubyGzipWriter extends RubyGzipFile {
     protected static final ObjectAllocator GZIPWRITER_ALLOCATOR = new ObjectAllocator() {
+        @Override
         public IRubyObject allocate(Ruby runtime, RubyClass klass) {
             return new JZlibRubyGzipWriter(runtime, klass);
         }
@@ -53,7 +55,7 @@ public class JZlibRubyGzipWriter extends RubyGzipFile {
     @JRubyMethod(name = "open", required = 1, optional = 2, meta = true, compat = RUBY1_8)
     public static IRubyObject open18(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
         Ruby runtime = recv.getRuntime();
-        IRubyObject io = RuntimeHelpers.invoke(context, runtime.getFile(), "open", args[0], runtime.newString("wb"));
+        IRubyObject io = Helpers.invoke(context, runtime.getFile(), "open", args[0], runtime.newString("wb"));
         JZlibRubyGzipWriter gzio = newInstance(recv, argsWithIo(io, args), block);
         
         return RubyGzipFile.wrapBlock(context, gzio, block);
@@ -62,7 +64,7 @@ public class JZlibRubyGzipWriter extends RubyGzipFile {
     @JRubyMethod(name = "open", required = 1, optional = 3, meta = true, compat = RUBY1_9)
     public static IRubyObject open19(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block block) {
         Ruby runtime = recv.getRuntime();
-        IRubyObject io = RuntimeHelpers.invoke(context, runtime.getFile(), "open", args[0], runtime.newString("wb"));
+        IRubyObject io = Helpers.invoke(context, runtime.getFile(), "open", args[0], runtime.newString("wb"));
         JZlibRubyGzipWriter gzio = newInstance(recv, argsWithIo(io, args), block);
         
         return RubyGzipFile.wrapBlock(context, gzio, block);
@@ -99,11 +101,7 @@ public class JZlibRubyGzipWriter extends RubyGzipFile {
         if (args.length > 2) {
             IRubyObject opt = TypeConverter.checkHashType(getRuntime(), args[args.length - 1]);
             if (!opt.isNil()) {
-                EncodingOption enc = EncodingOption.getEncodingOptionFromObject(opt);
-                if (enc != null) {
-                    readEncoding = enc.getExternalEncoding();
-                    writeEncoding = enc.getInternalEncoding();
-                }
+                EncodingUtils.getEncodingOptionFromObject(getRuntime().getCurrentContext(), this, opt);
                 IRubyObject[] newArgs = new IRubyObject[args.length - 1];
                 System.arraycopy(args, 0, newArgs, 0, args.length - 1);
                 args = newArgs;
@@ -113,14 +111,10 @@ public class JZlibRubyGzipWriter extends RubyGzipFile {
             checkLevel(getRuntime(), RubyNumeric.fix2int(args[2]));
         }
         if (realIo.respondsTo("path")) {
-            obj.getSingletonClass().defineMethod("path", new Callback() {
-
-                public IRubyObject execute(IRubyObject recv, IRubyObject[] args, Block block) {
-                    return ((JZlibRubyGzipWriter) recv).realIo.callMethod(recv.getRuntime().getCurrentContext(), "path");
-                }
-
-                public Arity getArity() {
-                    return Arity.NO_ARGUMENTS;
+            obj.getSingletonClass().addMethod("path", new JavaMethod.JavaMethodZero(obj.getSingletonClass(), Visibility.PUBLIC) {
+                @Override
+                public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name) {
+                    return ((JZlibRubyGzipWriter) self).realIo.callMethod(context, "path");
                 }
             });
         }

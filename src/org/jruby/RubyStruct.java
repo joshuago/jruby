@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -24,11 +24,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -39,6 +39,7 @@ import org.jruby.anno.JRubyMethod;
 import org.jruby.anno.JRubyClass;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
@@ -51,12 +52,11 @@ import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.internal.runtime.methods.CallConfiguration;
 import org.jruby.internal.runtime.methods.DynamicMethod;
-import org.jruby.javasupport.util.RuntimeHelpers;
 import org.jruby.runtime.ClassIndex;
 
 import static org.jruby.runtime.Visibility.*;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.Helpers.invokedynamic;
 import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
 
 /**
@@ -78,7 +78,7 @@ public class RubyStruct extends RubyObject {
 
         values = new IRubyObject[size];
 
-        RuntimeHelpers.fillNil(values, runtime);
+        Helpers.fillNil(values, runtime);
     }
 
     public static RubyClass createStructClass(Ruby runtime) {
@@ -366,7 +366,7 @@ public class RubyStruct extends RubyObject {
         checkSize(args.length);
 
         System.arraycopy(args, 0, values, 0, args.length);
-        RuntimeHelpers.fillNil(values, args.length, values.length, context.runtime);
+        Helpers.fillNil(values, args.length, values.length, context.runtime);
 
         return context.nil;
     }
@@ -406,7 +406,7 @@ public class RubyStruct extends RubyObject {
             values[0] = arg0;
         }
         if (provided < values.length) {
-            RuntimeHelpers.fillNil(values, provided, values.length, context.runtime);
+            Helpers.fillNil(values, provided, values.length, context.runtime);
         }
 
         return getRuntime().getNil();
@@ -537,25 +537,32 @@ public class RubyStruct extends RubyObject {
     /** inspect_struct
     *
     */
-    private IRubyObject inspectStruct(final ThreadContext context) {    
+    private IRubyObject inspectStruct(final ThreadContext context) {
         RubyArray member = (RubyArray) getInternalVariable(classOf(), "__member__");
 
         assert !member.isNil() : "uninitialized struct";
 
         ByteList buffer = new ByteList("#<struct ".getBytes());
-        buffer.append(getMetaClass().getRealClass().getRealClass().getName().getBytes());
-        buffer.append(' ');
+
+        if (is1_8() || getMetaClass().getRealClass().getBaseName() != null) {
+            buffer.append(getMetaClass().getRealClass().getRealClass().getName().getBytes());
+            buffer.append(' ');
+        }
 
         for (int i = 0,k=member.getLength(); i < k; i++) {
             if (i > 0) buffer.append(',').append(' ');
-            // FIXME: MRI has special case for constants here 
+            // FIXME: MRI has special case for constants here
             buffer.append(RubyString.objAsString(context, member.eltInternal(i)).getByteList());
             buffer.append('=');
             buffer.append(inspect(context, values[i]).getByteList());
         }
 
         buffer.append('>');
-        return getRuntime().newString(buffer); // OBJ_INFECT        
+        return getRuntime().newString(buffer); // OBJ_INFECT
+    }
+
+    private boolean is1_8() {
+        return !(getRuntime().is1_9() || getRuntime().is2_0());
     }
 
     @JRubyMethod(name = {"inspect", "to_s"})
@@ -573,6 +580,19 @@ public class RubyStruct extends RubyObject {
     @JRubyMethod(name = {"to_a", "values"})
     public RubyArray to_a() {
         return getRuntime().newArray(values);
+    }
+    
+    @JRubyMethod(compat = CompatVersion.RUBY2_0)
+    public RubyHash to_h(ThreadContext context) {
+        Ruby runtime = context.runtime;
+        RubyHash hash = RubyHash.newHash(runtime);
+        RubyArray members = (RubyArray)getType().getInternalVariable("__member__");
+        
+        for (int i = 0; i < values.length; i++) {
+            hash.op_aset(context, members.eltOk(i), values[i]);
+        }
+        
+        return hash;
     }
 
     @JRubyMethod(name = {"size", "length"} )
@@ -713,7 +733,7 @@ public class RubyStruct extends RubyObject {
             values = IRubyObject.NULL_ARRAY;
         } else {
             values = new IRubyObject[len];
-            RuntimeHelpers.fillNil(values, runtime);
+            Helpers.fillNil(values, runtime);
         }
 
         // FIXME: This could all be more efficient, but it's how struct works
@@ -725,10 +745,10 @@ public class RubyStruct extends RubyObject {
             result = newStruct(rbClass, values, Block.NULL_BLOCK);
         }
         input.registerLinkTarget(result);
-        
-        for(int i = 0; i < len; i++) {
+
+        for (int i = 0; i < len; i++) {
             IRubyObject slot = input.unmarshalObject(false);
-            if(!mem.eltInternal(i).toString().equals(slot.toString())) {
+            if (!mem.eltInternal(i).toString().equals(slot.toString())) {
                 throw runtime.newTypeError("struct " + rbClass.getName() + " not compatible (:" + slot + " for :" + mem.eltInternal(i) + ")");
             }
             result.aset(runtime.newFixnum(i), input.unmarshalObject());

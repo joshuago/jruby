@@ -9,15 +9,15 @@ import org.jruby.runtime.builtin.IRubyObject;
 import static org.jruby.util.CodegenUtils.*;
 
 public class ClassBodyCompiler extends RootScopedBodyCompiler {
-    public ClassBodyCompiler(StandardASMCompiler scriptCompiler, String friendlyName, String rubyName, ASTInspector inspector, StaticScope scope) {
-        super(scriptCompiler, friendlyName, rubyName, inspector, scope);
+    public ClassBodyCompiler(StandardASMCompiler scriptCompiler, String friendlyName, String rubyName, ASTInspector inspector, StaticScope scope, int scopeIndex) {
+        super(scriptCompiler, friendlyName, rubyName, inspector, scope, scopeIndex);
     }
 
     @Override
     public void beginMethod(CompilerCallback bodyPrep, StaticScope scope) {
         method.start();
 
-        variableCompiler.beginClass(bodyPrep, scope);
+        variableCompiler.beginClass(scope);
 
         // visit a label to start scoping for local vars in this method
         method.label(scopeStart);

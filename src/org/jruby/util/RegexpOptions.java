@@ -163,6 +163,9 @@ public class RegexpOptions implements Cloneable {
     /**
      * This int value can be used by compiler or any place where we want
      * an integer representation of the state of this object.
+     * 
+     * Note: This is for full representation of state in the JIT.  It is not
+     * to be confused with state of marshalled regexp data.
      */
     public int toEmbeddedOptions() {
         int options = toJoniOptions();
@@ -190,6 +193,19 @@ public class RegexpOptions implements Cloneable {
         return options;
     }
     
+    /**
+     * This int value is used by Regex#options
+     */
+    public int toOptions() {
+        int options = 0;
+        if (multiline) options |= RubyRegexp.RE_OPTION_MULTILINE;
+        if (ignorecase) options |= RubyRegexp.RE_OPTION_IGNORECASE;
+        if (extended) options |= RubyRegexp.RE_OPTION_EXTENDED;
+        if (fixed) options |= RubyRegexp.RE_FIXED;
+        if (encodingNone) options |= RubyRegexp.ARG_ENCODING_NONE;
+        return options;
+    }
+
     public static RegexpOptions fromEmbeddedOptions(int embeddedOptions) {
         RegexpOptions options = fromJoniOptions(embeddedOptions);
 
@@ -207,6 +223,7 @@ public class RegexpOptions implements Cloneable {
         options.setMultiline((joniOptions & RubyRegexp.RE_OPTION_MULTILINE) != 0);
         options.setIgnorecase((joniOptions & RubyRegexp.RE_OPTION_IGNORECASE) != 0);
         options.setExtended((joniOptions & RubyRegexp.RE_OPTION_EXTENDED) != 0);
+        options.setFixed((joniOptions & RubyRegexp.RE_FIXED) != 0);
         options.setOnce((joniOptions & RubyRegexp.RE_OPTION_ONCE) != 0);
 
         return options;
@@ -249,14 +266,19 @@ public class RegexpOptions implements Cloneable {
         // sake of equality we ignore those two fields since those flags do
         // not affect Ruby equality.
         RegexpOptions o = (RegexpOptions)other;
-        return o.encodingNone == encodingNone &&
-               o.extended == extended &&
-               o.fixed == fixed &&
-               o.ignorecase == ignorecase &&
-               o.java == java &&
-               o.kcode == kcode &&
-               o.kcodeDefault == kcodeDefault &&
-               o.multiline == multiline; 
+        boolean equality = o.extended == extended &&
+                           o.fixed == fixed &&
+                           o.ignorecase == ignorecase &&
+                           o.java == java &&
+                           o.multiline == multiline;
+        if(encodingNone || o.encodingNone) {
+            return equality && o.kcode == kcode;
+        } else {
+            return equality &&
+                    o.encodingNone == encodingNone &&
+                    o.kcode == kcode &&
+                    o.kcodeDefault == kcodeDefault;
+        }
     }
     
     @Override

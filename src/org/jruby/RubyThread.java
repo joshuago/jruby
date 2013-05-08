@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -24,11 +24,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -76,6 +76,10 @@ import org.jruby.util.log.LoggerFactory;
 import org.jruby.util.unsafe.UnsafeFactory;
 
 import static org.jruby.CompatVersion.*;
+import org.jruby.runtime.backtrace.BacktraceData;
+import org.jruby.runtime.backtrace.RubyStackTraceElement;
+import org.jruby.runtime.backtrace.TraceType;
+import org.jruby.util.ByteList;
 
 /**
  * Implementation of Ruby's <code>Thread</code> class.  Each Ruby thread is
@@ -127,7 +131,15 @@ public class RubyThread extends RubyObject implements ExecutionContext {
     private static final boolean DEBUG = false;
 
     /** Thread statuses */
-    public static enum Status { RUN, SLEEP, ABORTING, DEAD }
+    public static enum Status { 
+        RUN, SLEEP, ABORTING, DEAD;
+        
+        public final ByteList bytes;
+        
+        Status() {
+            bytes = new ByteList(toString().toLowerCase().getBytes(RubyEncoding.UTF8));
+        }
+    }
 
     /** Current status in an atomic reference */
     private final AtomicReference<Status> status = new AtomicReference<Status>(Status.RUN);
@@ -277,7 +289,71 @@ public class RubyThread extends RubyObject implements ExecutionContext {
         
         threadClass.setMarshal(ObjectMarshal.NOT_MARSHALABLE_MARSHAL);
         
+        if (runtime.is2_0()) {
+            // set up Thread::Backtrace::Location class
+            RubyClass backtrace = threadClass.defineClassUnder("Backtrace", runtime.getObject(), ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
+            RubyClass location = backtrace.defineClassUnder("Location", runtime.getObject(), ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
+            
+            location.defineAnnotatedMethods(Location.class);
+            
+            runtime.setLocation(location);
+        }
+        
         return threadClass;
+    }
+    
+    public static class Location extends RubyObject {
+        public Location(Ruby runtime, RubyClass klass, RubyStackTraceElement element) {
+            super(runtime, klass);
+            this.element = element;
+        }
+        
+        @JRubyMethod
+        public IRubyObject absolute_path(ThreadContext context) {
+            return context.runtime.newString(element.getFileName());
+        }
+        
+        @JRubyMethod
+        public IRubyObject base_label(ThreadContext context) {
+            return context.runtime.newString(element.getMethodName());
+        }
+        
+        @JRubyMethod
+        public IRubyObject inspect(ThreadContext context) {
+            return to_s(context).inspect();
+        }
+        
+        @JRubyMethod
+        public IRubyObject label(ThreadContext context) {
+            return context.runtime.newString(element.getMethodName());
+        }
+        
+        @JRubyMethod
+        public IRubyObject lineno(ThreadContext context) {
+            return context.runtime.newFixnum(element.getLineNumber());
+        }
+        
+        @JRubyMethod
+        public IRubyObject path(ThreadContext context) {
+            return context.runtime.newString(element.getFileName());
+        }
+        
+        @JRubyMethod
+        public IRubyObject to_s(ThreadContext context) {
+            return context.runtime.newString(element.mriStyleString());
+        }
+
+        public static IRubyObject newLocationArray(Ruby runtime, RubyStackTraceElement[] elements) {
+            RubyArray ary = runtime.newArray(elements.length);
+
+            for (RubyStackTraceElement element : elements) {
+                ary.append(new RubyThread.Location(runtime, runtime.getLocation(), element));
+            }
+
+            return ary;
+        }
+        
+        private final RubyStackTraceElement element;
     }
 
     /**
@@ -345,6 +421,7 @@ public class RubyThread extends RubyObject implements ExecutionContext {
     public IRubyObject initialize(ThreadContext context, IRubyObject[] args, Block block) {
         Ruby runtime = getRuntime();
         if (!block.isGiven()) throw runtime.newThreadError("must be called with a block");
+        if (threadImpl != null) throw runtime.newThreadError("already initialized thread");
 
         try {
             RubyRunnable runnable = new RubyRunnable(this, args, context.getFrames(0), block);
@@ -873,15 +950,21 @@ public class RubyThread extends RubyObject implements ExecutionContext {
         return result;
     }
 
+    public IRubyObject status() {
+        return status(getRuntime());
+    }
     @JRubyMethod(name = "status")
-    public synchronized IRubyObject status() {
+    public IRubyObject status(ThreadContext context) {
+        return status(context.runtime);
+    }
+    
+    private synchronized IRubyObject status(Ruby runtime) {
         if (threadImpl.isAlive()) {
-            // TODO: no java stringity
-            return getRuntime().newString(status.toString().toLowerCase());
+            return RubyString.newStringShared(runtime, status.get().bytes);
         } else if (exitingException != null) {
-            return getRuntime().getNil();
+            return runtime.getNil();
         } else {
-            return getRuntime().getFalse();
+            return runtime.getFalse();
         }
     }
 
@@ -970,7 +1053,25 @@ public class RubyThread extends RubyObject implements ExecutionContext {
 
     @JRubyMethod(compat = CompatVersion.RUBY1_9)
     public IRubyObject backtrace(ThreadContext context) {
-        return getContext().createCallerBacktrace(context.runtime, 0);
+        return getContext().createCallerBacktrace(0, getNativeThread().getStackTrace());
+    }
+
+    @JRubyMethod(name = "backtrace", optional = 2, compat = CompatVersion.RUBY2_0)
+    public IRubyObject backtrace20(ThreadContext context, IRubyObject[] args) {
+        Ruby runtime = context.runtime;
+        Integer[] ll = RubyKernel.levelAndLengthFromArgs(runtime, args, 0);
+        Integer level = ll[0], length = ll[1];
+        
+        return getContext().createCallerBacktrace(level, length, getNativeThread().getStackTrace());
+    }
+    
+    @JRubyMethod(optional = 2, compat = CompatVersion.RUBY2_0)
+    public IRubyObject backtrace_locations(ThreadContext context, IRubyObject[] args) {
+        Ruby runtime = context.runtime;
+        Integer[] ll = RubyKernel.levelAndLengthFromArgs(runtime, args, 0);
+        Integer level = ll[0], length = ll[1];
+        
+        return context.createCallerLocations(level, length, getNativeThread().getStackTrace());
     }
 
     public StackTraceElement[] javaBacktrace() {
@@ -998,9 +1099,8 @@ public class RubyThread extends RubyObject implements ExecutionContext {
 
             if (!runtime.is1_9()) {
                 runtime.printError(rubyException);
-
-                systemExit = RubySystemExit.newInstance(runtime, 1);
-                systemExit.message = rubyException.message;
+                String message =  rubyException.message.convertToString().toString();
+                systemExit = RubySystemExit.newInstance(runtime, 1, message);
                 systemExit.set_backtrace(rubyException.backtrace());
             } else {
                 systemExit = rubyException;

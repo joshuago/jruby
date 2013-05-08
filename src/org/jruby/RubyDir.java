@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -23,11 +23,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -385,6 +385,7 @@ public class RubyDir extends RubyObject {
             throw runtime.newErrnoENOENTError("No such directory: " + path);
         }
 
+        if (path.startsWith("jar:")) path = path.substring(4);
         if (path.startsWith("file:")) return entriesIntoAJarFile(runtime, path);
 
         return entriesIntoADirectory(runtime, path);
@@ -406,10 +407,13 @@ public class RubyDir extends RubyObject {
           return entriesIntoADirectory(runtime, path.substring(5));
         }
         if (bang == file.length() - 1) {
-            return new ArrayList<String>();
+            file = file + "/";
         }
         String jar = file.substring(0, bang);
         String after = file.substring(bang + 2);
+        if (after.length() > 0 && after.charAt(after.length() - 1) != '/') {
+            after = after + "/";
+        }
         JarFile jf;
         try {
             jf = new JarFile(jar);
@@ -421,8 +425,15 @@ public class RubyDir extends RubyObject {
         Enumeration<? extends ZipEntry> entries = jf.entries();
         while (entries.hasMoreElements()) {
             String zipEntry = entries.nextElement().getName();
-            if (zipEntry.matches(after + "/" + "[^/]+")) {
-                fileList.add(zipEntry.substring(after.length() + 1));
+            if (zipEntry.matches(after + "[^/]+(/.*)?")) {
+                int end_index = zipEntry.indexOf('/', after.length());
+                if (end_index == -1) {
+                    end_index = zipEntry.length();
+                }
+                String entry_str = zipEntry.substring(after.length(), end_index);
+                if (!fileList.contains(entry_str)) {
+                    fileList.add(entry_str);
+                }
             }
         }
 
@@ -554,7 +565,7 @@ public class RubyDir extends RubyObject {
      */
     @JRubyMethod(name = "home", optional = 1, meta = true, compat = RUBY1_9)
     public static IRubyObject home(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
-        if (args.length > 0) return getHomeDirectoryPath(context, args[0].toString());
+        if (args.length > 0 && !args[0].isNil()) return getHomeDirectoryPath(context, args[0].toString());
 
         return getHomeDirectoryPath(context);
     }
@@ -579,6 +590,21 @@ public class RubyDir extends RubyObject {
 
     private static IRubyObject mkdirCommon(Ruby runtime, String path, IRubyObject[] args) {
         File newDir = getDir(runtime, path, false);
+        
+        
+        String name = path.replace('\\', '/');
+
+        boolean startsWithDriveLetterOnWindows = RubyFile.startsWithDriveLetterOnWindows(name);
+        
+        // don't attempt to create a dir for drive letters
+        if (startsWithDriveLetterOnWindows) {
+            // path is just drive letter plus :
+            if (path.length() == 2) return RubyFixnum.zero(runtime);
+            // path is drive letter plus : plus leading or trailing /
+            if (path.length() == 3 && (path.charAt(0) == '/' || path.charAt(2) == '/')) return RubyFixnum.zero(runtime);
+            // path is drive letter plus : plus leading and trailing /
+            if (path.length() == 4 && (path.charAt(0) == '/' && path.charAt(3) == '/')) return RubyFixnum.zero(runtime);
+        }
 
         if (File.separatorChar == '\\') newDir = new File(newDir.getPath());
 
@@ -717,9 +743,13 @@ public class RubyDir extends RubyObject {
 
     @JRubyMethod(name = {"exists?", "exist?"}, meta = true, compat = RUBY1_9)
     public static IRubyObject exist(ThreadContext context, IRubyObject recv, IRubyObject arg) {
+        // Capture previous exception if any.
+        IRubyObject exception = context.runtime.getGlobalVariables().get("$!");
         try {
             return context.runtime.newFileStat(RubyFile.get_path(context, arg).asJavaString(), false).directory_p();
         } catch (Exception e) {
+            // Restore $!
+            context.runtime.getGlobalVariables().set("$!", exception);
             return context.runtime.newBoolean(false);
         }
     }

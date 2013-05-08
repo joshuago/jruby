@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -39,8 +39,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.lang.NumberFormatException;
-import java.math.BigDecimal;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -705,6 +703,7 @@ public class RubyInstanceConfig {
     }
     
     public void setHasInlineScript(boolean hasInlineScript) {
+        this.hasScriptArgv = true;
         this.hasInlineScript = hasInlineScript;
     }
     
@@ -769,6 +768,7 @@ public class RubyInstanceConfig {
     }
 
     public void setScriptFileName(String scriptFileName) {
+        this.hasScriptArgv = true;
         this.scriptFileName = scriptFileName;
     }
 
@@ -874,7 +874,7 @@ public class RubyInstanceConfig {
     }
     
     public boolean getShouldRunInterpreter() {
-        return shouldRunInterpreter;
+        return shouldRunInterpreter && (hasScriptArgv || !showVersion);
     }
 
     @Deprecated
@@ -1043,6 +1043,14 @@ public class RubyInstanceConfig {
         this.traceType = traceType;
     }
 
+    public void setHasScriptArgv(boolean argvRemains) {
+        hasScriptArgv = argvRemains;
+    }
+    
+    public boolean getHasScriptArgv() {
+        return hasScriptArgv;
+    }
+    
     /**
      * Whether to mask .java lines in the Ruby backtrace, as MRI does for C calls.
      *
@@ -1186,6 +1194,20 @@ public class RubyInstanceConfig {
         return profileMaxMethods;
     }
     
+    /**
+     * Set whether Kernel#gsub should be defined
+     */
+    public void setKernelGsubDefined(boolean setDefineKernelGsub) {
+        this.kernelGsubDefined = setDefineKernelGsub;
+    }
+    
+    /**
+     * Get Kernel#gsub is defined or not
+     */
+    public boolean getKernelGsubDefined() {
+        return kernelGsubDefined;
+    }
+    
     ////////////////////////////////////////////////////////////////////////////
     // Configuration fields.
     ////////////////////////////////////////////////////////////////////////////
@@ -1269,6 +1291,8 @@ public class RubyInstanceConfig {
     private boolean hardExit = false;
     private boolean disableGems = false;
     private boolean updateNativeENVEnabled = true;
+    private boolean kernelGsubDefined;
+    private boolean hasScriptArgv = false;
 
     private String jrubyHome;
     
@@ -1471,6 +1495,13 @@ public class RubyInstanceConfig {
     public static final int POOL_TTL = Options.THREADPOOL_TTL.load();
 
     /**
+     * Maximum timeout thread pool size (integer, default # of cores).
+     *
+     * Set with the <tt>jruby.timeout.thread.pool.max</tt> system property.
+     */
+    public static final int TIMEOUT_POOL_MAX = Options.TIMEOUT_THREADPOOL_MAX.load();
+
+    /**
      * Enable use of the native Java version of the 'net/protocol' library.
      *
      * Set with the <tt>jruby.thread.pool.max</tt> system property.
@@ -1647,7 +1678,7 @@ public class RubyInstanceConfig {
     ////////////////////////////////////////////////////////////////////////////
     
     private static int initGlobalJavaVersion() {
-        String specVersion = specVersion = Options.BYTECODE_VERSION.load();
+        String specVersion = Options.BYTECODE_VERSION.load();
         
         // stack map calculation is failing for some compilation scenarios, so
         // forcing both 1.5 and 1.6 to use 1.5 bytecode for the moment.

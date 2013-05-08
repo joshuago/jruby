@@ -14,7 +14,7 @@ import org.jruby.RubySymbol;
 import org.jruby.internal.runtime.methods.CompiledIRMethod;
 import org.jruby.internal.runtime.methods.DynamicMethod;
 import org.jruby.ir.operands.UndefinedValue;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.CallType;
@@ -39,6 +39,7 @@ import java.lang.invoke.SwitchPoint;
 
 import static java.lang.invoke.MethodHandles.*;
 import static java.lang.invoke.MethodType.methodType;
+import org.jruby.RubyFloat;
 import static org.jruby.runtime.invokedynamic.InvokeDynamicSupport.*;
 import static org.jruby.util.CodegenUtils.p;
 import static org.jruby.util.CodegenUtils.sig;
@@ -655,7 +656,7 @@ public class Bootstrap {
         RubyClass.VariableAccessor accessor = self.getMetaClass().getRealClass().getVariableAccessorForRead(site.name);
 
         // produce nil if the variable has not been initialize
-        MethodHandle nullToNil = findStatic(RuntimeHelpers.class, "nullToNil", methodType(IRubyObject.class, IRubyObject.class, IRubyObject.class));
+        MethodHandle nullToNil = findStatic(Helpers.class, "nullToNil", methodType(IRubyObject.class, IRubyObject.class, IRubyObject.class));
         nullToNil = insertArguments(nullToNil, 1, self.getRuntime().getNil());
         nullToNil = explicitCastArguments(nullToNil, methodType(IRubyObject.class, Object.class));
 
@@ -766,7 +767,7 @@ public class Bootstrap {
     public static IRubyObject searchConst(MutableCallSite site, String constName, ThreadContext context, StaticScope staticScope) throws Throwable {
         Ruby runtime = context.runtime;
         SwitchPoint switchPoint = (SwitchPoint)runtime.getConstantInvalidator().getData();
-        IRubyObject value = staticScope.getConstant(runtime, constName, runtime.getObject());
+        IRubyObject value = staticScope.getConstant(constName);
 
         if (value == null) {
             return staticScope.getModule().callMethod(context, "const_missing", runtime.fastNewSymbol(constName));
@@ -871,5 +872,33 @@ public class Bootstrap {
                 .constant(fixnum)
         );
         return fixnum;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+    // Float binding
+
+    public static Handle flote() {
+        return new Handle(Opcodes.H_INVOKESTATIC, p(Bootstrap.class), "flote", sig(CallSite.class, Lookup.class, String.class, MethodType.class, double.class));
+    }
+
+    public static CallSite flote(Lookup lookup, String name, MethodType type, double value) {
+        MutableCallSite site = new MutableCallSite(type);
+        MethodHandle handle = Binder
+                .from(IRubyObject.class, ThreadContext.class)
+                .insert(0, site, value)
+                .cast(IRubyObject.class, MutableCallSite.class, double.class, ThreadContext.class)
+                .invokeStaticQuiet(MethodHandles.lookup(), Bootstrap.class, "flote");
+        site.setTarget(handle);
+        return site;
+    }
+
+    public static IRubyObject flote(MutableCallSite site, double value, ThreadContext context) {
+        RubyFloat flote = RubyFloat.newFloat(context.runtime, value);
+        site.setTarget(Binder
+                .from(IRubyObject.class, ThreadContext.class)
+                .drop(0)
+                .constant(flote)
+        );
+        return flote;
     }
 }

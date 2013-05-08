@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -17,11 +17,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby;
 
@@ -62,6 +62,7 @@ import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings;
 import org.jruby.runtime.Arity;
+import org.jruby.runtime.Block;
 import org.jruby.runtime.ClassIndex;
 import org.jruby.runtime.DynamicScope;
 import org.jruby.runtime.ObjectAllocator;
@@ -71,7 +72,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
 import org.jruby.util.Numeric;
 
-import static org.jruby.javasupport.util.RuntimeHelpers.invokedynamic;
+import static org.jruby.runtime.Helpers.invokedynamic;
 import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
 
 /**
@@ -382,10 +383,6 @@ public class RubyRational extends RubyNumeric {
             if (k_exact_p(a2Complex.getImage()) && f_zero_p(context, a2Complex.getImage())) a2 = a2Complex.getReal();
         }
         
-        DynamicScope scope = context.getCurrentScope();
-        IRubyObject backref = scope.getBackRef(context.runtime);
-        if (backref instanceof RubyMatchData) ((RubyMatchData)backref).use();
-        
         if (a1 instanceof RubyFloat) {
             a1 = f_to_r(context, a1);
         } else if (a1 instanceof RubyString) {
@@ -401,8 +398,6 @@ public class RubyRational extends RubyNumeric {
         } else if (a2 instanceof RubyString) {
             a2 = str_to_r_strict(context, a2);
         }
-        
-        scope.setBackRef(backref);
 
         if (a1 instanceof RubyRational) {
             if (a2.isNil() || (k_exact_p(a2) && f_one_p(context, a2))) return a1;
@@ -974,7 +969,7 @@ public class RubyRational extends RubyNumeric {
      */
     @JRubyMethod(name = "to_s")
     public IRubyObject to_s(ThreadContext context) {
-        RubyString str = context.runtime.newString();
+        RubyString str = RubyString.newEmptyString(context.getRuntime());
         str.append(f_to_s(context, num));
         str.cat((byte)'/');
         str.append(f_to_s(context, den));
@@ -986,7 +981,7 @@ public class RubyRational extends RubyNumeric {
      */
     @JRubyMethod(name = "inspect")
     public IRubyObject inspect(ThreadContext context) {
-        RubyString str = context.runtime.newString();
+        RubyString str = RubyString.newEmptyString(context.getRuntime());
         str.cat((byte)'(');
         str.append(f_inspect(context, num));
         str.cat((byte)'/');
@@ -1028,19 +1023,20 @@ public class RubyRational extends RubyNumeric {
         Ruby runtime = context.runtime;
         if (bytes.getRealSize() == 0) return runtime.newArray(runtime.getNil(), recv);
 
-        IRubyObject m = RubyRegexp.newDummyRegexp(runtime, Numeric.RationalPatterns.rat_pat).callMethod(context, "match", s);
+        IRubyObject m = RubyRegexp.newDummyRegexp(runtime, Numeric.RationalPatterns.rat_pat).match_m19(context, s, false, Block.NULL_BLOCK);
         
         if (!m.isNil()) {
-            IRubyObject si = m.callMethod(context, "[]", RubyFixnum.one(runtime));
-            IRubyObject nu = m.callMethod(context, "[]", RubyFixnum.two(runtime));
-            IRubyObject de = m.callMethod(context, "[]", RubyFixnum.three(runtime));
-            IRubyObject re = m.callMethod(context, "post_match");
+            RubyMatchData match = (RubyMatchData)m;
+            IRubyObject si = match.op_aref19(RubyFixnum.one(runtime));
+            RubyString nu = (RubyString)match.op_aref19(RubyFixnum.two(runtime));
+            IRubyObject de = match.op_aref19(RubyFixnum.three(runtime));
+            IRubyObject re = match.post_match(context);
             
-            RubyArray a = nu.callMethod(context, "split", RubyRegexp.newDummyRegexp(runtime, Numeric.RationalPatterns.an_e_pat)).convertToArray();
-            IRubyObject ifp = a.eltInternal(0);
+            RubyArray a = nu.split19(context, RubyRegexp.newDummyRegexp(runtime, Numeric.RationalPatterns.an_e_pat), false).convertToArray();
+            RubyString ifp = (RubyString)a.eltInternal(0);
             IRubyObject exp = a.size() != 2 ? runtime.getNil() : a.eltInternal(1);
             
-            a = ifp.callMethod(context, "split", RubyRegexp.newDummyRegexp(runtime, Numeric.RationalPatterns.a_dot_pat)).convertToArray();
+            a = ifp.split19(context, RubyRegexp.newDummyRegexp(runtime, Numeric.RationalPatterns.a_dot_pat), false).convertToArray();
             IRubyObject ip = a.eltInternal(0);
             IRubyObject fp = a.size() != 2 ? runtime.getNil() : a.eltInternal(1);
             

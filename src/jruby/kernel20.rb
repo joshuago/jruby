@@ -7,3 +7,5 @@
 # These are loads so they don't pollute LOADED_FEATURES
 load 'jruby/kernel19.rb'
 load 'jruby/kernel20/enumerable.rb'
+load 'jruby/kernel20/range.rb'
+load 'jruby/kernel20/load_error.rb'

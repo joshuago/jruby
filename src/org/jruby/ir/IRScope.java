@@ -11,10 +11,13 @@ import java.util.TreeSet;
 import org.jruby.RubyModule;
 import org.jruby.exceptions.Unrescuable;
 import org.jruby.ir.dataflow.DataFlowProblem;
+import org.jruby.ir.instructions.BreakInstr;
 import org.jruby.ir.instructions.CallBase;
 import org.jruby.ir.instructions.CopyInstr;
+import org.jruby.ir.instructions.DefineMetaClassInstr;
 import org.jruby.ir.instructions.GetGlobalVariableInstr;
 import org.jruby.ir.instructions.Instr;
+import org.jruby.ir.instructions.NonlocalReturnInstr;
 import org.jruby.ir.instructions.PutGlobalVarInstr;
 import org.jruby.ir.instructions.ReceiveSelfInstr;
 import org.jruby.ir.instructions.ResultInstr;
@@ -155,6 +158,9 @@ public abstract class IRScope {
     LocalVariableAllocator localVars;
     LocalVariableAllocator evalScopeVars;
 
+    /** Have scope flags been computed? */
+    private boolean flagsComputed;
+
     /* *****************************************************************************************************
      * Does this execution scope (applicable only to methods) receive a block and use it in such a way that
      * all of the caller's local variables need to be materialized into a heap binding?
@@ -208,6 +214,18 @@ public abstract class IRScope {
     /** Does this scope call any eval */
     private boolean usesEval;
 
+    /** Does this scope have a break instr? */
+    protected boolean hasBreakInstrs;
+
+    /** Can this scope receive breaks */
+    protected boolean canReceiveBreaks;
+
+    /** Does this scope have a non-local return instr? */
+    protected boolean hasNonlocalReturns;
+
+    /** Can this scope receive a non-local return? */
+    public boolean canReceiveNonlocalReturns;
+
     /** Since backref ($~) and lastline ($_) vars are allocated space on the dynamic scope,
      * this is an useful flag to compute. */
     private boolean usesBackrefOrLastline;
@@ -252,8 +270,14 @@ public abstract class IRScope {
         this.cfg = null;
         this.linearizedInstrArray = null;
         this.linearizedBBList = null;
+
+        this.flagsComputed = s.flagsComputed;
         this.canModifyCode = s.canModifyCode;
         this.canCaptureCallersBinding = s.canCaptureCallersBinding;
+        this.hasBreakInstrs = s.hasBreakInstrs;
+        this.hasNonlocalReturns = s.hasNonlocalReturns;
+        this.canReceiveBreaks = s.canReceiveBreaks;
+        this.canReceiveNonlocalReturns = s.canReceiveNonlocalReturns;
         this.bindingHasEscaped = s.bindingHasEscaped;
         this.usesEval = s.usesEval;
         this.usesBackrefOrLastline = s.usesBackrefOrLastline;
@@ -287,6 +311,12 @@ public abstract class IRScope {
         this.linearizedBBList = null;
         this.hasLoops = false;
         this.hasUnusedImplicitBlockArg = false;
+
+        this.flagsComputed = false;
+        this.hasBreakInstrs = false;
+        this.hasNonlocalReturns = false;
+        this.canReceiveBreaks = false;
+        this.canReceiveNonlocalReturns = false;
 
         // These flags are true by default!
         this.canModifyCode = true;
@@ -328,13 +358,23 @@ public abstract class IRScope {
     public void addClosure(IRClosure c) {
         nestedClosures.add(c);
     }
-    
+
     public Instr getLastInstr() {
         return instrList.get(instrList.size() - 1);
     }
-    
+
+    public void addInstrAtBeginning(Instr i) {
+        instrList.add(0, i);
+    }
+
     public void addInstr(Instr i) {
+        // SSS FIXME: If more instructions set these flags, there may be
+        // a better way to do this by encoding flags in its own object
+        // and letting every instruction update it.
         if (i instanceof ThreadPollInstr) threadPollInstrsCount++;
+        else if (i instanceof BreakInstr) this.hasBreakInstrs = true;
+        else if (i instanceof NonlocalReturnInstr) this.hasNonlocalReturns = true;
+        else if (i instanceof DefineMetaClassInstr) this.canReceiveNonlocalReturns = true;
         instrList.add(i);
     }
 
@@ -507,6 +547,20 @@ public abstract class IRScope {
         return canCaptureCallersBinding;
     }
 
+    public boolean canReceiveNonlocalReturns() {
+        if (this.canReceiveNonlocalReturns) {
+            return true;
+        }
+
+        boolean canReceiveNonlocalReturns = false;
+        for (IRClosure cl : getClosures()) {
+            if (cl.hasNonlocalReturns || cl.canReceiveNonlocalReturns()) {
+                canReceiveNonlocalReturns = true;
+            }
+        }
+        return canReceiveNonlocalReturns;
+    }
+
     public CFG buildCFG() {
         cfg = new CFG(this);
         cfg.build(instrList);
@@ -583,7 +637,7 @@ public abstract class IRScope {
         // SSS FIXME: Why is this again?  Document this weirdness!
         // Forcibly clear out the shared eval-scope variable allocator each time this method executes
         initEvalScopeVariableAllocator(true); 
-        
+
         // SSS FIXME: We should configure different optimization levels
         // and run different kinds of analysis depending on time budget.  Accordingly, we need to set
         // IR levels/states (basic, optimized, etc.) and the
@@ -597,7 +651,15 @@ public abstract class IRScope {
     }
 
     /** Run any necessary passes to get the IR ready for interpretation */
-    public synchronized Instr[] prepareForInterpretation() {
+    public synchronized Instr[] prepareForInterpretation(boolean isLambda) {
+        if (isLambda) {
+            // Add a global ensure block to catch uncaught breaks
+            // and throw a LocalJumpError.
+            if (((IRClosure)this).addGEBForUncaughtBreaks()) {
+                this.relinearizeCFG = true;
+            }
+        }
+
         checkRelinearization();
 
         if (linearizedInstrArray != null) return linearizedInstrArray;
@@ -615,6 +677,17 @@ public abstract class IRScope {
         // Build CFG and run compiler passes, if necessary
         if (getCFG() == null) runCompilerPasses();
 
+        // Add this always since we dont re-JIT a previously
+        // JIT-ted closure.  But, check if there are other
+        // smarts available to us and eliminate adding this
+        // code to every closure there is.
+        //
+        // Add a global ensure block to catch uncaught breaks
+        // and throw a LocalJumpError.
+        if (this instanceof IRClosure && ((IRClosure)this).addGEBForUncaughtBreaks()) {
+            this.relinearizeCFG = true;
+        }
+
         try {
             buildLinearization(); // FIXME: compiler passes should have done this
             depends(linearization());
@@ -629,12 +702,10 @@ public abstract class IRScope {
         // Set up IPCs
         // FIXME: Would be nice to collapse duplicate labels; for now, using Label[]
         HashMap<Integer, Label[]> ipcLabelMap = new HashMap<Integer, Label[]>();
-        HashMap<Label, Integer>   labelIPCMap = new HashMap<Label, Integer>();
         List<Instr> newInstrs = new ArrayList<Instr>();
         int ipc = 0;
         for (BasicBlock b : linearizedBBList) {
             Label l = b.getLabel();
-            labelIPCMap.put(l, ipc);
             ipcLabelMap.put(ipc, catLabels(ipcLabelMap.get(ipc), l));
             for (Instr i : b.getInstrs()) {
                 if (!(i instanceof ReceiveSelfInstr)) {
@@ -644,9 +715,6 @@ public abstract class IRScope {
             }
         }
 
-        // Set up label PCs
-        setupLabelPCs(labelIPCMap);
-
         return new Tuple<Instr[], Map<Integer,Label[]>>(newInstrs.toArray(new Instr[newInstrs.size()]), ipcLabelMap);
     }
 
@@ -654,29 +722,20 @@ public abstract class IRScope {
         List<Object[]> etEntries = new ArrayList<Object[]>();
         for (BasicBlock b: linearizedBBList) {
             // We need handlers for:
-            // - RaiseException (Ruby exceptions -- handled by rescues),
-            // - Unrescuable    (JRuby exceptions -- handled by ensures),
-            // - Throwable      (JRuby/Java exceptions -- handled by rescues)
-            // in that order since Throwable < Unrescuable and Throwable < RaiseException
+            // - Unrescuable    (handled by ensures),
+            // - Throwable      (handled by rescues)
+            // in that order since Throwable < Unrescuable
             BasicBlock rBB = cfg().getRescuerBBFor(b);
             BasicBlock eBB = cfg().getEnsurerBBFor(b);
             if ((eBB != null) && (rBB == eBB || rBB == null)) {
                 // 1. same rescue and ensure handler ==> just spit out one entry with a Throwable class
                 // 2. only ensure handler            ==> just spit out one entry with a Throwable class
-                //
-                // The rescue handler knows whether to unwrap or not.  But for now, the rescue handler
-                // has to process its recv_exception instruction as
-                //    e = (e instanceof RaiseException) ? unwrap(e) : e;
 
-                int start = b.getLabel().getTargetPC();
-                int end   = start + b.instrCount();
-                etEntries.add(new Object[] {start, end, eBB.getLabel().getTargetPC(), Throwable.class});
+                etEntries.add(new Object[] {b.getLabel(), eBB.getLabel(), Throwable.class});
             } else if (rBB != null) {
-                int start = b.getLabel().getTargetPC();
-                int end   = start + b.instrCount();
                 // Unrescuable comes before Throwable
-                if (eBB != null) etEntries.add(new Object[] {start, end, eBB.getLabel().getTargetPC(), Unrescuable.class});
-                etEntries.add(new Object[] {start, end, rBB.getLabel().getTargetPC(), Throwable.class});
+                if (eBB != null) etEntries.add(new Object[] {b.getLabel(), eBB.getLabel(), Unrescuable.class});
+                etEntries.add(new Object[] {b.getLabel(), rBB.getLabel(), Throwable.class});
             }
         }
 
@@ -700,32 +759,21 @@ public abstract class IRScope {
             if (op == Operation.RECV_CLOSURE) {
                 receivesClosureArg = true;
             } else if (op == Operation.ZSUPER) {
-                canCaptureCallersBinding = true;
-                usesZSuper = true;
+                this.canCaptureCallersBinding = true;
+                this.usesZSuper = true;
             } else if (i instanceof CallBase) {
                 CallBase call = (CallBase) i;
 
-                if (call.targetRequiresCallersBinding()) bindingHasEscaped = true;
-
-                Operand o = ((CallBase) i).getClosureArg(null);
-                if (o != null) {
-                    if (o instanceof WrappedIRClosure) {
-                        IRClosure cl = ((WrappedIRClosure)o).getClosure();
-                        cl.computeScopeFlags();
-                        if (cl.usesZSuper()) usesZSuper = true;
-                    }
-                    // If the closure comes from a variable, then the zsuper invocation in the
-                    // block corresponds to the scope in which it is defined. 
-                }
+                if (call.targetRequiresCallersBinding()) this.bindingHasEscaped = true;
 
                 if (call.canBeEval()) {
-                    usesEval = true;
+                    this.usesEval = true;
 
                     // If this method receives a closure arg, and this call is an eval that has more than 1 argument,
                     // it could be using the closure as a binding -- which means it could be using pretty much any
                     // variable from the caller's binding!
                     if (receivesClosureArg && (call.getCallArgs().length > 1)) {
-                        canCaptureCallersBinding = true;
+                        this.canCaptureCallersBinding = true;
                     }
                 }
             } else if (op == Operation.GET_GLOBAL_VAR) {
@@ -740,34 +788,55 @@ public abstract class IRScope {
                     gvName.equals("$LAST_MATCH_INFO") ||
                     gvName.equals("$PREMATCH") ||
                     gvName.equals("$POSTMATCH") ||
-                    gvName.equals("$LAST_PAREN_MATCH")) {
-                    usesBackrefOrLastline = true;
+                    gvName.equals("$LAST_PAREN_MATCH"))
+                {
+                    this.usesBackrefOrLastline = true;
                 }
             } else if (op == Operation.PUT_GLOBAL_VAR) {
                 GlobalVariable gv = (GlobalVariable)((PutGlobalVarInstr)i).getTarget();
                 String gvName = gv.getName();
                 if (gvName.equals("$_") || gvName.equals("$~")) usesBackrefOrLastline = true;
             } else if (op == Operation.MATCH || op == Operation.MATCH2 || op == Operation.MATCH3) {
-                usesBackrefOrLastline = true;
+                this.usesBackrefOrLastline = true;
+            } else if (op == Operation.BREAK) {
+                this.hasBreakInstrs = true;
+            } else if (i instanceof NonlocalReturnInstr) {
+                this.hasNonlocalReturns = true;
+            } else if (i instanceof DefineMetaClassInstr) {
+                // SSS: Inner-classes are defined with closures and
+                // a return in the closure can force a return from this method
+                // For now conservatively assume that a scope with inner-classes
+                // can receive non-local returns. (Alternatively, have to inspect
+                // all lexically nested scopes, not just closures in computeScopeFlags())
+                this.canReceiveNonlocalReturns = true;
             }
         }
 
         return receivesClosureArg;
     }
 
-    // SSS FIXME: This method does nothing a whole lot useful right now.
-    // hasEscapedBinding is the crucial flag and it continues to be unconditionally true.
     //
     // This can help use eliminate writes to %block that are not used since this is
     // a special local-variable, not programmer-defined local-variable
     public void computeScopeFlags() {
+        if (flagsComputed) {
+            return;
+        }
+
         // init
         canModifyCode = true;
         canCaptureCallersBinding = false;
         usesZSuper = false;
         usesEval = false;
         usesBackrefOrLastline = false;
+        // NOTE: bindingHasEscaped is the crucial flag and it effectively is
+        // unconditionally true whenever it has a call that receives a closure.
+        // See CallInstr.computeRequiresCallersBindingFlag
         bindingHasEscaped = (this instanceof IREvalScript); // for eval scopes, bindings are considered escaped ...
+        hasBreakInstrs = false;
+        hasNonlocalReturns = false;
+        canReceiveBreaks = false;
+        canReceiveNonlocalReturns = false;
 
         // recompute flags -- we could be calling this method different times
         // definitely once after ir generation and local optimizations propagates constants locally
@@ -780,6 +849,22 @@ public abstract class IRScope {
                 receivesClosureArg = computeScopeFlags(receivesClosureArg, b.getInstrs());
             }
         }
+
+        // Compute flags for nested closures (recursively) and set derived flags.
+        for (IRClosure cl : getClosures()) {
+            cl.computeScopeFlags();
+            if (cl.hasBreakInstrs || cl.canReceiveBreaks) {
+                canReceiveBreaks = true;
+            }
+            if (cl.hasNonlocalReturns || cl.canReceiveNonlocalReturns) {
+                canReceiveNonlocalReturns = true;
+            }
+            if (cl.usesZSuper()) {
+                usesZSuper = true;
+            }
+        }
+
+        flagsComputed = true;
     }
 
     public abstract String getScopeName();
@@ -1148,11 +1233,16 @@ public abstract class IRScope {
         cfg.resetState();
 
         // reset flags
+        flagsComputed = false;
         canModifyCode = true;
         canCaptureCallersBinding = true;
         bindingHasEscaped = true;
         usesEval = true;
         usesZSuper = true;
+        hasBreakInstrs = false;
+        hasNonlocalReturns = false;
+        canReceiveBreaks = false;
+        canReceiveNonlocalReturns = false;
 
         // Reset dataflow problems state
         resetDFProblemsState();

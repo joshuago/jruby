@@ -1,11 +1,11 @@
 /*
  ******************************************************************************
- * BEGIN LICENSE BLOCK *** Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * BEGIN LICENSE BLOCK *** Version: EPL 1.0/GPL 2.0/LGPL 2.1
  * 
- * The contents of this file are subject to the Common Public License Version
+ * The contents of this file are subject to the Eclipse Public License Version
  * 1.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * http://www.eclipse.org/legal/cpl-v10.html
+ * http://www.eclipse.org/legal/epl-v10.html
  * 
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
@@ -22,11 +22,11 @@
  * which case the provisions of the GPL or the LGPL are applicable instead of
  * those above. If you wish to allow use of your version of this file only under
  * the terms of either the GPL or the LGPL, and not to allow others to use your
- * version of this file under the terms of the CPL, indicate your decision by
+ * version of this file under the terms of the EPL, indicate your decision by
  * deleting the provisions above and replace them with the notice and other
  * provisions required by the GPL or the LGPL. If you do not delete the
  * provisions above, a recipient may use your version of this file under the
- * terms of any one of the CPL, the GPL or the LGPL. END LICENSE BLOCK ****
+ * terms of any one of the EPL, the GPL or the LGPL. END LICENSE BLOCK ****
  ******************************************************************************/
 
 package org.jruby.evaluator;
@@ -44,7 +44,7 @@ import org.jruby.ast.Node;
 import org.jruby.ast.util.ArgsUtil;
 import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.JumpException;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.DynamicScope;
@@ -54,7 +54,6 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.Binding;
 import org.jruby.runtime.Frame;
 import org.jruby.runtime.InterpretedBlock;
-import org.jruby.util.ByteList;
 import org.jruby.RubyInstanceConfig.CompileMode;
 import org.jruby.ir.interpreter.Interpreter;
 
@@ -109,8 +108,10 @@ public class ASTInterpreter {
     public static IRubyObject INTERPRET_BLOCK(Ruby runtime, ThreadContext context, String file, int line, Node node, String name, IRubyObject self, Block block) {
         try {
             ThreadContext.pushBacktrace(context, name, file, line);
+            blockPreTrace(runtime, context, name, self.getType());
             return node.interpret(runtime, context, self, block);
         } finally {
+            blockPostTrace(runtime, context, name, self.getType());
             ThreadContext.popBacktrace(context);
         }
     }
@@ -129,6 +130,14 @@ public class ASTInterpreter {
 
     private static void methodPostTrace(Ruby runtime, ThreadContext context, String name, RubyModule implClass) {
         if (runtime.hasEventHooks()) context.trace(RubyEvent.RETURN, name, implClass);
+    }
+
+    private static void blockPreTrace(Ruby runtime, ThreadContext context, String name, RubyModule implClass) {
+        if (runtime.hasEventHooks() && runtime.is2_0()) context.trace(RubyEvent.B_CALL, name, implClass);
+    }
+
+    private static void blockPostTrace(Ruby runtime, ThreadContext context, String name, RubyModule implClass) {
+        if (runtime.hasEventHooks() && runtime.is2_0()) context.trace(RubyEvent.B_RETURN, name, implClass);
     }
 
     @Deprecated
@@ -319,7 +328,7 @@ public class ASTInterpreter {
             proc = bodyNode.interpret(runtime, context, self, currentBlock);
         }
 
-        return RuntimeHelpers.getBlockFromBlockPassBody(proc, currentBlock);
+        return Helpers.getBlockFromBlockPassBody(proc, currentBlock);
     }
 
     private static Block getIterNodeBlock(Node blockNode, ThreadContext context, IRubyObject self) {
@@ -337,6 +346,11 @@ public class ASTInterpreter {
      * of all the classvar-related node evaluations */
     public static RubyModule getClassVariableBase(ThreadContext context, Ruby runtime) {
         StaticScope scope = context.getCurrentScope().getStaticScope();
+
+        return getClassVariableBase(runtime, scope);
+    }
+
+    public static RubyModule getClassVariableBase(Ruby runtime, StaticScope scope) {
         RubyModule rubyClass = scope.getModule();
         while (rubyClass.isSingleton() || rubyClass == runtime.getDummy()) {
             // We ran out of scopes to check
@@ -346,7 +360,7 @@ public class ASTInterpreter {
             rubyClass = scope.getModule();
             if (scope.getPreviousCRefScope() == null) {
                 runtime.getWarnings().warn(ID.CVAR_FROM_TOPLEVEL_SINGLETON_METHOD, "class variable access from toplevel singleton method");
-            }            
+            }
         }
         return rubyClass;
     }

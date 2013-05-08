@@ -69,7 +69,6 @@ STDLIB_FILES = %w[
   test
   thwait.rb
   time.rb
-  tmpdir.rb
   tracer.rb
   tsort.rb
   un.rb
@@ -92,13 +91,8 @@ EXT_FILES = {
   'ext/digest/lib/digest.rb' => 'digest.rb',
   'ext/digest/sha2/lib/sha2.rb' => 'digest/sha2.rb',
   'ext/dl/win32/lib/win32' => 'win32',
-  'ext/psych/lib/psych.rb' => 'psych.rb',
-  'ext/psych/lib/psych' => 'psych',
   'ext/ripper/lib/ripper.rb' => 'ripper.rb',
   'ext/ripper/lib/ripper' => 'ripper',
-  'ext/fiddle/lib/fiddle.rb' => 'fiddle.rb',
-  'ext/fiddle/lib/fiddle' => 'fiddle',
-  'ext/openssl/lib/openssl.rb' => 'openssl.rb',
   'ext/openssl/lib/openssl' => 'openssl',
   'ext/socket/lib/socket.rb' => 'socket.rb'
 }

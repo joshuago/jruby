@@ -1,11 +1,11 @@
 /*
  **** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,29 +20,27 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.runtime.invokedynamic;
 
 import java.lang.invoke.*;
 
 import static java.lang.invoke.MethodHandles.*;
-import static java.lang.invoke.MethodType.*;
 
 import java.math.BigInteger;
 import java.util.Arrays;
 
 import com.headius.invokebinder.Binder;
+import com.headius.invokebinder.Signature;
+import com.headius.invokebinder.SmartBinder;
+import com.headius.invokebinder.SmartHandle;
 import org.jruby.*;
 import org.jruby.exceptions.JumpException;
-import org.jruby.exceptions.RaiseException;
-import org.jruby.exceptions.Unrescuable;
-import org.jruby.ext.ffi.jffi.JITNativeInvoker;
-import org.jruby.ext.ffi.jffi.NativeInvoker;
 import org.jruby.internal.runtime.methods.*;
 import org.jruby.java.invokers.SingletonMethodInvoker;
 import org.jruby.javasupport.JavaUtil;
@@ -60,8 +58,12 @@ import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
 import static java.lang.invoke.MethodType.methodType;
+import java.lang.reflect.Method;
+import java.util.List;
+import org.jruby.anno.JRubyMethod;
+import org.jruby.internal.runtime.methods.DynamicMethod.NativeCall;
+import org.jruby.runtime.Arity;
 import static org.jruby.runtime.invokedynamic.InvokeDynamicSupport.*;
-import static org.jruby.util.CodegenUtils.p;
 
 /**
  * Bootstrapping logic for invokedynamic-based invocation.
@@ -128,8 +130,8 @@ public class InvocationLinker {
             return callMethodMissing(entry, site.callType(), context, self, method);
         }
         
-        MethodHandle target = getTarget(site, selfClass, method, entry, 0);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, false, 0);
+        MethodHandle target = getTarget(site, selfClass, entry, 0);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, false, 0);
 
         return (IRubyObject)target.invokeWithArguments(context, caller, self);
     }
@@ -145,8 +147,8 @@ public class InvocationLinker {
             return site.isAttrAssign() ? arg0 : mmResult;
         }
         
-        MethodHandle target = getTarget(site, selfClass, method, entry, 1);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, false, 1);
+        MethodHandle target = getTarget(site, selfClass, entry, 1);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, false, 1);
 
         return (IRubyObject)target.invokeWithArguments(context, caller, self, arg0);
     }
@@ -162,8 +164,8 @@ public class InvocationLinker {
             return site.isAttrAssign() ? arg1 : mmResult;
         }
         
-        MethodHandle target = getTarget(site, selfClass, method, entry, 2);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, false, 2);
+        MethodHandle target = getTarget(site, selfClass, entry, 2);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, false, 2);
 
         return (IRubyObject)target.invokeWithArguments(context, caller, self, arg0, arg1);
     }
@@ -179,8 +181,8 @@ public class InvocationLinker {
             return site.isAttrAssign() ? arg2 : mmResult;
         }
         
-        MethodHandle target = getTarget(site, selfClass, method, entry, 3);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, false, 3);
+        MethodHandle target = getTarget(site, selfClass, entry, 3);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, false, 3);
 
         return (IRubyObject)target.invokeWithArguments(context, caller, self, arg0, arg1, arg2);
     }
@@ -196,8 +198,8 @@ public class InvocationLinker {
             return site.isAttrAssign() ? args[args.length - 1] : mmResult;
         }
         
-        MethodHandle target = getTarget(site, selfClass, method, entry, -1);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, false, 4);
+        MethodHandle target = getTarget(site, selfClass, entry, -1);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, false, 4);
 
         return (IRubyObject)target.invokeWithArguments(context, caller, self, args);
     }
@@ -220,8 +222,8 @@ public class InvocationLinker {
             }
         }
 
-        MethodHandle target = getTarget(site, selfClass, method, entry, 0);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, true, 0);
+        MethodHandle target = getTarget(site, selfClass, entry, 0);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, true, 0);
 
         return (IRubyObject) target.invokeWithArguments(context, caller, self, block);
     }
@@ -244,8 +246,8 @@ public class InvocationLinker {
             }
         }
 
-        MethodHandle target = getTarget(site, selfClass, method, entry, 1);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, true, 1);
+        MethodHandle target = getTarget(site, selfClass, entry, 1);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, true, 1);
 
         return (IRubyObject) target.invokeWithArguments(context, caller, self, arg0, block);
     }
@@ -268,8 +270,8 @@ public class InvocationLinker {
             }
         }
 
-        MethodHandle target = getTarget(site, selfClass, method, entry, 2);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, true, 2);
+        MethodHandle target = getTarget(site, selfClass, entry, 2);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, true, 2);
 
         return (IRubyObject) target.invokeWithArguments(context, caller, self, arg0, arg1, block);
     }
@@ -292,8 +294,8 @@ public class InvocationLinker {
             }
         }
 
-        MethodHandle target = getTarget(site, selfClass, method, entry, 3);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, true, 3);
+        MethodHandle target = getTarget(site, selfClass, entry, 3);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, true, 3);
 
         return (IRubyObject) target.invokeWithArguments(context, caller, self, arg0, arg1, arg2, block);
     }
@@ -316,8 +318,8 @@ public class InvocationLinker {
             }
         }
 
-        MethodHandle target = getTarget(site, selfClass, method, entry, -1);
-        target = updateInvocationTarget(target, site, selfClass, method, entry, switchPoint, true, 4);
+        MethodHandle target = getTarget(site, selfClass, entry, -1);
+        target = updateInvocationTarget(target, site, self, selfClass, method, entry, switchPoint, true, 4);
 
         return (IRubyObject) target.invokeWithArguments(context, caller, self, args, block);
     }
@@ -327,7 +329,7 @@ public class InvocationLinker {
      * guard and argument-juggling logic. Return a handle suitable for invoking
      * with the site's original method type.
      */
-    private static MethodHandle updateInvocationTarget(MethodHandle target, JRubyCallSite site, RubyModule selfClass, String name, CacheEntry entry, SwitchPoint switchPoint, boolean block, int arity) {
+    private static MethodHandle updateInvocationTarget(MethodHandle target, JRubyCallSite site, IRubyObject self, RubyModule selfClass, String name, CacheEntry entry, SwitchPoint switchPoint, boolean block, int arity) {
         if (target == null ||
                 site.clearCount() > RubyInstanceConfig.MAX_FAIL_COUNT ||
                 (!site.hasSeenType(selfClass.id)
@@ -356,7 +358,38 @@ public class InvocationLinker {
             }
 
             site.addType(selfClass.id);
-            gwt = createGWT(selfClass, (block?TESTS_B:TESTS)[arity], target, fallback, entry, site, curry);
+            
+            SmartHandle test;
+            SmartBinder selfTest = SmartBinder
+                                          .from(site.signature().asFold(boolean.class))
+                                          .permute("self");
+            
+            if (self instanceof RubySymbol ||
+                    self instanceof RubyFixnum ||
+                    self instanceof RubyFloat ||
+                    self instanceof RubyNil ||
+                    self instanceof RubyBoolean.True ||
+                    self instanceof RubyBoolean.False) {
+                
+                test = selfTest
+                        .insert(1, "selfJavaType", self.getClass())
+                        .cast(boolean.class, Object.class, Class.class)
+                        .invoke(TEST_CLASS);
+                
+            } else {
+                
+                if (RubyInstanceConfig.INVOKEDYNAMIC_INVOCATION_SWITCHPOINT) {
+                    selfTest = selfTest.insert(0, "selfClass", selfClass);
+                } else {
+                    selfTest = selfTest.insert(0, "token", entry.token);
+                }
+                
+                test = selfTest
+                        .cast(boolean.class, RubyClass.class, IRubyObject.class)
+                        .invoke(TEST);
+            }
+            
+            gwt = createGWT(test, target, fallback, entry, site, curry);
             
             if (RubyInstanceConfig.INVOKEDYNAMIC_INVOCATION_SWITCHPOINT) {
                 // wrap in switchpoint for mutation invalidation
@@ -407,15 +440,44 @@ public class InvocationLinker {
         return myFail;
     }
 
-    private static MethodHandle createGWT(RubyModule selfClass, MethodHandle test, MethodHandle target, MethodHandle fallback, CacheEntry entry, JRubyCallSite site, boolean curryFallback) {
-        MethodHandle myTest =
-                RubyInstanceConfig.INVOKEDYNAMIC_INVOCATION_SWITCHPOINT ?
-                insertArguments(test, 0, selfClass) :
-                insertArguments(test, 0, entry.token);
+    private static MethodHandle createGWT(SmartHandle test, MethodHandle target, MethodHandle fallback, CacheEntry entry, JRubyCallSite site, boolean curryFallback) {
         MethodHandle myFallback = curryFallback ? insertArguments(fallback, 0, site) : fallback;
-        MethodHandle guardWithTest = guardWithTest(myTest, target, myFallback);
+        MethodHandle guardWithTest = test.guard(target, myFallback);
         
         return guardWithTest;
+    }
+
+    private static int getNativeArgCount(DynamicMethod method, NativeCall nativeCall) {
+        // if non-Java, must:
+        // * exactly match arities or both are [] boxed
+        // * 3 or fewer arguments
+        int nativeArgCount = (method instanceof CompiledMethod || method instanceof JittedMethod)
+                ? getRubyArgCount(nativeCall.getNativeSignature())
+                : getArgCount(nativeCall.getNativeSignature(), nativeCall.isStatic());
+        return nativeArgCount;
+    }
+
+    public static DynamicMethod unwrapMethod(DynamicMethod method) throws IndirectBindingException {
+        String name;
+        // get the "real" method in a few ways
+        while (method instanceof AliasMethod) {
+            name = ((AliasMethod)method).getOldName(); // need to use original name, not aliased name
+            method = method.getRealMethod();
+        }
+        while (method instanceof WrapperMethod) method = method.getRealMethod();
+        // ProfilingDynamicMethod wraps any number of other types of methods but
+        // we do not handle it in indy binding right now. Disable direct binding
+        // and bind through DynamicMethod.
+        if (method instanceof ProfilingDynamicMethod) {
+            throw new IndirectBindingException("profiling active");
+        }
+        if (method instanceof DefaultMethod) {
+            DefaultMethod defaultMethod = (DefaultMethod) method;
+            if (defaultMethod.getMethodForCaching() instanceof JittedMethod) {
+                method = defaultMethod.getMethodForCaching();
+            }
+        }
+        return method;
     }
     
     private static class IndirectBindingException extends RuntimeException {
@@ -423,111 +485,267 @@ public class InvocationLinker {
             super(reason);
         }
     }
-
-    private static MethodHandle tryDispatchDirect(JRubyCallSite site, String name, RubyClass cls, DynamicMethod method) {
-        // get the "real" method in a few ways
-        while (method instanceof AliasMethod) {
-            name = ((AliasMethod)method).getOldName(); // need to use original name, not aliased name
-            method = method.getRealMethod();
+    
+    public interface HandleGenerator {
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method);
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method);
+    }
+    
+    public static class HandleMethodGenerator implements HandleGenerator {
+        
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            return method instanceof HandleMethod;
         }
-        while (method instanceof WrapperMethod) method = method.getRealMethod();
-
-        if (method instanceof DefaultMethod) {
-            DefaultMethod defaultMethod = (DefaultMethod) method;
-            if (defaultMethod.getMethodForCaching() instanceof JittedMethod) {
-                method = defaultMethod.getMethodForCaching();
+        
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            MethodHandle handle = ((HandleMethod)method).getHandle(site.arity());
+            
+            if (handle == null) {
+                throw new IndirectBindingException("MH dynamic method does not have needed arity");
             }
+            
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name() + "\tbound from MHDynMethod " + logMethod(method) + ":" + handle);
+            
+            Signature fullSig = site.fullSignature();
+            MethodHandle nativeTarget =  Binder
+                    .from(fullSig.type())
+                    .permute(fullSig.to("context", "self", "arg*", "block"))
+                    .invoke(handle);
+            nativeTarget = addOrRemoveBlock(site, nativeTarget);
+            
+            return nativeTarget;            
         }
+    }
+    
+    public static class AttrReaderGenerator implements HandleGenerator {
 
-        DynamicMethod.NativeCall nativeCall = method.getNativeCall();
-
-        int siteArgCount = getSiteCount(site.type().parameterArray());
-
-        if (method instanceof AttrReaderMethod) {
-            // attr reader
-            if (!RubyInstanceConfig.INVOKEDYNAMIC_ATTR) {
-                throw new IndirectBindingException("direct attribute dispatch not enabled");
-            }
-            if (siteArgCount != 0) {
-                throw new IndirectBindingException("attr reader with > 0 args");
-            }
-        } else if (method instanceof AttrWriterMethod) {
-            // attr writer
-            if (!RubyInstanceConfig.INVOKEDYNAMIC_ATTR) {
-                throw new IndirectBindingException("direct attribute dispatch not enabled");
-            }
-            if (siteArgCount != 1) {
-                throw new IndirectBindingException("attr writer with > 1 args");
-            }
-
-        } else if (method instanceof org.jruby.ext.ffi.jffi.DefaultMethod || method instanceof org.jruby.ext.ffi.jffi.JITNativeInvoker) {
-            // if frame/scope required, can't dispatch direct
-            if (method.getCallConfig() != CallConfiguration.FrameNoneScopeNone) {
-                throw new IndirectBindingException("frame or scope required: " + method.getCallConfig());
-            }
-
-            if (!method.getArity().isFixed()) {
-                throw new IndirectBindingException("fixed arity required: " + method.getArity());
-            }
-
-            // Arity must match, otherwise let the indirect method process errors
-            if (method.getArity().getValue() != siteArgCount) {
-                throw new IndirectBindingException("arity mismatch");
-            }
-
-            // Only support 0..6 parameters
-            if (method.getArity().getValue() > 6) {
-                throw new IndirectBindingException("target args > 6");
-            }
-
-            if (site.type().parameterType(site.type().parameterCount() - 1) == Block.class) {
-                // Called with a block to substitute for a callback param - cannot bind directly
-                throw new IndirectBindingException("callback block supplied");
-            }
-
-        } else if (nativeCall != null) {
-            // has an explicit native call path
-
-            if (nativeCall.isJava()) {
-                if (!RubyInstanceConfig.INVOKEDYNAMIC_JAVA) {
-                    throw new IndirectBindingException("direct Java dispatch not enabled");
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            if (method instanceof AttrReaderMethod) {
+                // attr reader
+                if (!RubyInstanceConfig.INVOKEDYNAMIC_ATTR) {
+                    throw new IndirectBindingException("direct attribute dispatch not enabled");
                 }
-
-                // if Java, must:
-                // * match arity <= 3
-                // * not be passed a block (no coercion yet)
-                // * be a normal wrapper around a class or module (not a Ruby subclass)
-                if (nativeCall.getNativeSignature().length != siteArgCount
-                        || siteArgCount > 3
-                        || site.isIterator()
-                        || !cls.getJavaProxy()) {
-                    throw new IndirectBindingException("Java call arity mismatch or > 3 args");
+                if (site.arity() != 0) {
+                    throw new IndirectBindingException("attr reader with > 0 args");
                 }
-            } else {
-                // if non-Java, must:
-                // * exactly match arities or both are [] boxed
-                // * 3 or fewer arguments
-
-                int nativeArgCount = (method instanceof CompiledMethod || method instanceof JittedMethod)
-                        ? getRubyArgCount(nativeCall.getNativeSignature())
-                        : getArgCount(nativeCall.getNativeSignature(), nativeCall.isStatic());
-
-                // arity must match or both be [] args
-                if (nativeArgCount != siteArgCount) {
-                    throw new IndirectBindingException("arity mismatch or varargs at call site: " + nativeArgCount + " != " + siteArgCount);
-                }
+                
+                return true;
             }
-        } else {
-            throw new IndirectBindingException("no direct path available for " + method.getClass().getName());
+            
+            return false;
         }
 
-        return handleForMethod(site, name, cls, method);
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            // Ruby to attr reader
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name() + "\tbound as attr reader " + logMethod(method) + ":" + ((AttrReaderMethod)method).getVariableName());
+            return createAttrReaderHandle(site, cls, method);
+        }
     }
 
-    private static MethodHandle getTarget(JRubyCallSite site, RubyClass cls, String name, CacheEntry entry, int arity) {
+    public static class AttrWriterGenerator implements HandleGenerator {
+
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            if (method instanceof AttrWriterMethod) {
+                // attr writer
+                if (!RubyInstanceConfig.INVOKEDYNAMIC_ATTR) {
+                    throw new IndirectBindingException("direct attribute dispatch not enabled");
+                }
+                if (site.arity() != 1) {
+                    throw new IndirectBindingException("attr writer with > 1 args");
+                }
+                
+                return true;
+            }
+            
+            return false;
+        }
+
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            // Ruby to attr reader
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) {
+                LOG.info(site.name() + "\tbound as attr writer " + logMethod(method) + ":" + ((AttrWriterMethod) method).getVariableName());
+            }
+            return createAttrWriterHandle(site, cls, method);
+        }
+    }
+    
+    public static class FFIGenerator implements HandleGenerator {
+
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            if (method instanceof org.jruby.ext.ffi.jffi.DefaultMethod || method instanceof org.jruby.ext.ffi.jffi.JITNativeInvoker) {
+                // if frame/scope required, can't dispatch direct
+                if (method.getCallConfig() != CallConfiguration.FrameNoneScopeNone) {
+                    throw new IndirectBindingException("frame or scope required: " + method.getCallConfig());
+                }
+
+                if (!method.getArity().isFixed()) {
+                    throw new IndirectBindingException("fixed arity required: " + method.getArity());
+                }
+
+                // Arity must match, otherwise let the indirect method process errors
+                if (method.getArity().getValue() != site.arity()) {
+                    throw new IndirectBindingException("arity mismatch");
+                }
+
+                // Only support 0..6 parameters
+                if (method.getArity().getValue() > 6) {
+                    throw new IndirectBindingException("target args > 6");
+                }
+
+                if (site.type().parameterType(site.type().parameterCount() - 1) == Block.class) {
+                    // Called with a block to substitute for a callback param - cannot bind directly
+                    throw new IndirectBindingException("callback block supplied");
+                }
+                
+                return true;
+            }
+            
+            return false;
+        }
+
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            // Ruby to FFI
+            return createFFIHandle(site, method);
+        }
+        
+    }
+    
+    public static class JavaCallGenerator implements HandleGenerator {
+
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            NativeCall nativeCall = method.getNativeCall();
+            
+            if (nativeCall != null) {
+                // has an explicit native call path
+
+                if (nativeCall.isJava()) {
+                    if (!RubyInstanceConfig.INVOKEDYNAMIC_JAVA) {
+                        throw new IndirectBindingException("direct Java dispatch not enabled");
+                    }
+
+                    // if Java, must:
+                    // * match arity <= 3
+                    // * not be passed a block (no coercion yet)
+                    // * be a normal wrapper around a class or module (not a Ruby subclass)
+                    if (nativeCall.getNativeSignature().length != site.arity()
+                            || site.arity() > 3
+                            || site.isIterator()
+                            || !cls.getJavaProxy()) {
+                        throw new IndirectBindingException("Java call arity mismatch or > 3 args");
+                    }
+                    
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            // Ruby to Java
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name() + "\tbound to Java method " + logMethod(method) + ": " + method.getNativeCall());
+            
+            return postProcessNativeHandle(createJavaHandle(site, method), site, method, false);
+        }
+        
+    }
+    
+    public static class RubyCallGenerator implements HandleGenerator {
+
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            NativeCall nativeCall = method.getNativeCall();
+            
+            if (method instanceof CompiledMethod || method instanceof JittedMethod) {
+                if (nativeCall != null) {
+                    int nativeArgCount = getNativeArgCount(method, method.getNativeCall());
+                    
+                    // arity must match or both be [] args
+                    if (nativeArgCount != site.arity()) {
+                        throw new IndirectBindingException("arity mismatch or varargs at call site: " + nativeArgCount + " != " + site.arity());
+                    }
+
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            // Ruby to Ruby
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name() + "\tbound to Ruby method " + logMethod(method) + ": " + method.getNativeCall());
+            return postProcessNativeHandle(createRubyHandle(site, method, site.name()), site, method, true);
+        }
+        
+    }
+    
+    public static class CoreCallGenerator implements HandleGenerator {
+
+        @Override
+        public boolean canGenerate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            NativeCall nativeCall = method.getNativeCall();
+            
+            if (nativeCall != null) {
+                int nativeArgCount = getNativeArgCount(method, method.getNativeCall());
+
+                // arity must match or both be [] args
+                if (nativeArgCount != site.arity()) {
+                    throw new IndirectBindingException("arity mismatch or varargs at call site: " + nativeArgCount + " != " + site.arity());
+                }
+
+                return true;
+            }
+            
+            return false;
+        }
+
+        @Override
+        public MethodHandle generate(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+            // Ruby to Core
+            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(site.name() + "\tbound to native method " + logMethod(method) + ": " + method.getNativeCall());
+            return postProcessNativeHandle(createNativeHandle(cls.getClassRuntime(), site, method, site.name()), site, method, true);
+        }
+        
+    }
+    
+    private static final List<HandleGenerator> HANDLE_GENERATORS =  Arrays.<HandleGenerator>asList(
+            new HandleMethodGenerator(),
+            new AttrReaderGenerator(),
+            new AttrWriterGenerator(),
+            new FFIGenerator(),
+            new JavaCallGenerator(),
+            new RubyCallGenerator(),
+            new CoreCallGenerator()
+            );
+
+    private static MethodHandle tryDispatchDirect(JRubyCallSite site, RubyClass cls, DynamicMethod method) {
+        method = unwrapMethod(method);
+        
+        for (HandleGenerator generator : HANDLE_GENERATORS) {
+            if (generator.canGenerate(site, cls, method)) {
+                return generator.generate(site, cls, method);
+            }
+        }
+        
+        throw new IndirectBindingException("no direct path available for " + method.getClass().getName());
+    }
+
+    private static MethodHandle getTarget(JRubyCallSite site, RubyClass cls, CacheEntry entry, int arity) {
         IndirectBindingException ibe;
         try {
-            return tryDispatchDirect(site, name, cls, entry.method);
+            return tryDispatchDirect(site, cls, entry.method);
         } catch (IndirectBindingException _ibe) {
             ibe = _ibe;
             // proceed with indirect, if enabled
@@ -536,86 +754,94 @@ public class InvocationLinker {
         // if indirect indy-bound methods (via DynamicMethod.call) are disabled, bail out
         if (!RubyInstanceConfig.INVOKEDYNAMIC_INDIRECT) {
             if (RubyInstanceConfig.LOG_INDY_BINDINGS)
-                LOG.info(name + "\tfailed to bind to " + logMethod(entry.method) + ": " + ibe.getMessage());
+                LOG.info(site.name() + "\tfailed to bind to " + logMethod(entry.method) + ": " + ibe.getMessage());
             return null;
         }
 
         // no direct native path, use DynamicMethod.call
         if (RubyInstanceConfig.LOG_INDY_BINDINGS)
-            LOG.info(name + "\tbound indirectly to " + logMethod(entry.method) + ": " + ibe.getMessage());
+            LOG.info(site.name() + "\tbound indirectly to " + logMethod(entry.method) + ": " + ibe.getMessage());
 
         MethodHandle dynMethodTarget = getDynamicMethodTarget(site.type(), arity, entry.method);
-        dynMethodTarget = insertArguments(dynMethodTarget, 4, name);
-        dynMethodTarget = insertArguments(dynMethodTarget, 0, entry);
+        dynMethodTarget = insertArguments(dynMethodTarget, 4, site.name());
+        dynMethodTarget = insertArguments(dynMethodTarget, 0, entry.method);
 
         return dynMethodTarget;
     }
     
-    private static MethodHandle handleForMethod(JRubyCallSite site, String name, RubyClass cls, DynamicMethod method) {
-        MethodHandle nativeTarget = null;
-        
-        if (method instanceof AttrReaderMethod) {
-            // Ruby to attr reader
-            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tbound as attr reader " + logMethod(method) + ":" + ((AttrReaderMethod)method).getVariableName());
-            nativeTarget = createAttrReaderHandle(site, cls, method);
-        } else if (method instanceof AttrWriterMethod) {
-            // Ruby to attr writer
-            if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tbound as attr writer " + logMethod(method) + ":" + ((AttrWriterMethod)method).getVariableName());
-            nativeTarget = createAttrWriterHandle(site, cls, method);
-
-        } else if (method instanceof org.jruby.ext.ffi.jffi.JITNativeInvoker || method instanceof org.jruby.ext.ffi.jffi.DefaultMethod) {
-            // Ruby to FFI
-            nativeTarget = createFFIHandle(site, method);
-
-        } else if (method.getNativeCall() != null) {
-            DynamicMethod.NativeCall nativeCall = method.getNativeCall();
-
-            if (nativeCall.isJava()) {
-                // Ruby to Java
-                if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tbound to Java method " + logMethod(method) + ": " + nativeCall);
-                nativeTarget = createJavaHandle(site, method);
-            } else if (method instanceof CompiledMethod || method instanceof JittedMethod) {
-                // Ruby to Ruby
-                if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tbound to Ruby method " + logMethod(method) + ": " + nativeCall);
-                nativeTarget = createRubyHandle(site, method, name);
-            } else {
-                // Ruby to Core
-                if (RubyInstanceConfig.LOG_INDY_BINDINGS) LOG.info(name + "\tbound to native method " + logMethod(method) + ": " + nativeCall);
-                nativeTarget = createNativeHandle(site, method, name);
-            }
-        }
-                        
-        // add NULL_BLOCK if needed
+    private static MethodHandle postProcessNativeHandle(MethodHandle nativeTarget, JRubyCallSite site, DynamicMethod method, boolean checkArity) {                    
         if (nativeTarget != null) {
-            if (
-                    site.type().parameterCount() > 0
-                    && site.type().parameterArray()[site.type().parameterCount() - 1] != Block.class
-                    && nativeTarget.type().parameterCount() > 0
-                    && nativeTarget.type().parameterType(nativeTarget.type().parameterCount() - 1) == Block.class) {
-                nativeTarget = insertArguments(nativeTarget, nativeTarget.type().parameterCount() - 1, Block.NULL_BLOCK);
-            } else if (
-                    site.type().parameterCount() > 0
-                    && site.type().parameterArray()[site.type().parameterCount() - 1] == Block.class
-                    && nativeTarget.type().parameterCount() > 0
-                    && nativeTarget.type().parameterType(nativeTarget.type().parameterCount() - 1) != Block.class) {
-                // drop block if not used
-                nativeTarget = dropArguments(nativeTarget, nativeTarget.type().parameterCount(), Block.class);
+            nativeTarget = addOrRemoveBlock(site, nativeTarget);
+            
+            // add arity check if needed
+            if (checkArity) {
+                int nativeArgCount = getNativeArgCount(method, method.getNativeCall());
+                
+                if (nativeArgCount == 4 && site.arity() == 4) {
+                    // Arity does not give us enough information about min/max
+                    // so we must go to the annotation
+                    Method reflected = method.getNativeCall().getMethod();
+                    JRubyMethod annotation = reflected.getAnnotation(JRubyMethod.class);
+                    
+                    int required = annotation.required();
+                    int optional = annotation.optional();
+                    boolean rest = annotation.rest();
+                    
+                    if (required > 0 || !rest) {
+                        MethodHandle arityCheck = Binder
+                                .from(site.type().changeReturnType(void.class))
+                                .insert(0, new Class[]{int.class, int.class, boolean.class}, required, optional, rest)
+                                .invokeStaticQuiet(site.lookup(), InvocationLinker.class, "checkArity");
+                        nativeTarget = foldArguments(nativeTarget, arityCheck);
+                    }
+                }
             }
         }
         
         return nativeTarget;
     }
 
+    private static MethodHandle addOrRemoveBlock(JRubyCallSite site, MethodHandle nativeTarget) {
+        // add NULL_BLOCK if needed
+        if (
+                site.type().parameterCount() > 0
+                && site.type().parameterArray()[site.type().parameterCount() - 1] != Block.class
+                && nativeTarget.type().parameterCount() > 0
+                && nativeTarget.type().parameterType(nativeTarget.type().parameterCount() - 1) == Block.class) {
+            nativeTarget = insertArguments(nativeTarget, nativeTarget.type().parameterCount() - 1, Block.NULL_BLOCK);
+        } else if (
+                site.type().parameterCount() > 0
+                && site.type().parameterArray()[site.type().parameterCount() - 1] == Block.class
+                && nativeTarget.type().parameterCount() > 0
+                && nativeTarget.type().parameterType(nativeTarget.type().parameterCount() - 1) != Block.class) {
+            // drop block if not used
+            nativeTarget = dropArguments(nativeTarget, nativeTarget.type().parameterCount(), Block.class);
+        }
+        return nativeTarget;
+    }
+    
+    public static void checkArity(int required, int optional, boolean rest, ThreadContext context, IRubyObject caller, IRubyObject self, IRubyObject[] args) {
+        Arity.checkArgumentCount(context.runtime, args, required, rest ? -1 : required + optional);
+    }
+    
+    public static void checkArity(int required, int optional, boolean rest, ThreadContext context, IRubyObject caller, IRubyObject self, IRubyObject[] args, Block block) {
+        checkArity(required, optional, rest, context, caller, self, args);
+    }
+
     public static boolean testGeneration(int token, IRubyObject self) {
         return token == ((RubyBasicObject)self).getMetaClass().getGeneration();
     }
 
-    public static boolean testMetaclass(RubyModule metaclass, IRubyObject self) {
+    public static boolean testMetaclass(RubyClass metaclass, IRubyObject self) {
         return metaclass == ((RubyBasicObject)self).getMetaClass();
     }
 
     public static boolean testRealClass(int id, IRubyObject self) {
         return id == ((RubyBasicObject)self).getMetaClass().getRealClass().id;
+    }
+    
+    public static boolean testClass(Object object, Class clazz) {
+        return object.getClass() == clazz;
     }
     
     public static IRubyObject getLast(IRubyObject[] args) {
@@ -1225,7 +1451,7 @@ public class InvocationLinker {
     // Dispatch via direct handle to native core method
     ////////////////////////////////////////////////////////////////////////////
 
-    private static MethodHandle createNativeHandle(JRubyCallSite site, DynamicMethod method, String name) {
+    private static MethodHandle createNativeHandle(Ruby runtime, JRubyCallSite site, DynamicMethod method, String name) {
         MethodHandle nativeTarget = (MethodHandle)method.getHandle();
         if (nativeTarget != null) return nativeTarget;
 
@@ -1250,34 +1476,37 @@ public class InvocationLinker {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        
+        // if native method returns void, return nil instead
+        if (nativeCall.getNativeReturn() == void.class) {
+            nativeTarget = filterReturnValue(nativeTarget, constant(IRubyObject.class, runtime.getNil()));
+        }
 
-        int argCount = getArgCount(nativeCall.getNativeSignature(), isStatic);
-        MethodType inboundType = STANDARD_NATIVE_TYPES_BLOCK[argCount];
+        Signature fullSig = site.fullSignature();
+        Signature target;
 
-        int[] permute;
-        MethodType convert;
         if (nativeSig.length > 0 && nativeSig[0] == ThreadContext.class) {
             if (nativeSig[nativeSig.length - 1] == Block.class) {
-                convert = isStatic ? TARGET_TC_SELF_ARGS_BLOCK[argCount] : TARGET_SELF_TC_ARGS_BLOCK[argCount];
-                permute = isStatic ? TC_SELF_ARGS_BLOCK_PERMUTES[argCount] : SELF_TC_ARGS_BLOCK_PERMUTES[argCount];
+                target = isStatic ?
+                        fullSig.permute("context", "self", "arg*", "block") :
+                        fullSig.permute("self", "context", "arg*", "block");
             } else {
-                convert = isStatic ? TARGET_TC_SELF_ARGS[argCount] : TARGET_SELF_TC_ARGS[argCount];
-                permute = isStatic ? TC_SELF_ARGS_PERMUTES[argCount] : SELF_TC_ARGS_PERMUTES[argCount];
+                target = isStatic ?
+                        fullSig.permute("context", "self", "arg*") :
+                        fullSig.permute("self", "context", "arg*");
             }
         } else {
             if (nativeSig.length > 0 && nativeSig[nativeSig.length - 1] == Block.class) {
-                convert = TARGET_SELF_ARGS_BLOCK[argCount];
-                permute = SELF_ARGS_BLOCK_PERMUTES[argCount];
+                target = fullSig.permute("self", "arg*", "block");
             } else {
-                convert = TARGET_SELF_ARGS[argCount];
-                permute = SELF_ARGS_PERMUTES[argCount];
+                target = fullSig.permute("self", "arg*");
             }
         }
 
-        nativeTarget = explicitCastArguments(nativeTarget, convert);
-        nativeTarget = permuteArguments(nativeTarget, inboundType, permute);
+        nativeTarget = explicitCastArguments(nativeTarget, target.type());
+        nativeTarget = permuteArguments(nativeTarget, fullSig.type(), fullSig.to(target));
 
-        nativeTarget = wrapWithFraming(method, name, nativeTarget, null, argCount);
+        nativeTarget = wrapWithFraming(fullSig, method.getCallConfig(), method.getImplementationClass(), name, nativeTarget, null);
 
         method.setHandle(nativeTarget);
 
@@ -1396,13 +1625,14 @@ public class InvocationLinker {
 
             int argCount = getRubyArgCount(nativeCall.getNativeSignature());
 
+            Signature fullSig = site.fullSignature();
             nativeTarget = Binder
-                    .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)])
-                    .permute(TC_SELF_ARGS_BLOCK_PERMUTES[Math.abs(argCount)])
+                    .from(fullSig.type())
+                    .permute(fullSig.to("context", "self", "arg*", "block"))
                     .insert(0, scriptObject)
                     .invokeStaticQuiet(site.lookup(), nativeCall.getNativeTarget(), nativeCall.getNativeName());
 
-            nativeTarget = wrapWithFraming(method, name, nativeTarget, scope, argCount);
+            nativeTarget = wrapWithFraming(fullSig, method.getCallConfig(), method.getImplementationClass(), name, nativeTarget, scope);
             
             method.setHandle(nativeTarget);
             return nativeTarget;
@@ -1411,14 +1641,13 @@ public class InvocationLinker {
         }
     }
 
-    private static MethodHandle wrapWithFraming(DynamicMethod method, String name, MethodHandle nativeTarget, StaticScope scope, int argCount) {
-        MethodHandle framePre = getFramePre(method, name, argCount, scope);
+    public static MethodHandle wrapWithFraming(Signature signature, CallConfiguration callConfig, RubyModule implClass, String name, MethodHandle nativeTarget, StaticScope scope) {
+        MethodHandle framePre = getFramePre(signature, callConfig, implClass, name, scope);
 
         if (framePre != null) {
-            MethodHandle framePost = getFramePost(method, argCount);
+            MethodHandle framePost = getFramePost(signature, callConfig);
 
             // break, return, redo handling
-            CallConfiguration callConfig = method.getCallConfig();
             boolean heapScoped = callConfig.scoping() != Scoping.None;
             boolean framed = callConfig.framing() != Framing.None;
 
@@ -1477,104 +1706,100 @@ public class InvocationLinker {
     public static IRubyObject handleRedo(JumpException.RedoJump rj, ThreadContext context) {
         throw context.runtime.newLocalJumpError(RubyLocalJumpError.Reason.REDO, context.runtime.getNil(), "unexpected redo");
     }
-
-    private static MethodHandle getFramePre(DynamicMethod method, String name, int argCount, StaticScope scope) {
-        MethodHandle framePre = null;
-
-        switch (method.getCallConfig()) {
-            case FrameFullScopeFull:
-                // before logic
-                framePre = Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(TC_SELF_BLOCK_PERMUTES[Math.abs(argCount)])
-                        .insert(1, new Class[]{RubyModule.class, String.class}, method.getImplementationClass(), name)
-                        .insert(5, new Class[]{StaticScope.class}, scope)
-                        .invokeVirtualQuiet(lookup(), "preMethodFrameAndScope");
-
-                break;
-
-            case FrameFullScopeDummy:
-                // before logic
-                framePre = Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(TC_SELF_BLOCK_PERMUTES[Math.abs(argCount)])
-                        .insert(1, new Class[]{RubyModule.class, String.class}, method.getImplementationClass(), name)
-                        .insert(5, new Class[]{StaticScope.class}, scope)
-                        .invokeVirtualQuiet(lookup(), "preMethodFrameAndDummyScope");
-
-                break;
-
-            case FrameFullScopeNone:
-                // before logic
-                framePre = Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(TC_SELF_BLOCK_PERMUTES[Math.abs(argCount)])
-                        .insert(1, new Class[]{RubyModule.class, String.class}, method.getImplementationClass(), name)
-                        .invokeVirtualQuiet(lookup(), "preMethodFrameOnly");
-
-                break;
-
-            case FrameNoneScopeFull:
-                // before logic
-                framePre = Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .insert(1, new Class[]{RubyModule.class, StaticScope.class}, method.getImplementationClass(), scope)
-                        .invokeVirtualQuiet(lookup(), "preMethodScopeOnly");
-
-                break;
-
-            case FrameNoneScopeDummy:
-                // before logic
-                framePre = Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .insert(1, new Class[]{RubyModule.class, StaticScope.class}, method.getImplementationClass(), scope)
-                        .invokeVirtualQuiet(lookup(), "preMethodNoFrameAndDummyScope");
-
-                break;
-
-        }
-
-        return framePre;
+    
+    private static <T> T[] arrayOf(T... values) {
+        return values;
     }
 
-    private static MethodHandle getFramePost(DynamicMethod method, int argCount) {
-        switch (method.getCallConfig()) {
+    public static MethodHandle getFramePre(Signature signature, CallConfiguration callConfig, RubyModule implClass, String name, StaticScope scope) {
+        Signature inbound = signature.asFold(void.class);
+        SmartBinder binder = SmartBinder
+                           .from(inbound);
+
+        switch (callConfig) {
+            case FrameFullScopeFull:
+                // before logic
+                return binder
+                        .permute("context", "self", "block")
+                        .insert(1, arrayOf("selfClass", "name"), arrayOf(RubyModule.class, String.class), implClass, name)
+                        .insert(5, arrayOf("scope"), arrayOf(StaticScope.class), scope)
+                        .invokeVirtualQuiet(lookup(), "preMethodFrameAndScope")
+                        .handle();
+
+            case FrameFullScopeDummy:
+                // before logic
+                return binder
+                        .permute("context", "self", "block")
+                        .insert(1, arrayOf("selfClass", "name"), arrayOf(RubyModule.class, String.class), implClass, name)
+                        .insert(5, arrayOf("scope"), arrayOf(StaticScope.class), scope)
+                        .invokeVirtualQuiet(lookup(), "preMethodFrameAndDummyScope")
+                        .handle();
+
+            case FrameFullScopeNone:
+                // before logic
+                return binder
+                        .permute("context", "self", "block")
+                        .insert(1, arrayOf("selfClass", "name"), arrayOf(RubyModule.class, String.class), implClass, name)
+                        .invokeVirtualQuiet(lookup(), "preMethodFrameOnly")
+                        .handle();
+
+            case FrameNoneScopeFull:
+                // before logic
+                return binder
+                        .permute("context")
+                        .insert(1, arrayOf("selfClass", "scope"), arrayOf(RubyModule.class, StaticScope.class), implClass, scope)
+                        .invokeVirtualQuiet(lookup(), "preMethodScopeOnly")
+                        .handle();
+
+            case FrameNoneScopeDummy:
+                // before logic
+                return binder
+                        .permute("context")
+                        .insert(1, arrayOf("selfClass", "scope"), arrayOf(RubyModule.class, StaticScope.class), implClass, scope)
+                        .invokeVirtualQuiet(lookup(), "preMethodNoFrameAndDummyScope")
+                        .handle();
+
+        }
+        
+        return null;
+    }
+
+    public static MethodHandle getFramePost(Signature signature, CallConfiguration callConfig) {
+        Signature inbound = signature.asFold(void.class);
+        SmartBinder binder = SmartBinder
+                               .from(inbound)
+                               .permute("context");
+        
+        switch (callConfig) {
             case FrameFullScopeFull:
                 // finally logic
-                return Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .invokeVirtualQuiet(lookup(), "postMethodFrameAndScope");
+                return binder
+                        .invokeVirtualQuiet(lookup(), "postMethodFrameAndScope")
+                        .handle();
 
             case FrameFullScopeDummy:
                 // finally logic
-                return Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .invokeVirtualQuiet(lookup(), "postMethodFrameAndScope");
+                return binder
+                        .invokeVirtualQuiet(lookup(), "postMethodFrameAndScope")
+                        .handle();
 
             case FrameFullScopeNone:
                 // finally logic
-                return Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .invokeVirtualQuiet(lookup(), "postMethodFrameOnly");
+                return binder
+                        .invokeVirtualQuiet(lookup(), "postMethodFrameOnly")
+                        .handle();
 
             case FrameNoneScopeFull:
                 // finally logic
-                return Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .invokeVirtualQuiet(lookup(), "postMethodScopeOnly");
+                return binder
+                        .invokeVirtualQuiet(lookup(), "postMethodScopeOnly")
+                        .handle();
 
             case FrameNoneScopeDummy:
                 // finally logic
-                return Binder
-                        .from(STANDARD_NATIVE_TYPES_BLOCK[Math.abs(argCount)].changeReturnType(void.class))
-                        .permute(0)
-                        .invokeVirtualQuiet(lookup(), "postMethodScopeOnly");
+                return binder
+                        .invokeVirtualQuiet(lookup(), "postMethodScopeOnly")
+                        .handle();
 
         }
 
@@ -1681,273 +1906,131 @@ public class InvocationLinker {
         return "[#" + method.getSerialNumber() + " " + method.getImplementationClass() + "]";
     }
 
-    private static final MethodHandle GETMETHOD;
-    static {
-        MethodHandle getMethod = findStatic(InvocationLinker.class, "getMethod", methodType(DynamicMethod.class, CacheEntry.class));
-        getMethod = dropArguments(getMethod, 0, RubyClass.class);
-        getMethod = dropArguments(getMethod, 2, ThreadContext.class, IRubyObject.class, IRubyObject.class);
-        GETMETHOD = getMethod;
-    }
-
-    public static DynamicMethod getMethod(CacheEntry entry) {
-        return entry.method;
-    }
-
     private static final MethodHandle PGC = Binder
-                    .from(RubyClass.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class)
-                    .permute(1, 3)
+                    .from(RubyClass.class, ThreadContext.class, IRubyObject.class)
                     .invokeStaticQuiet(lookup(), InvokeDynamicSupport.class, "pollAndGetClass");
 
-    private static final MethodHandle PGC2 = Binder
-            .from(RubyClass.class, ThreadContext.class, IRubyObject.class, IRubyObject.class)
-            .drop(1)
-            .invokeStaticQuiet(lookup(), InvokeDynamicSupport.class, "pollAndGetClass");
-
-    private static final Binder test_binder = Binder
-            .from(boolean.class, int.class, ThreadContext.class, IRubyObject.class, IRubyObject.class)
-            .drop(1, 2);
-
     private static final MethodHandle TEST_GENERATION = Binder
-            .from(boolean.class, int.class, ThreadContext.class, IRubyObject.class, IRubyObject.class)
-            .drop(1, 2)
+            .from(boolean.class, int.class, IRubyObject.class)
             .invokeStaticQuiet(lookup(), InvocationLinker.class, "testGeneration");
 
     private static final MethodHandle TEST_METACLASS = Binder
-            .from(boolean.class, RubyModule.class, ThreadContext.class, IRubyObject.class, IRubyObject.class)
-            .drop(1, 2)
+            .from(boolean.class, RubyClass.class, IRubyObject.class)
             .invokeStaticQuiet(lookup(), InvocationLinker.class, "testMetaclass");
     
     private static final MethodHandle TEST =
             RubyInstanceConfig.INVOKEDYNAMIC_INVOCATION_SWITCHPOINT ?
             TEST_METACLASS :
             TEST_GENERATION;
-
-    private static MethodHandle dropNameAndArgs(MethodHandle original, int index, int count, boolean block) {
-        switch (count) {
-        case -1:
-            if (block) {
-                return dropArguments(original, index, String.class, IRubyObject[].class, Block.class);
-            } else {
-                return dropArguments(original, index, String.class, IRubyObject[].class);
-            }
-        case 0:
-            if (block) {
-                return dropArguments(original, index, String.class, Block.class);
-            } else {
-                return dropArguments(original, index, String.class);
-            }
-        case 1:
-            if (block) {
-                return dropArguments(original, index, String.class, IRubyObject.class, Block.class);
-            } else {
-                return dropArguments(original, index, String.class, IRubyObject.class);
-            }
-        case 2:
-            if (block) {
-                return dropArguments(original, index, String.class, IRubyObject.class, IRubyObject.class, Block.class);
-            } else {
-                return dropArguments(original, index, String.class, IRubyObject.class, IRubyObject.class);
-            }
-        case 3:
-            if (block) {
-                return dropArguments(original, index, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class);
-            } else {
-                return dropArguments(original, index, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class);
-            }
-        default:
-            throw new RuntimeException("Invalid arg count (" + count + ") while preparing method handle:\n\t" + original);
-        }
-    }
-
-    private static MethodHandle dropArgs(MethodHandle original, int index, int count, boolean block) {
-        switch (count) {
-        case -1:
-            if (block) {
-                return dropArguments(original, index, IRubyObject[].class, Block.class);
-            } else {
-                return dropArguments(original, index, IRubyObject[].class);
-            }
-        case 0:
-            if (block) {
-                return dropArguments(original, index, Block.class);
-            } else {
-                return dropArguments(original, index);
-            }
-        case 1:
-            if (block) {
-                return dropArguments(original, index, IRubyObject.class, Block.class);
-            } else {
-                return dropArguments(original, index, IRubyObject.class);
-            }
-        case 2:
-            if (block) {
-                return dropArguments(original, index, IRubyObject.class, IRubyObject.class, Block.class);
-            } else {
-                return dropArguments(original, index, IRubyObject.class, IRubyObject.class);
-            }
-        case 3:
-            if (block) {
-                return dropArguments(original, index, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class);
-            } else {
-                return dropArguments(original, index, IRubyObject.class, IRubyObject.class, IRubyObject.class);
-            }
-        default:
-            throw new RuntimeException("Invalid arg count (" + count + ") while preparing method handle:\n\t" + original);
-        }
-    }
+    
+    private static final MethodHandle TEST_CLASS = Binder
+            .from(boolean.class, Object.class, Class.class)
+            .invokeStaticQuiet(lookup(), InvocationLinker.class, "testClass");
     
     ////////////////////////////////////////////////////////////////////////////
     // Support handles for DynamicMethod.call paths
     ////////////////////////////////////////////////////////////////////////////
 
-    private static final MethodHandle TEST_0 = dropArgs(TEST, 4, 0, false);
-    private static final MethodHandle TARGET_0 = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class)
-            .fold(dropNameAndArgs(PGC, 4, 0, false))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 0, false))
-            .permute(0, 3, 5, 1, 6)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_0 = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class));
-    private static final MethodHandle FAIL_0 = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class));
-
-    private static final MethodHandle TEST_1 = dropArgs(TEST, 4, 1, false);
-    private static final MethodHandle TARGET_1 = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class)
-            .fold(dropNameAndArgs(PGC, 4, 1, false))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 1, false))
-            .permute(0, 3, 5, 1, 6, 7)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_1 = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
-    private static final MethodHandle FAIL_1 = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
-
-    private static final MethodHandle TEST_2 = dropArgs(TEST, 4, 2, false);
-    private static final MethodHandle TARGET_2 = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, IRubyObject.class)
-            .fold(dropNameAndArgs(PGC, 4, 2, false))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 2, false))
-            .permute(0, 3, 5, 1, 6, 7, 8)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject.class, IRubyObject.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_2 = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
-    private static final MethodHandle FAIL_2 = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
-
-    private static final MethodHandle TEST_3 = dropArgs(TEST, 4, 3, false);
-    private static final MethodHandle TARGET_3 = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class)
-            .fold(dropNameAndArgs(PGC, 4, 3, false))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 3, false))
-            .permute(0, 3, 5, 1, 6, 7, 8, 9)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_3 = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
-    private static final MethodHandle FAIL_3 = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class));
-
-    private static final MethodHandle TEST_N = dropArgs(TEST, 4, -1, false);
-    private static final MethodHandle TARGET_N = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject[].class)
-            .fold(dropNameAndArgs(PGC, 4, -1, false))
-            .fold(dropNameAndArgs(GETMETHOD, 5, -1, false))
-            .permute(0, 3, 5, 1, 6, 7)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject[].class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_N = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject[].class));
-    private static final MethodHandle FAIL_N = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject[].class));
-
-    private static final MethodHandle TEST_0_B = dropArgs(TEST, 4, 0, true);
-    private static final MethodHandle TARGET_0_B = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, Block.class)
-            .fold(dropNameAndArgs(PGC, 4, 0, true))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 0, true))
-            .permute(0, 3, 5, 1, 6, 7)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, Block.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_0_B = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, Block.class));
-    private static final MethodHandle FAIL_0_B = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, Block.class));
-
-    private static final MethodHandle TEST_1_B = dropArgs(TEST, 4, 1, true);
-    private static final MethodHandle TARGET_1_B = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, Block.class)
-            .fold(dropNameAndArgs(PGC, 4, 1, true))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 1, true))
-            .permute(0, 3, 5, 1, 6, 7, 8)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject.class, Block.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_1_B = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class));
-    private static final MethodHandle FAIL_1_B = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class));
-
-    private static final MethodHandle TEST_2_B = dropArgs(TEST, 4, 2, true);
-    private static final MethodHandle TARGET_2_B = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, IRubyObject.class, Block.class)
-            .fold(dropNameAndArgs(PGC, 4, 2, true))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 2, true))
-            .permute(0, 3, 5, 1, 6, 7, 8, 9)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject.class, IRubyObject.class, Block.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_2_B = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class));
-    private static final MethodHandle FAIL_2_B = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class));
-
-    private static final MethodHandle TEST_3_B = dropArgs(TEST, 4, 3, true);
-    private static final MethodHandle TARGET_3_B = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class)
-            .fold(dropNameAndArgs(PGC, 4, 3, true))
-            .fold(dropNameAndArgs(GETMETHOD, 5, 3, true))
-            .permute(0, 3, 5, 1, 6, 7, 8, 9, 10)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_3_B = findStatic(InvocationLinker.class, "invocationFallback",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class));
-    private static final MethodHandle FAIL_3_B = findStatic(InvocationLinker.class, "fail",
-            methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, IRubyObject.class, Block.class));
-
-    private static final MethodHandle TEST_N_B = dropArgs(TEST, 4, -1, true);
-    private static final MethodHandle TARGET_N_B = Binder
-            .from(IRubyObject.class, CacheEntry.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, String.class, IRubyObject[].class, Block.class)
-            .fold(dropNameAndArgs(PGC, 4, -1, true))
-            .fold(dropNameAndArgs(GETMETHOD, 5, -1, true))
-            .permute(0, 3, 5, 1, 6, 7, 8)
-            .cast(IRubyObject.class, DynamicMethod.class, ThreadContext.class, IRubyObject.class, RubyModule.class, String.class, IRubyObject[].class, Block.class)
-            .invokeVirtualQuiet(lookup(), "call");
-
-    private static final MethodHandle FALLBACK_N_B = findStatic(InvocationLinker.class, "invocationFallback",
-                    methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject[].class, Block.class));
-    private static final MethodHandle FAIL_N_B = findStatic(InvocationLinker.class, "fail",
-                    methodType(IRubyObject.class, JRubyCallSite.class, ThreadContext.class, IRubyObject.class, IRubyObject.class, IRubyObject[].class, Block.class));
-
-    private static final MethodHandle[] TESTS = new MethodHandle[] {
-        TEST_0,
-        TEST_1,
-        TEST_2,
-        TEST_3,
-        TEST_N
-    };
+    // Signatures for DynamicMethod.call methods
+    private static final Signature DYNAMIC_CALL_SIG = Signature
+            .returning(IRubyObject.class)
+            .appendArg("method", DynamicMethod.class)
+            .appendArg("context", ThreadContext.class)
+            .appendArg("caller", IRubyObject.class)
+            .appendArg("self", IRubyObject.class)
+            .appendArg("name", String.class);
+    private static final Signature DYNAMIC_CALL_SIG_1ARG = DYNAMIC_CALL_SIG.appendArg("arg0", IRubyObject.class);
+    private static final Signature DYNAMIC_CALL_SIG_2ARG = DYNAMIC_CALL_SIG_1ARG.appendArg("arg1", IRubyObject.class);
+    private static final Signature DYNAMIC_CALL_SIG_3ARG = DYNAMIC_CALL_SIG_2ARG.appendArg("arg2", IRubyObject.class);
+    private static final Signature DYNAMIC_CALL_SIG_NARG = DYNAMIC_CALL_SIG.appendArg("args", IRubyObject[].class);
     
+    private static final Signature DYNAMIC_CALL_SIG_BLOCK = DYNAMIC_CALL_SIG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_CALL_SIG_1ARG_BLOCK = DYNAMIC_CALL_SIG_1ARG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_CALL_SIG_2ARG_BLOCK = DYNAMIC_CALL_SIG_2ARG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_CALL_SIG_3ARG_BLOCK = DYNAMIC_CALL_SIG_3ARG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_CALL_SIG_NARG_BLOCK = DYNAMIC_CALL_SIG_NARG.appendArg("block", Block.class);
+
+    // Incoming args for DynamicMethod.call
+    private static final Signature DYNAMIC_METHOD_SIG = Signature
+            .returning(IRubyObject.class)
+            .appendArg("method", DynamicMethod.class)
+            .appendArg("context", ThreadContext.class)
+            .appendArg("self", IRubyObject.class)
+            .appendArg("selfClass", RubyModule.class)
+            .appendArg("name", String.class);
+    private static final Signature DYNAMIC_METHOD_SIG_1ARG = DYNAMIC_METHOD_SIG.appendArg("arg0", IRubyObject.class);
+    private static final Signature DYNAMIC_METHOD_SIG_2ARG = DYNAMIC_METHOD_SIG_1ARG.appendArg("arg1", IRubyObject.class);
+    private static final Signature DYNAMIC_METHOD_SIG_3ARG = DYNAMIC_METHOD_SIG_2ARG.appendArg("arg2", IRubyObject.class);
+    private static final Signature DYNAMIC_METHOD_SIG_NARG = DYNAMIC_METHOD_SIG.appendArg("args", IRubyObject[].class);
+    
+    private static final Signature DYNAMIC_METHOD_SIG_BLOCK = DYNAMIC_METHOD_SIG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_METHOD_SIG_1ARG_BLOCK = DYNAMIC_METHOD_SIG_1ARG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_METHOD_SIG_2ARG_BLOCK = DYNAMIC_METHOD_SIG_2ARG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_METHOD_SIG_3ARG_BLOCK = DYNAMIC_METHOD_SIG_3ARG.appendArg("block", Block.class);
+    private static final Signature DYNAMIC_METHOD_SIG_NARG_BLOCK = DYNAMIC_METHOD_SIG_NARG.appendArg("block", Block.class);
+    
+    private static MethodHandle dynamicCallTarget(Signature from, Signature to) {
+        return SmartBinder
+                .from(from)
+                .fold("selfClass", from.asFold(RubyClass.class).permuteWith(PGC, "context", "self"))
+                .permute(to)
+                .cast(to)
+                .invokeVirtualQuiet(lookup(), "call")
+                .handle();
+    }
+
+    private static final MethodHandle TARGET_0 = dynamicCallTarget(DYNAMIC_CALL_SIG, DYNAMIC_METHOD_SIG);
+    private static final MethodHandle TARGET_1 = dynamicCallTarget(DYNAMIC_CALL_SIG_1ARG, DYNAMIC_METHOD_SIG_1ARG);
+    private static final MethodHandle TARGET_2 = dynamicCallTarget(DYNAMIC_CALL_SIG_2ARG, DYNAMIC_METHOD_SIG_2ARG);
+    private static final MethodHandle TARGET_3 = dynamicCallTarget(DYNAMIC_CALL_SIG_3ARG, DYNAMIC_METHOD_SIG_3ARG);
+    private static final MethodHandle TARGET_N = dynamicCallTarget(DYNAMIC_CALL_SIG_NARG, DYNAMIC_METHOD_SIG_NARG);
+    private static final MethodHandle TARGET_0_B = dynamicCallTarget(DYNAMIC_CALL_SIG_BLOCK, DYNAMIC_METHOD_SIG_BLOCK);
+    private static final MethodHandle TARGET_1_B = dynamicCallTarget(DYNAMIC_CALL_SIG_1ARG_BLOCK, DYNAMIC_METHOD_SIG_1ARG_BLOCK);
+    private static final MethodHandle TARGET_2_B = dynamicCallTarget(DYNAMIC_CALL_SIG_2ARG_BLOCK, DYNAMIC_METHOD_SIG_2ARG_BLOCK);
+    private static final MethodHandle TARGET_3_B = dynamicCallTarget(DYNAMIC_CALL_SIG_3ARG_BLOCK, DYNAMIC_METHOD_SIG_3ARG_BLOCK);
+    private static final MethodHandle TARGET_N_B = dynamicCallTarget(DYNAMIC_CALL_SIG_NARG_BLOCK, DYNAMIC_METHOD_SIG_NARG_BLOCK);
+    
+    private static final Signature FALLBACK_SIG = Signature
+            .returning(IRubyObject.class)
+            .appendArg("site", JRubyCallSite.class)
+            .appendArg("context", ThreadContext.class)
+            .appendArg("caller", IRubyObject.class)
+            .appendArg("self", IRubyObject.class);
+    private static final Signature FALLBACK_SIG_1ARG = FALLBACK_SIG.appendArg("arg0", IRubyObject.class);
+    private static final Signature FALLBACK_SIG_2ARG = FALLBACK_SIG_1ARG.appendArg("arg1", IRubyObject.class);
+    private static final Signature FALLBACK_SIG_3ARG = FALLBACK_SIG_2ARG.appendArg("arg2", IRubyObject.class);
+    private static final Signature FALLBACK_SIG_NARG = FALLBACK_SIG.appendArg("args", IRubyObject[].class);
+    
+    private static final Signature FALLBACK_SIG_BLOCK = FALLBACK_SIG.appendArg("block", Block.class);
+    private static final Signature FALLBACK_SIG_1ARG_BLOCK = FALLBACK_SIG_1ARG.appendArg("block", Block.class);
+    private static final Signature FALLBACK_SIG_2ARG_BLOCK = FALLBACK_SIG_2ARG.appendArg("block", Block.class);
+    private static final Signature FALLBACK_SIG_3ARG_BLOCK = FALLBACK_SIG_3ARG.appendArg("block", Block.class);
+    private static final Signature FALLBACK_SIG_NARG_BLOCK = FALLBACK_SIG_NARG.appendArg("block", Block.class);
+    
+    private static final MethodHandle FALLBACK_0 = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG.type());
+    private static final MethodHandle FALLBACK_1 = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_1ARG.type());
+    private static final MethodHandle FALLBACK_2 = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_2ARG.type());
+    private static final MethodHandle FALLBACK_3 = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_3ARG.type());
+    private static final MethodHandle FALLBACK_N = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_NARG.type());
+    
+    private static final MethodHandle FALLBACK_0_B = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_BLOCK.type());
+    private static final MethodHandle FALLBACK_1_B = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_1ARG_BLOCK.type());
+    private static final MethodHandle FALLBACK_2_B = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_2ARG_BLOCK.type());
+    private static final MethodHandle FALLBACK_3_B = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_3ARG_BLOCK.type());
+    private static final MethodHandle FALLBACK_N_B = findStatic(InvocationLinker.class, "invocationFallback", FALLBACK_SIG_NARG_BLOCK.type());
+    
+    private static final MethodHandle FAIL_0 = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG.type());
+    private static final MethodHandle FAIL_1 = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_1ARG.type());
+    private static final MethodHandle FAIL_2 = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_2ARG.type());
+    private static final MethodHandle FAIL_3 = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_3ARG.type());
+    private static final MethodHandle FAIL_N = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_NARG.type());
+    
+    private static final MethodHandle FAIL_0_B = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_BLOCK.type());
+    private static final MethodHandle FAIL_1_B = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_1ARG_BLOCK.type());
+    private static final MethodHandle FAIL_2_B = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_2ARG_BLOCK.type());
+    private static final MethodHandle FAIL_3_B = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_3ARG_BLOCK.type());
+    private static final MethodHandle FAIL_N_B = findStatic(InvocationLinker.class, "fail", FALLBACK_SIG_NARG_BLOCK.type());
+
     private static final MethodHandle[] FALLBACKS = new MethodHandle[] {
         FALLBACK_0,
         FALLBACK_1,
@@ -1962,14 +2045,6 @@ public class InvocationLinker {
         FAIL_2,
         FAIL_3,
         FAIL_N
-    };
-    
-    private static final MethodHandle[] TESTS_B = new MethodHandle[] {
-        TEST_0_B,
-        TEST_1_B,
-        TEST_2_B,
-        TEST_3_B,
-        TEST_N_B
     };
     
     private static final MethodHandle[] FALLBACKS_B = new MethodHandle[] {
@@ -1987,208 +2062,4 @@ public class InvocationLinker {
         FAIL_3_B,
         FAIL_N_B
     };
-    
-    ////////////////////////////////////////////////////////////////////////////
-    // Support method types and permutations
-    ////////////////////////////////////////////////////////////////////////////
-    
-    private static final MethodType STANDARD_NATIVE_TYPE = methodType(
-            IRubyObject.class, // return value
-            ThreadContext.class, //context
-            IRubyObject.class, // caller
-            IRubyObject.class // self
-            );
-    private static final MethodType STANDARD_NATIVE_TYPE_1ARG = STANDARD_NATIVE_TYPE.appendParameterTypes(IRubyObject.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_2ARG = STANDARD_NATIVE_TYPE_1ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_3ARG = STANDARD_NATIVE_TYPE_2ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_NARG = STANDARD_NATIVE_TYPE.appendParameterTypes(IRubyObject[].class);
-    private static final MethodType[] STANDARD_NATIVE_TYPES = {
-        STANDARD_NATIVE_TYPE,
-        STANDARD_NATIVE_TYPE_1ARG,
-        STANDARD_NATIVE_TYPE_2ARG,
-        STANDARD_NATIVE_TYPE_3ARG,
-        STANDARD_NATIVE_TYPE_NARG,
-    };
-    
-    private static final MethodType STANDARD_NATIVE_TYPE_BLOCK = STANDARD_NATIVE_TYPE.appendParameterTypes(Block.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_1ARG_BLOCK = STANDARD_NATIVE_TYPE_1ARG.appendParameterTypes(Block.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_2ARG_BLOCK = STANDARD_NATIVE_TYPE_2ARG.appendParameterTypes(Block.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_3ARG_BLOCK = STANDARD_NATIVE_TYPE_3ARG.appendParameterTypes(Block.class);
-    private static final MethodType STANDARD_NATIVE_TYPE_NARG_BLOCK = STANDARD_NATIVE_TYPE_NARG.appendParameterTypes(Block.class);
-    private static final MethodType[] STANDARD_NATIVE_TYPES_BLOCK = {
-        STANDARD_NATIVE_TYPE_BLOCK,
-        STANDARD_NATIVE_TYPE_1ARG_BLOCK,
-        STANDARD_NATIVE_TYPE_2ARG_BLOCK,
-        STANDARD_NATIVE_TYPE_3ARG_BLOCK,
-        STANDARD_NATIVE_TYPE_NARG_BLOCK,
-    };
-    
-    private static final MethodType TARGET_SELF = methodType(
-            IRubyObject.class, // return value
-            IRubyObject.class // self
-            );
-    private static final MethodType TARGET_SELF_1ARG = TARGET_SELF.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_SELF_2ARG = TARGET_SELF_1ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_SELF_3ARG = TARGET_SELF_2ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_SELF_NARG = TARGET_SELF.appendParameterTypes(IRubyObject[].class);
-    private static final MethodType[] TARGET_SELF_ARGS = {
-        TARGET_SELF,
-        TARGET_SELF_1ARG,
-        TARGET_SELF_2ARG,
-        TARGET_SELF_3ARG,
-        TARGET_SELF_NARG,
-    };
-    
-    private static final MethodType TARGET_SELF_BLOCK = TARGET_SELF.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_1ARG_BLOCK = TARGET_SELF_1ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_2ARG_BLOCK = TARGET_SELF_2ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_3ARG_BLOCK = TARGET_SELF_3ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_NARG_BLOCK = TARGET_SELF_NARG.appendParameterTypes(Block.class);
-    private static final MethodType[] TARGET_SELF_ARGS_BLOCK = {
-        TARGET_SELF_BLOCK,
-        TARGET_SELF_1ARG_BLOCK,
-        TARGET_SELF_2ARG_BLOCK,
-        TARGET_SELF_3ARG_BLOCK,
-        TARGET_SELF_NARG_BLOCK,
-    };
-    
-    private static final MethodType TARGET_SELF_TC = TARGET_SELF.appendParameterTypes(ThreadContext.class);
-    private static final MethodType TARGET_SELF_TC_1ARG = TARGET_SELF_TC.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_SELF_TC_2ARG = TARGET_SELF_TC_1ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_SELF_TC_3ARG = TARGET_SELF_TC_2ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_SELF_TC_NARG = TARGET_SELF_TC.appendParameterTypes(IRubyObject[].class);
-    private static final MethodType[] TARGET_SELF_TC_ARGS = {
-        TARGET_SELF_TC,
-        TARGET_SELF_TC_1ARG,
-        TARGET_SELF_TC_2ARG,
-        TARGET_SELF_TC_3ARG,
-        TARGET_SELF_TC_NARG,
-    };
-    
-    private static final MethodType TARGET_SELF_TC_BLOCK = TARGET_SELF_TC.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_TC_1ARG_BLOCK = TARGET_SELF_TC_1ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_TC_2ARG_BLOCK = TARGET_SELF_TC_2ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_TC_3ARG_BLOCK = TARGET_SELF_TC_3ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_SELF_TC_NARG_BLOCK = TARGET_SELF_TC_NARG.appendParameterTypes(Block.class);
-    private static final MethodType[] TARGET_SELF_TC_ARGS_BLOCK = {
-        TARGET_SELF_TC_BLOCK,
-        TARGET_SELF_TC_1ARG_BLOCK,
-        TARGET_SELF_TC_2ARG_BLOCK,
-        TARGET_SELF_TC_3ARG_BLOCK,
-        TARGET_SELF_TC_NARG_BLOCK,
-    };
-    
-    private static final MethodType TARGET_TC_SELF = methodType(
-            IRubyObject.class, // return value
-            ThreadContext.class, //context
-            IRubyObject.class // self
-            );
-    private static final MethodType TARGET_TC_SELF_1ARG = TARGET_TC_SELF.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_TC_SELF_2ARG = TARGET_TC_SELF_1ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_TC_SELF_3ARG = TARGET_TC_SELF_2ARG.appendParameterTypes(IRubyObject.class);
-    private static final MethodType TARGET_TC_SELF_NARG = TARGET_TC_SELF.appendParameterTypes(IRubyObject[].class);
-    private static final MethodType[] TARGET_TC_SELF_ARGS = {
-        TARGET_TC_SELF,
-        TARGET_TC_SELF_1ARG,
-        TARGET_TC_SELF_2ARG,
-        TARGET_TC_SELF_3ARG,
-        TARGET_TC_SELF_NARG,
-    };
-    
-    private static final MethodType TARGET_TC_SELF_BLOCK = TARGET_TC_SELF.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_TC_SELF_1ARG_BLOCK = TARGET_TC_SELF_1ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_TC_SELF_2ARG_BLOCK = TARGET_TC_SELF_2ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_TC_SELF_3ARG_BLOCK = TARGET_TC_SELF_3ARG.appendParameterTypes(Block.class);
-    private static final MethodType TARGET_TC_SELF_NARG_BLOCK = TARGET_TC_SELF_NARG.appendParameterTypes(Block.class);
-    private static final MethodType[] TARGET_TC_SELF_ARGS_BLOCK = {
-        TARGET_TC_SELF_BLOCK,
-        TARGET_TC_SELF_1ARG_BLOCK,
-        TARGET_TC_SELF_2ARG_BLOCK,
-        TARGET_TC_SELF_3ARG_BLOCK,
-        TARGET_TC_SELF_NARG_BLOCK
-    };
-    
-    private static final int[] SELF_TC_PERMUTE = {2, 0};
-    private static final int[] SELF_TC_1ARG_PERMUTE = {2, 0, 3};
-    private static final int[] SELF_TC_2ARG_PERMUTE = {2, 0, 3, 4};
-    private static final int[] SELF_TC_3ARG_PERMUTE = {2, 0, 3, 4, 5};
-    private static final int[] SELF_TC_NARG_PERMUTE = {2, 0, 3};
-    private static final int[][] SELF_TC_ARGS_PERMUTES = {
-        SELF_TC_PERMUTE,
-        SELF_TC_1ARG_PERMUTE,
-        SELF_TC_2ARG_PERMUTE,
-        SELF_TC_3ARG_PERMUTE,
-        SELF_TC_NARG_PERMUTE
-    };
-    private static final int[] SELF_PERMUTE = {2};
-    private static final int[] SELF_1ARG_PERMUTE = {2, 3};
-    private static final int[] SELF_2ARG_PERMUTE = {2, 3, 4};
-    private static final int[] SELF_3ARG_PERMUTE = {2, 3, 4, 5};
-    private static final int[] SELF_NARG_PERMUTE = {2, 3};
-    private static final int[][] SELF_ARGS_PERMUTES = {
-        SELF_PERMUTE,
-        SELF_1ARG_PERMUTE,
-        SELF_2ARG_PERMUTE,
-        SELF_3ARG_PERMUTE,
-        SELF_NARG_PERMUTE
-    };
-    private static final int[] SELF_TC_BLOCK_PERMUTE = {2, 0, 3};
-    private static final int[] SELF_TC_1ARG_BLOCK_PERMUTE = {2, 0, 3, 4};
-    private static final int[] SELF_TC_2ARG_BLOCK_PERMUTE = {2, 0, 3, 4, 5};
-    private static final int[] SELF_TC_3ARG_BLOCK_PERMUTE = {2, 0, 3, 4, 5, 6};
-    private static final int[] SELF_TC_NARG_BLOCK_PERMUTE = {2, 0, 3, 4};
-    private static final int[][] SELF_TC_ARGS_BLOCK_PERMUTES = {
-        SELF_TC_BLOCK_PERMUTE,
-        SELF_TC_1ARG_BLOCK_PERMUTE,
-        SELF_TC_2ARG_BLOCK_PERMUTE,
-        SELF_TC_3ARG_BLOCK_PERMUTE,
-        SELF_TC_NARG_BLOCK_PERMUTE
-    };
-    private static final int[] SELF_BLOCK_PERMUTE = {2, 3};
-    private static final int[] SELF_1ARG_BLOCK_PERMUTE = {2, 3, 4};
-    private static final int[] SELF_2ARG_BLOCK_PERMUTE = {2, 3, 4, 5};
-    private static final int[] SELF_3ARG_BLOCK_PERMUTE = {2, 3, 4, 5, 6};
-    private static final int[] SELF_NARG_BLOCK_PERMUTE = {2, 3, 4};
-    private static final int[][] SELF_ARGS_BLOCK_PERMUTES = {
-        SELF_BLOCK_PERMUTE,
-        SELF_1ARG_BLOCK_PERMUTE,
-        SELF_2ARG_BLOCK_PERMUTE,
-        SELF_3ARG_BLOCK_PERMUTE,
-        SELF_NARG_BLOCK_PERMUTE
-    };
-    private static final int[] TC_SELF_PERMUTE = {0, 2};
-    private static final int[] TC_SELF_1ARG_PERMUTE = {0, 2, 3};
-    private static final int[] TC_SELF_2ARG_PERMUTE = {0, 2, 3, 4};
-    private static final int[] TC_SELF_3ARG_PERMUTE = {0, 2, 3, 4, 5};
-    private static final int[] TC_SELF_NARG_PERMUTE = {0, 2, 3};
-    private static final int[][] TC_SELF_ARGS_PERMUTES = {
-        TC_SELF_PERMUTE,
-        TC_SELF_1ARG_PERMUTE,
-        TC_SELF_2ARG_PERMUTE,
-        TC_SELF_3ARG_PERMUTE,
-        TC_SELF_NARG_PERMUTE,
-    };
-    private static final int[] TC_SELF_BLOCK_PERMUTE = {0, 2, 3};
-    private static final int[] TC_SELF_1ARG_BLOCK_PERMUTE = {0, 2, 3, 4};
-    private static final int[] TC_SELF_2ARG_BLOCK_PERMUTE = {0, 2, 3, 4, 5};
-    private static final int[] TC_SELF_3ARG_BLOCK_PERMUTE = {0, 2, 3, 4, 5, 6};
-    private static final int[] TC_SELF_NARG_BLOCK_PERMUTE = {0, 2, 3, 4};
-    private static final int[][] TC_SELF_ARGS_BLOCK_PERMUTES = {
-        TC_SELF_BLOCK_PERMUTE,
-        TC_SELF_1ARG_BLOCK_PERMUTE,
-        TC_SELF_2ARG_BLOCK_PERMUTE,
-        TC_SELF_3ARG_BLOCK_PERMUTE,
-        TC_SELF_NARG_BLOCK_PERMUTE,
-    };
-    private static final int[] TC_SELF_BLOCK_PERMUTE_1 = {0, 2, 4};
-    private static final int[] TC_SELF_BLOCK_PERMUTE_2 = {0, 2, 5};
-    private static final int[] TC_SELF_BLOCK_PERMUTE_3 = {0, 2, 6};
-    private static final int[] TC_SELF_BLOCK_PERMUTE_N = {0, 2, 4};
-    private static final int[][] TC_SELF_BLOCK_PERMUTES = {
-            TC_SELF_BLOCK_PERMUTE,
-            TC_SELF_BLOCK_PERMUTE_1,
-            TC_SELF_BLOCK_PERMUTE_2,
-            TC_SELF_BLOCK_PERMUTE_3,
-            TC_SELF_BLOCK_PERMUTE_N,
-    };
-}
+    }

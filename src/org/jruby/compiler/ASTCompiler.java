@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 
 package org.jruby.compiler;
@@ -36,7 +36,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.jcodings.Encoding;
-import org.jruby.RubyClass;
 import org.jruby.RubyFixnum;
 import org.jruby.RubyFloat;
 import org.jruby.RubyInstanceConfig;
@@ -44,20 +43,12 @@ import org.jruby.RubyMatchData;
 import org.jruby.RubyString;
 import org.jruby.ast.*;
 import org.jruby.exceptions.JumpException;
-import org.jruby.internal.runtime.methods.DefaultMethod;
-import org.jruby.internal.runtime.methods.DynamicMethod;
-import org.jruby.internal.runtime.methods.DynamicMethod.NativeCall;
-import org.jruby.internal.runtime.methods.InterpretedMethod;
-import org.jruby.internal.runtime.methods.JittedMethod;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.BlockBody;
 import org.jruby.runtime.CallType;
 import org.jruby.runtime.MethodIndex;
-import org.jruby.runtime.callsite.CacheEntry;
-import org.jruby.runtime.callsite.CachingCallSite;
-import org.jruby.util.ByteList;
 import org.jruby.util.DefinedMessage;
 import org.jruby.util.StringSupport;
 
@@ -464,39 +455,39 @@ public class ASTCompiler {
         }
     }
 
-    public void compileAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileAssignment(Node node, BodyCompiler context) {
         switch (node.getNodeType()) {
             case ATTRASSIGNNODE:
-                compileAttrAssignAssignment(node, context, expr);
+                compileAttrAssignAssignment(node, context);
                 break;
             case DASGNNODE:
                 DAsgnNode dasgnNode = (DAsgnNode)node;
-                context.getVariableCompiler().assignLocalVariable(dasgnNode.getIndex(), dasgnNode.getDepth(), expr);
+                context.getVariableCompiler().assignLocalVariable(dasgnNode.getIndex(), dasgnNode.getDepth(), false);
                 break;
             case CLASSVARASGNNODE:
-                compileClassVarAsgnAssignment(node, context, expr);
+                compileClassVarAsgnAssignment(node, context);
                 break;
             case CLASSVARDECLNODE:
-                compileClassVarDeclAssignment(node, context, expr);
+                compileClassVarDeclAssignment(node, context);
                 break;
             case CONSTDECLNODE:
-                compileConstDeclAssignment(node, context, expr);
+                compileConstDeclAssignment(node, context);
                 break;
             case GLOBALASGNNODE:
-                compileGlobalAsgnAssignment(node, context, expr);
+                compileGlobalAsgnAssignment(node, context);
                 break;
             case INSTASGNNODE:
-                compileInstAsgnAssignment(node, context, expr);
+                compileInstAsgnAssignment(node, context);
                 break;
             case LOCALASGNNODE:
                 LocalAsgnNode localAsgnNode = (LocalAsgnNode)node;
-                context.getVariableCompiler().assignLocalVariable(localAsgnNode.getIndex(), localAsgnNode.getDepth(), expr);
+                context.getVariableCompiler().assignLocalVariable(localAsgnNode.getIndex(), localAsgnNode.getDepth(), false);
                 break;
             case MULTIPLEASGNNODE:
-                compileMultipleAsgnAssignment(node, context, expr);
+                compileMultipleAsgnAssignment(node, context, false);
                 break;
             case ZEROARGNODE:
-                context.consumeCurrentValue();;
+                context.consumeCurrentValue();
                 break;
             default:
                 throw new NotCompilableException("Can't compile assignment node: " + node);
@@ -638,7 +629,7 @@ public class ASTCompiler {
         context.getInvocationCompiler().invokeAttrAssign(attrAssignNode.getName(), receiverCallback, argsCallback, isSelf, expr);
     }
 
-    public void compileAttrAssignAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileAttrAssignAssignment(Node node, BodyCompiler context) {
         final AttrAssignNode attrAssignNode = (AttrAssignNode) node;
 
         CompilerCallback receiverCallback = new CompilerCallback() {
@@ -651,9 +642,9 @@ public class ASTCompiler {
         // Ruby 1.8 and 1.9 only bypass visibility check when receiver is statically
         // determined to be self.
         boolean isSelf = attrAssignNode.getReceiverNode() instanceof SelfNode;
+        
+        // this is always treated as non-expr, so it pops for us
         context.getInvocationCompiler().invokeAttrAssignMasgn(attrAssignNode.getName(), receiverCallback, argsCallback, isSelf);
-        // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
     }
 
     public void compileBackref(Node node, BodyCompiler context, boolean expr) {
@@ -1104,12 +1095,12 @@ public class ASTCompiler {
         if (!expr) context.consumeCurrentValue();
     }
 
-    public void compileClassVarAsgnAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileClassVarAsgnAssignment(Node node, BodyCompiler context) {
         ClassVarAsgnNode classVarAsgnNode = (ClassVarAsgnNode) node;
 
         context.assignClassVariable(classVarAsgnNode.getName());
         // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
+        context.consumeCurrentValue();
     }
 
     public void compileClassVarDecl(Node node, BodyCompiler context, boolean expr) {
@@ -1126,52 +1117,58 @@ public class ASTCompiler {
         if (!expr) context.consumeCurrentValue();
     }
 
-    public void compileClassVarDeclAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileClassVarDeclAssignment(Node node, BodyCompiler context) {
         ClassVarDeclNode classVarDeclNode = (ClassVarDeclNode) node;
 
         context.declareClassVariable(classVarDeclNode.getName());
         // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
+        context.consumeCurrentValue();
     }
 
     public void compileConstDecl(Node node, BodyCompiler context, boolean expr) {
         // TODO: callback for value would be more efficient, but unlikely to be a big cost (constants are rarely assigned)
-        ConstDeclNode constDeclNode = (ConstDeclNode) node;
-        Node constNode = constDeclNode.getConstNode();
+        final ConstDeclNode constDeclNode = (ConstDeclNode) node;
+        final Node constNode = constDeclNode.getConstNode();
 
         if (constNode == null) {
-            compile(constDeclNode.getValueNode(), context,true);
-
-            context.assignConstantInCurrent(constDeclNode.getName());
+            context.assignConstantInCurrent(constDeclNode.getName(), new CompilerCallback() {
+                public void call(BodyCompiler context) {
+                    compile(constDeclNode.getValueNode(), context, true);
+                }
+            });
         } else if (constNode.getNodeType() == NodeType.COLON2NODE) {
-            compile(constDeclNode.getValueNode(), context,true);
-            compile(((Colon2Node) constNode).getLeftNode(), context,true);
-
-            context.assignConstantInModule(constDeclNode.getName());
+            context.assignConstantInModule(constDeclNode.getName(), new CompilerCallback() {
+                public void call(BodyCompiler context) {
+                    compile(constDeclNode.getValueNode(), context, true);
+                    compile(((Colon2Node) constNode).getLeftNode(), context, true);
+                }
+            });
         } else {// colon3, assign in Object
-            compile(constDeclNode.getValueNode(), context,true);
-
-            context.assignConstantInObject(constDeclNode.getName());
+            context.assignConstantInObject(constDeclNode.getName(), new CompilerCallback() {
+                public void call(BodyCompiler context) {
+                    compile(constDeclNode.getValueNode(), context, true);
+                }
+            });
         }
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
 
-    public void compileConstDeclAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileConstDeclAssignment(Node node, BodyCompiler context) {
         // TODO: callback for value would be more efficient, but unlikely to be a big cost (constants are rarely assigned)
         ConstDeclNode constDeclNode = (ConstDeclNode) node;
         Node constNode = constDeclNode.getConstNode();
 
         if (constNode == null) {
-            context.assignConstantInCurrent(constDeclNode.getName());
+            context.mAssignConstantInCurrent(constDeclNode.getName());
         } else if (constNode.getNodeType() == NodeType.COLON2NODE) {
             compile(((Colon2Node) constNode).getLeftNode(), context,true);
-            context.assignConstantInModule(constDeclNode.getName());
+            context.mAssignConstantInModule(constDeclNode.getName());
         } else {// colon3, assign in Object
-            context.assignConstantInObject(constDeclNode.getName());
+            context.mAssignConstantInObject(constDeclNode.getName());
         }
         // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
+        context.consumeCurrentValue();
     }
 
     public void compileConst(Node node, BodyCompiler context, boolean expr) {
@@ -1801,7 +1798,7 @@ public class ASTCompiler {
                 defnNode.getName(), defnNode.getArgsNode().getArity().getValue(),
                 defnNode.getScope(), body, args, null, inspector, isAtRoot,
                 defnNode.getPosition().getFile(), defnNode.getPosition().getStartLine(),
-                RuntimeHelpers.encodeParameterList(argsNode));
+                Helpers.encodeParameterList(argsNode));
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -1859,7 +1856,7 @@ public class ASTCompiler {
                 defsNode.getName(), defsNode.getArgsNode().getArity().getValue(),
                 defsNode.getScope(), body, args, receiver, inspector, false,
                 defsNode.getPosition().getFile(), defsNode.getPosition().getStartLine(),
-                RuntimeHelpers.encodeParameterList(argsNode));
+                Helpers.encodeParameterList(argsNode));
         // TODO: don't require pop
         if (!expr) context.consumeCurrentValue();
     }
@@ -1893,7 +1890,7 @@ public class ASTCompiler {
                         public void nextValue(BodyCompiler context, Object object, int index) {
                             Node optArg = ((ListNode) object).get(index);
 
-                            compileAssignment(optArg, context, false);
+                            compileAssignment(optArg, context);
                         }
                     };
             optionalNotGiven = new ArrayCallback() {
@@ -2311,7 +2308,7 @@ public class ASTCompiler {
 
                     public void call(BodyCompiler context) {
                         if (forNode.getVarNode() != null) {
-                            compileAssignment(forNode.getVarNode(), context, false);
+                            compileAssignment(forNode.getVarNode(), context);
 
                             // consume the block, since for loops can't receive block
                             context.consumeCurrentValue();
@@ -2368,7 +2365,7 @@ public class ASTCompiler {
         if (!expr) context.consumeCurrentValue();
     }
 
-    public void compileGlobalAsgnAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileGlobalAsgnAssignment(Node node, BodyCompiler context) {
         GlobalAsgnNode globalAsgnNode = (GlobalAsgnNode) node;
 
         if (globalAsgnNode.getName().length() == 2) {
@@ -2387,7 +2384,7 @@ public class ASTCompiler {
         }
         
         // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
+        context.consumeCurrentValue();
     }
 
     public void compileGlobalVar(Node node, BodyCompiler context, boolean expr) {
@@ -2485,9 +2482,17 @@ public class ASTCompiler {
                 }
             };
             
-            // normal
-            compileCondition(actualCondition, context, true);
-            context.performBooleanBranch2(trueCallback, falseCallback);
+            if (actualCondition.getNodeType() == NodeType.GLOBALVARNODE) {
+                // use fast logic to cache raw boolean of global
+                context.performBooleanGlobalBranch(((GlobalVarNode)actualCondition).getName(), trueCallback, falseCallback);
+            } else if (actualCondition.getNodeType() == NodeType.CONSTNODE) {
+                // use fast logic to cache raw boolean of global
+                context.performBooleanConstantBranch(((ConstNode)actualCondition).getName(), trueCallback, falseCallback);
+            } else {
+                // normal
+                compileCondition(actualCondition, context, true);
+                context.performBooleanBranch2(trueCallback, falseCallback);
+            }
         }
     }
     
@@ -2540,11 +2545,11 @@ public class ASTCompiler {
         if (!expr) context.consumeCurrentValue();
     }
 
-    public void compileInstAsgnAssignment(Node node, BodyCompiler context, boolean expr) {
+    public void compileInstAsgnAssignment(Node node, BodyCompiler context) {
         InstAsgnNode instAsgnNode = (InstAsgnNode) node;
         context.assignInstanceVariable(instAsgnNode.getName());
         // TODO: don't require pop
-        if (!expr) context.consumeCurrentValue();
+        context.consumeCurrentValue();
     }
 
     public void compileInstVar(Node node, BodyCompiler context, boolean expr) {
@@ -2572,13 +2577,13 @@ public class ASTCompiler {
         final CompilerCallback closureArgs = new CompilerCallback() {
             public void call(BodyCompiler context) {
                 if (iterNode.getVarNode() != null) {
-                    compileAssignment(iterNode.getVarNode(), context, false);
+                    compileAssignment(iterNode.getVarNode(), context);
                 } else {
                     context.consumeCurrentValue();
                 }
 
                 if (iterNode.getBlockVarNode() != null) {
-                    compileAssignment(iterNode.getBlockVarNode(), context, false);
+                    compileAssignment(iterNode.getBlockVarNode(), context);
                 } else {
                     context.consumeCurrentValue();
                 }
@@ -2755,7 +2760,7 @@ public class ASTCompiler {
                             }
                             context.reverseValues(size);
                             for (Node asgn : multipleAsgnNode.getHeadNode().childNodes()) {
-                                compileAssignment(asgn, context, false);
+                                compileAssignment(asgn, context);
                             }
                             return;
                         }
@@ -2774,13 +2779,13 @@ public class ASTCompiler {
                     // slice puts on stack in reverse order
                     context.preMultiAssign(1, false);
                     // assign
-                    compileAssignment(multipleAsgnNode.getHeadNode().childNodes().get(0), context, false);
+                    compileAssignment(multipleAsgnNode.getHeadNode().childNodes().get(0), context);
                 } else {
                     // slice puts on stack in reverse order
                     context.preMultiAssign(1, true);
                     // assign
-                    compileAssignment(multipleAsgnNode.getHeadNode().childNodes().get(0), context, false);
-                    compileAssignment(multipleAsgnNode.getArgsNode(), context, false);
+                    compileAssignment(multipleAsgnNode.getHeadNode().childNodes().get(0), context);
+                    compileAssignment(multipleAsgnNode.getArgsNode(), context);
                 }
                 return;
             }
@@ -2808,7 +2813,7 @@ public class ASTCompiler {
                         Node assignNode = headNode.get(index);
 
                         // perform assignment for the next node
-                        compileAssignment(assignNode, context, false);
+                        compileAssignment(assignNode, context);
                     }
                 };
 
@@ -2821,7 +2826,7 @@ public class ASTCompiler {
                             context.consumeCurrentValue();
                         } else {
                             // assign to appropriate variable
-                            compileAssignment(argsNode, context, false);
+                            compileAssignment(argsNode, context);
                         }
                     }
                 };

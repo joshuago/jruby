@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -27,148 +27,20 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.parser;
 
 import java.math.BigInteger;
 import org.jcodings.Encoding;
-import org.jcodings.specific.EUCJPEncoding;
-import org.jcodings.specific.SJISEncoding;
-import org.jcodings.specific.USASCIIEncoding;
-import org.jcodings.specific.UTF8Encoding;
 import org.jruby.CompatVersion;
 import org.jruby.RubyBignum;
 import org.jruby.RubyRegexp;
-import org.jruby.ast.AliasNode;
-import org.jruby.ast.AndNode;
-import org.jruby.ast.ArgsPreOneArgNode;
-import org.jruby.ast.ArgsPreTwoArgNode;
-import org.jruby.ast.ArgsCatNode;
-import org.jruby.ast.ArgsNoArgNode;
-import org.jruby.ast.ArgsNode;
-import org.jruby.ast.ArgsPushNode;
-import org.jruby.ast.ArgumentNode;
-import org.jruby.ast.ArrayNode;
-import org.jruby.ast.AssignableNode;
-import org.jruby.ast.AttrAssignNode;
-import org.jruby.ast.AttrAssignOneArgNode;
-import org.jruby.ast.AttrAssignThreeArgNode;
-import org.jruby.ast.AttrAssignTwoArgNode;
-import org.jruby.ast.BackRefNode;
-import org.jruby.ast.BeginNode;
-import org.jruby.ast.BignumNode;
-import org.jruby.ast.BinaryOperatorNode;
-import org.jruby.ast.BlockArg18Node;
-import org.jruby.ast.BlockArgNode;
-import org.jruby.ast.BlockNode;
-import org.jruby.ast.BlockPassNode;
-import org.jruby.ast.CallManyArgsBlockNode;
-import org.jruby.ast.CallManyArgsBlockPassNode;
-import org.jruby.ast.CallManyArgsNode;
-import org.jruby.ast.CallNoArgBlockNode;
-import org.jruby.ast.CallNoArgBlockPassNode;
-import org.jruby.ast.CallNoArgNode;
-import org.jruby.ast.CallNode;
-import org.jruby.ast.CallOneArgNode;
-import org.jruby.ast.CallOneArgBlockNode;
-import org.jruby.ast.CallOneArgBlockPassNode;
-import org.jruby.ast.CallOneArgFixnumNode;
-import org.jruby.ast.CallSpecialArgNode;
-import org.jruby.ast.CallSpecialArgBlockNode;
-import org.jruby.ast.CallSpecialArgBlockPassNode;
-import org.jruby.ast.CallThreeArgBlockNode;
-import org.jruby.ast.CallThreeArgBlockPassNode;
-import org.jruby.ast.CallThreeArgNode;
-import org.jruby.ast.CallTwoArgBlockNode;
-import org.jruby.ast.CallTwoArgBlockPassNode;
-import org.jruby.ast.CallTwoArgNode;
-import org.jruby.ast.CaseNode;
-import org.jruby.ast.ClassVarAsgnNode;
-import org.jruby.ast.ClassVarDeclNode;
-import org.jruby.ast.ClassVarNode;
-import org.jruby.ast.Colon2ConstNode;
-import org.jruby.ast.Colon2ImplicitNode;
-import org.jruby.ast.Colon2MethodNode;
-import org.jruby.ast.Colon2Node;
-import org.jruby.ast.Colon3Node;
-import org.jruby.ast.ConstDeclNode;
-import org.jruby.ast.ConstNode;
-import org.jruby.ast.DAsgnNode;
-import org.jruby.ast.DRegexpNode;
-import org.jruby.ast.DStrNode;
-import org.jruby.ast.DotNode;
-import org.jruby.ast.EncodingNode;
-import org.jruby.ast.EvStrNode;
-import org.jruby.ast.FCallManyArgsBlockNode;
-import org.jruby.ast.FCallManyArgsBlockPassNode;
-import org.jruby.ast.FCallManyArgsNode;
-import org.jruby.ast.FCallNoArgBlockNode;
-import org.jruby.ast.FCallNoArgBlockPassNode;
-import org.jruby.ast.FCallNoArgNode;
-import org.jruby.ast.FCallOneArgBlockNode;
-import org.jruby.ast.FCallOneArgBlockPassNode;
-import org.jruby.ast.FCallOneArgNode;
-import org.jruby.ast.FCallSpecialArgBlockPassNode;
-import org.jruby.ast.FCallSpecialArgNode;
-import org.jruby.ast.FCallThreeArgBlockNode;
-import org.jruby.ast.FCallThreeArgBlockPassNode;
-import org.jruby.ast.FCallThreeArgNode;
-import org.jruby.ast.FCallTwoArgBlockNode;
-import org.jruby.ast.FCallTwoArgBlockPassNode;
-import org.jruby.ast.FCallTwoArgNode;
-import org.jruby.ast.FalseNode;
-import org.jruby.ast.FileNode;
-import org.jruby.ast.FixnumNode;
-import org.jruby.ast.FlipNode;
-import org.jruby.ast.FloatNode;
-import org.jruby.ast.GlobalAsgnNode;
-import org.jruby.ast.GlobalVarNode;
-import org.jruby.ast.IArgumentNode;
-import org.jruby.ast.IfNode;
-import org.jruby.ast.InstAsgnNode;
-import org.jruby.ast.InstVarNode;
-import org.jruby.ast.IterNode;
-import org.jruby.ast.KeywordArgNode;
-import org.jruby.ast.KeywordRestArgNode;
-import org.jruby.ast.ListNode;
-import org.jruby.ast.LocalAsgnNode;
-import org.jruby.ast.Match2Node;
-import org.jruby.ast.Match3Node;
-import org.jruby.ast.MatchNode;
-import org.jruby.ast.MultipleAsgnNode;
-import org.jruby.ast.NewlineNode;
-import org.jruby.ast.NilImplicitNode;
-import org.jruby.ast.NilNode;
-import org.jruby.ast.Node;
-import org.jruby.ast.NthRefNode;
-import org.jruby.ast.OpElementAsgnNode;
-import org.jruby.ast.OpElementOneArgAndAsgnNode;
-import org.jruby.ast.OpElementOneArgAsgnNode;
-import org.jruby.ast.OpElementOneArgOrAsgnNode;
-import org.jruby.ast.OrNode;
-import org.jruby.ast.RegexpNode;
-import org.jruby.ast.RestArgNode;
-import org.jruby.ast.RootNode;
-import org.jruby.ast.SValueNode;
-import org.jruby.ast.SelfNode;
-import org.jruby.ast.SplatNode;
-import org.jruby.ast.StrNode;
-import org.jruby.ast.SuperNode;
-import org.jruby.ast.SymbolNode;
-import org.jruby.ast.TrueNode;
-import org.jruby.ast.UndefNode;
-import org.jruby.ast.WhenNode;
-import org.jruby.ast.WhenOneArgNode;
-import org.jruby.ast.YieldNode;
-import org.jruby.ast.YieldOneNode;
-import org.jruby.ast.YieldThreeNode;
-import org.jruby.ast.YieldTwoNode;
-import org.jruby.ast.ZYieldNode;
+import org.jruby.ast.*;
 import org.jruby.ast.types.ILiteralNode;
 import org.jruby.ast.types.INameNode;
 import org.jruby.common.IRubyWarnings;
@@ -940,6 +812,25 @@ public class ParserSupport {
         return node;
     }
     
+    public Node new_opAssign(AssignableNode lhs, String asgnOp, Node rhs) {
+        checkExpression(rhs);
+
+        ISourcePosition pos = lhs.getPosition();
+        
+        if (asgnOp.equals("||")) {
+            lhs.setValueNode(rhs);
+            return new OpAsgnOrNode(pos, gettable2(lhs), lhs);
+        } else if (asgnOp.equals("&&")) {
+            lhs.setValueNode(rhs);
+            return new OpAsgnAndNode(pos, gettable2(lhs), lhs);
+        }
+        
+        lhs.setValueNode(getOperatorCallNode(gettable2(lhs), asgnOp, rhs));
+        lhs.setPosition(pos);
+        
+        return lhs;
+    }
+    
     public Node new_opElementAsgnNode(ISourcePosition position, Node receiverNode, String operatorName, Node argsNode, Node valueNode) {
         if (argsNode instanceof ArrayNode) {
             ArrayNode array = (ArrayNode) argsNode;
@@ -1254,6 +1145,13 @@ public class ParserSupport {
         return new DStrNode(position);
     }
     
+    public Node asSymbol(ISourcePosition position, Node value) {
+        // FIXME: This might have an encoding issue since toString generally uses iso-8859-1
+        if (value instanceof StrNode) return new SymbolNode(position, ((StrNode) value).getValue().toString());
+        
+        return new DSymbolNode(position, (DStrNode) value);
+    }
+    
     public Node literal_concat(ISourcePosition position, Node head, Node tail) { 
         if (head == null) return tail;
         if (tail == null) return head;
@@ -1425,23 +1323,29 @@ public class ParserSupport {
     
     public Node new_args(ISourcePosition position, ListNode pre, ListNode optional, RestArgNode rest,
             ListNode post, ArgsTailHolder tail) {
+        if (tail == null) return new_args(position, pre, optional, rest, post, (BlockArgNode) null);
+        
         // Zero-Argument declaration
-        if (optional == null && rest == null && post == null && (tail == null || tail.getBlockArg() == null)) {
+        if (optional == null && rest == null && post == null && !tail.hasKeywordArgs()) {
             if (pre == null || pre.size() == 0) return new ArgsNoArgNode(position);
             if (pre.size() == 1 && !hasAssignableArgs(pre)) return new ArgsPreOneArgNode(position, pre);
             if (pre.size() == 2 && !hasAssignableArgs(pre)) return new ArgsPreTwoArgNode(position, pre);
         }
 
-        if (tail == null) return new ArgsNode(position, pre, optional, rest, post, null);
-        
         return new ArgsNode(position, pre, optional, rest, post, 
                 tail.getKeywordArgs(), tail.getKeywordRestArgNode(), tail.getBlockArg());
-    }    
+    }
     
     public ArgsTailHolder new_args_tail(ISourcePosition position, ListNode keywordArg, 
             Token keywordRestArgName, BlockArgNode blockArg) {
-        KeywordRestArgNode keywordRestArg = keywordRestArgName != null ? new KeywordRestArgNode(position,
-                currentScope.declare(position, (String) keywordRestArgName.getValue())) : null;
+        if (keywordRestArgName == null) return new ArgsTailHolder(position, keywordArg, null, blockArg);
+        
+        String restKwargsName = (String) keywordRestArgName.getValue();
+
+        int slot = currentScope.exists(restKwargsName);
+        if (slot == -1) slot = currentScope.addVariable(restKwargsName);
+
+        KeywordRestArgNode keywordRestArg = new KeywordRestArgNode(position, restKwargsName, slot);
         
         return new ArgsTailHolder(position, keywordArg, keywordRestArg, blockArg);
     }    
@@ -1502,9 +1406,7 @@ public class ParserSupport {
     }
 
     public void warning(ID id, ISourcePosition position, String message, Object... data) {
-        if (warnings.isVerbose()) {
-            warnings.warning(id, position, message);
-        }
+        if (warnings.isVerbose()) warnings.warning(id, position, message);
     }
 
     // ENEBO: Totally weird naming (in MRI is not allocated and is a local var name) [1.9]
@@ -1547,8 +1449,8 @@ public class ParserSupport {
                 name = "_$" + count++;
             }
         }
-        return new ArgumentNode(identifier.getPosition(), name,
-                getCurrentScope().addVariableThisScope(name));
+        
+        return new ArgumentNode(identifier.getPosition(), name, current.addVariableThisScope(name));
     }
 
     public Token formal_argument(Token identifier) {

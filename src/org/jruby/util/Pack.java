@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -27,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.util;
 
@@ -713,7 +713,7 @@ public class Pack {
      *       remaining elements.  <br/>
      *       The directives <code>sSiIlL</code> may each be followed by an underscore (``<code>_</code>'') to use the underlying platform's native size for the specified type; otherwise, it uses a platform-independent consistent size.  <br/>
      *       Spaces are ignored in the format string.
-     *           @see RubyArray#pack
+     * 
      *       <table border="2" width="500" bgcolor="#ffe0e0">
      *           <tr>
      *             <td>
@@ -939,6 +939,7 @@ public class Pack {
      *           </tr>
      *         </table>
      *
+     * @see RubyArray#pack
      **/
     public static RubyArray unpack(Ruby runtime, ByteList encodedString, ByteList formatString) {
         Encoding encoding = encodedString.getEncoding();
@@ -949,11 +950,19 @@ public class Pack {
         int type = 0;
         int next = safeGet(format);
 
-        while (next != 0) {
+        mainLoop: while (next != 0) {
             type = next;
             next = safeGet(format);
             if (UNPACK_IGNORE_NULL_CODES.indexOf(type) != -1 && next == 0) {
                 next = safeGetIgnoreNull(format);
+            }
+            
+            if (type == '#') {
+                while (type != '\n') {
+                    if (next == 0) break mainLoop;
+                    type = next;
+                    next = safeGet(format);
+                }
             }
 
             // Next indicates to decode using native encoding format
@@ -977,6 +986,8 @@ public class Pack {
                 }
                 type = ENDIANESS_CODES.charAt(index);
                 next = safeGet(format);
+                
+                if (next == '_' || next == '!') next = safeGet(format);
             }
 
             // How many occurrences of 'type' we want
@@ -1573,11 +1584,8 @@ public class Pack {
             result.append(converter.decode(runtime, encode));
         }
 
-        // MRI behavior:  for 'Q', do not add trailing nils
-        if (converter != converters['Q']) {
-            for (; lPadLength-- > 0;)
+        for (; lPadLength-- > 0;)
             result.append(runtime.getNil());
-        }
     }
 
     public static int encode(Ruby runtime, int occurrences, ByteList result,
@@ -1735,7 +1743,19 @@ public class Pack {
      * pack_pack
      *
      * Template characters for Array#pack Directive  Meaning
-     *              <table class="codebox" cellspacing="0" border="0" cellpadding="3">
+     *       Packs the contents of arr into a binary sequence according to the directives in
+     *       aTemplateString (see preceding table).
+     *       Directives ``A,'' ``a,'' and ``Z'' may be followed by a count, which gives the
+     *       width of the resulting field.
+     *       The remaining directives also may take a count, indicating the number of array
+     *       elements to convert.
+     *       If the count is an asterisk (``*''] = all remaining array elements will be
+     *       converted.
+     *       Any of the directives ``sSiIlL'' may be followed by an underscore (``_'') to use
+     *       the underlying platform's native size for the specified type; otherwise, they
+     *       use a platform-independent size. Spaces are ignored in the template string.
+     * 
+     *       <table class="codebox" cellspacing="0" border="0" cellpadding="3">
      * <tr bgcolor="#ff9999">
      *   <td valign="top">
      *                     <b>Directive</b>
@@ -1892,19 +1912,7 @@ public class Pack {
      *                   <td colspan="9" bgcolor="#ff9999" height="2"><img src="dot.gif" width="1" height="1"></td>
      *                 </tr>
      *               </table>
-     *
-     *
-     * Packs the contents of arr into a binary sequence according to the directives in
-     * aTemplateString (see preceding table).
-     * Directives ``A,'' ``a,'' and ``Z'' may be followed by a count, which gives the
-     * width of the resulting field.
-     * The remaining directives also may take a count, indicating the number of array
-     * elements to convert.
-     * If the count is an asterisk (``*''] = all remaining array elements will be
-     * converted.
-     * Any of the directives ``sSiIlL'' may be followed by an underscore (``_'') to use
-     * the underlying platform's native size for the specified type; otherwise, they
-     * use a platform-independent size. Spaces are ignored in the template string.
+     * 
      * @see RubyString#unpack
      **/
     @SuppressWarnings("fallthrough")

@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -24,11 +24,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.runtime;
 
@@ -64,11 +64,20 @@ public class Binding {
 
     /**
      * Binding-local scope for 1.9 mode.
-     *
-     * Because bindings are usually cloned before used for eval, we make this an array,
-     * so it can be shared between both the original binding and the cloned copy.
      */
-    private DynamicScope[] evalScope = new DynamicScope[1];
+    private DynamicScope evalScope;
+    
+    /**
+     * Location of eval scope.
+     * 
+     * 
+     * Because bindings are usually cloned before used for eval, we indirect
+     * the reference of the eval scope through another Binding reference,
+     * allowing us to share the same eval scope across multiple Binding
+     * instances without the cost of allocating a DynamicScope[1] for each new
+     * Binding object.
+     */
+    private Binding evalScopeBinding = this;
     
     public Binding(IRubyObject self, Frame frame,
             Visibility visibility, RubyModule klass, DynamicScope dynamicScope, BacktraceElement backtrace) {
@@ -81,14 +90,14 @@ public class Binding {
     }
 
     private Binding(IRubyObject self, Frame frame,
-                   Visibility visibility, RubyModule klass, DynamicScope dynamicScope, DynamicScope[] evalScope, BacktraceElement backtrace) {
+                   Visibility visibility, RubyModule klass, DynamicScope dynamicScope, BacktraceElement backtrace, DynamicScope dummyScope) {
         this.self = self;
-        this.frame = frame.duplicate();
+        this.frame = frame;
         this.visibility = visibility;
         this.klass = klass;
         this.dynamicScope = dynamicScope;
-        this.evalScope = evalScope;
         this.backtrace = backtrace;
+        this.dummyScope = dummyScope;
     }
     
     public Binding(Frame frame, RubyModule bindingClass, DynamicScope dynamicScope, BacktraceElement backtrace) {
@@ -99,17 +108,31 @@ public class Binding {
         this.dynamicScope = dynamicScope;
         this.backtrace = backtrace;
     }
+    
+    private Binding(Binding other) {
+        this(other.self, other.frame.duplicate(), other.visibility, other.klass, other.dynamicScope, other.backtrace, other.dummyScope);
+    }
 
+    /**
+     * Clone the binding, but maintain a reference to the original "eval
+     * binding" to continue sharing eval context.
+     * 
+     * @return a new Binding with shared eval context
+     */
+    public Binding cloneForEval() {
+        Binding clone = new Binding(this);
+        clone.evalScopeBinding = this;
+        return clone;
+    }
+
+    /**
+     * Clone the binding. The frame will be duplicated, and eval context will
+     * point to the new binding, but other fields will be copied as-is.
+     * 
+     * @return a new cloned Binding
+     */
     public Binding clone() {
-        return new Binding(self, frame, visibility, klass, dynamicScope, evalScope, backtrace);
-    }
-
-    public Binding deepClone() {
-        return new Binding(self, frame.duplicate(), visibility, klass, dynamicScope.cloneScope(), evalScope.clone(), backtrace);
-    }
-
-    public Binding clone(Visibility visibility) {
-        return new Binding(self, frame, visibility, klass, dynamicScope, evalScope, backtrace);
+        return new Binding(this);
     }
 
     public Visibility getVisibility() {
@@ -217,21 +240,23 @@ public class Binding {
         // We only define one special dynamic scope per 'logical' binding.  So all bindings for
         // the same scope should share the same dynamic scope.  This allows multiple evals with
         // different different bindings in the same scope to see the same stuff.
-
-        // No binding scope so we should create one
-        if (evalScope[0] == null) {
+        
+        // No eval scope set, so we create one
+        if (evalScopeBinding.evalScope == null) {
+            
             // If the next scope out has the same binding scope as this scope it means
             // we are evaling within an eval and in that case we should be sharing the same
             // binding scope.
             DynamicScope parent = dynamicScope.getNextCapturedScope();
+            
             if (parent != null && parent.getEvalScope(runtime) == dynamicScope) {
-                evalScope[0] = dynamicScope;
+                evalScopeBinding.evalScope = dynamicScope;
             } else {
                 // bindings scopes must always be ManyVars scopes since evals can grow them
-                evalScope[0] = new ManyVarsDynamicScope(runtime.getStaticScopeFactory().newEvalScope(dynamicScope.getStaticScope()), dynamicScope);
+                evalScopeBinding.evalScope = new ManyVarsDynamicScope(runtime.getStaticScopeFactory().newEvalScope(dynamicScope.getStaticScope()), dynamicScope);
             }
         }
 
-        return evalScope[0];
+        return evalScopeBinding.evalScope;
     }
 }

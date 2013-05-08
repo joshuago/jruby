@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.compiler;
 
@@ -40,7 +40,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -50,24 +49,49 @@ import org.jruby.MetaClass;
 import org.jruby.RubyEncoding;
 import org.jruby.RubyInstanceConfig;
 import org.jruby.ast.ArgsNode;
+import org.jruby.ast.IterNode;
+import org.jruby.ast.LambdaNode;
+import org.jruby.ast.MultipleAsgnNode;
 import org.jruby.ast.Node;
+import org.jruby.ast.NodeType;
+import org.jruby.ast.executable.AbstractScript;
 import org.jruby.ast.executable.Script;
 import org.jruby.ast.util.SexpMaker;
+import org.jruby.compiler.impl.ChildScopedBodyCompiler;
+import org.jruby.compiler.impl.ChildScopedBodyCompiler19;
+import org.jruby.compiler.impl.SkinnyMethodAdapter;
 import org.jruby.compiler.impl.StandardASMCompiler;
+import static org.jruby.compiler.impl.StandardASMCompiler.ARGS_INDEX;
+import static org.jruby.compiler.impl.StandardASMCompiler.SELF_INDEX;
+import static org.jruby.compiler.impl.StandardASMCompiler.THIS;
+import static org.jruby.compiler.impl.StandardASMCompiler.THREADCONTEXT_INDEX;
+import static org.jruby.compiler.impl.StandardASMCompiler.getMethodSignature;
+import static org.jruby.compiler.impl.StandardASMCompiler.getStaticMethodSignature;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.internal.runtime.methods.CallConfiguration;
 import org.jruby.internal.runtime.methods.DefaultMethod;
 import org.jruby.parser.StaticScope;
+import org.jruby.runtime.Arity;
+import org.jruby.runtime.Binding;
+import org.jruby.runtime.Block;
+import org.jruby.runtime.BlockBody;
+import static org.jruby.runtime.BlockBody.getArgumentTypeWackyHack;
+import org.jruby.runtime.CompiledBlock;
+import org.jruby.runtime.CompiledBlock19;
+import org.jruby.runtime.CompiledBlockCallback;
+import org.jruby.runtime.CompiledBlockCallback19;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.threading.DaemonThreadFactory;
 import org.jruby.util.ClassCache;
+import org.jruby.util.JRubyClassLoader;
 import org.jruby.util.JavaNameMangler;
-import org.jruby.util.cli.Options;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.util.TraceClassVisitor;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
+import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
 
 public class JITCompiler implements JITCompilerMBean {
     private static final Logger LOG = LoggerFactory.getLogger("JITCompiler");
@@ -96,7 +120,7 @@ public class JITCompiler implements JITCompilerMBean {
                     0, // never stop
                     TimeUnit.SECONDS,
                     new LinkedBlockingQueue<Runnable>(),
-                    new DaemonThreadFactory("JRubyJIT"));
+                    new DaemonThreadFactory("JRubyJIT", Thread.MIN_PRIORITY));
     
     public JITCompiler(Ruby ruby) {
         ruby.getBeanManager().register(this);
@@ -105,6 +129,246 @@ public class JITCompiler implements JITCompilerMBean {
     public void tryJIT(DefaultMethod method, ThreadContext context, String className, String methodName) {
         if (context.runtime.getInstanceConfig().getCompileMode().shouldJIT()) {
             jitIsEnabled(method, context, className, methodName);
+        }
+    }
+
+    public Block newCompiledClosure(ThreadContext context, IterNode iterNode, IRubyObject self) {
+        Binding binding = context.currentBinding(self);
+        NodeType argsNodeId = getArgumentTypeWackyHack(iterNode);
+
+        boolean hasMultipleArgsHead = false;
+        if (iterNode.getVarNode() instanceof MultipleAsgnNode) {
+            hasMultipleArgsHead = ((MultipleAsgnNode) iterNode.getVarNode()).getHeadNode() != null;
+        }
+
+        BlockBody body = new CompiledBlock(Arity.procArityOf(iterNode.getVarNode()), iterNode.getScope(), compileBlock(context, new StandardASMCompiler("blahfooblah" + System.currentTimeMillis(), "blahfooblah"), iterNode), hasMultipleArgsHead, BlockBody.asArgumentType(argsNodeId));
+        return new Block(body, binding);
+    }
+
+    public BlockBody newCompiledBlockBody(ThreadContext context, IterNode iterNode, Arity arity, int argumentType) {
+        NodeType argsNodeId = getArgumentTypeWackyHack(iterNode);
+
+        boolean hasMultipleArgsHead = false;
+        if (iterNode.getVarNode() instanceof MultipleAsgnNode) {
+            hasMultipleArgsHead = ((MultipleAsgnNode) iterNode.getVarNode()).getHeadNode() != null;
+        }
+        return new CompiledBlock(Arity.procArityOf(iterNode.getVarNode()), iterNode.getScope(), compileBlock(context, new StandardASMCompiler("blahfooblah" + System.currentTimeMillis(), "blahfooblah"), iterNode), hasMultipleArgsHead, BlockBody.asArgumentType(argsNodeId));
+    }
+
+    // ENEBO: Some of this logic should be put back into the Nodes themselves, but the more
+    // esoteric features of 1.9 make this difficult to know how to do this yet.
+    public BlockBody newCompiledBlockBody19(ThreadContext context, IterNode iterNode) {
+        final ArgsNode argsNode = (ArgsNode)iterNode.getVarNode();
+
+        boolean hasMultipleArgsHead = false;
+        if (iterNode.getVarNode() instanceof MultipleAsgnNode) {
+            hasMultipleArgsHead = ((MultipleAsgnNode) iterNode.getVarNode()).getHeadNode() != null;
+        }
+
+        NodeType argsNodeId = BlockBody.getArgumentTypeWackyHack(iterNode);
+        
+        return new CompiledBlock19(((ArgsNode)iterNode.getVarNode()).getArity(), iterNode.getScope(), compileBlock19(context, new StandardASMCompiler("blahfooblah" + System.currentTimeMillis(), "blahfooblah"), iterNode), hasMultipleArgsHead, BlockBody.asArgumentType(argsNodeId), Helpers.encodeParameterList(argsNode).split(";"));
+    }
+    
+    public CompiledBlockCallback compileBlock(ThreadContext context, StandardASMCompiler asmCompiler, final IterNode iterNode) {
+        final ASTCompiler astCompiler = new ASTCompiler();
+        final StaticScope scope = iterNode.getScope();
+        
+        asmCompiler.startScript(scope);
+        
+        // create the closure class and instantiate it
+        final CompilerCallback closureBody = new CompilerCallback() {
+
+                    public void call(BodyCompiler context) {
+                        if (iterNode.getBodyNode() != null) {
+                            astCompiler.compile(iterNode.getBodyNode(), context, true);
+                        } else {
+                            context.loadNil();
+                        }
+                    }
+                };
+
+        // create the closure class and instantiate it
+        final CompilerCallback closureArgs = new CompilerCallback() {
+            public void call(BodyCompiler context) {
+                if (iterNode.getVarNode() != null) {
+                    astCompiler.compileAssignment(iterNode.getVarNode(), context);
+                } else {
+                    context.consumeCurrentValue();
+                }
+
+                if (iterNode.getBlockVarNode() != null) {
+                    astCompiler.compileAssignment(iterNode.getBlockVarNode(), context);
+                } else {
+                    context.consumeCurrentValue();
+                }
+            }
+        };
+
+        ASTInspector inspector = new ASTInspector();
+        inspector.inspect(iterNode.getBodyNode());
+        inspector.inspect(iterNode.getVarNode());
+        
+        int scopeIndex = asmCompiler.getCacheCompiler().reserveStaticScope();
+        ChildScopedBodyCompiler closureCompiler = new ChildScopedBodyCompiler(asmCompiler, "__file__", asmCompiler.getClassname(), inspector, scope, scopeIndex);
+        
+        closureCompiler.beginMethod(closureArgs, scope);
+        
+        closureBody.call(closureCompiler);
+        
+        closureCompiler.endBody();
+        
+        // __file__ method with [] args; no-op
+        SkinnyMethodAdapter method = new SkinnyMethodAdapter(asmCompiler.getClassVisitor(), ACC_PUBLIC, "__file__", getMethodSignature(4), null, null);
+        method.start();
+
+        method.aload(SELF_INDEX);
+        method.areturn();
+        method.end();
+        
+        // __file__ method to call static version
+        method = new SkinnyMethodAdapter(asmCompiler.getClassVisitor(), ACC_PUBLIC, "__file__", getMethodSignature(1), null, null);
+        method.start();
+
+        // invoke static __file__
+        method.aload(THIS);
+        method.aload(THREADCONTEXT_INDEX);
+        method.aload(SELF_INDEX);
+        method.aload(ARGS_INDEX);
+        method.aload(ARGS_INDEX + 1); // block
+        method.invokestatic(asmCompiler.getClassname(), "__file__", getStaticMethodSignature(asmCompiler.getClassname(), 1));
+
+        method.areturn();
+        method.end();
+        
+        asmCompiler.endScript(false, false);
+        
+        byte[] bytes = asmCompiler.getClassByteArray();
+        Class blockClass = new JRubyClassLoader(context.runtime.getJRubyClassLoader()).defineClass(asmCompiler.getClassname(), bytes);
+        try {
+            final AbstractScript script = (AbstractScript)blockClass.newInstance();
+            script.setRootScope(scope);
+            
+            return new CompiledBlockCallback() {
+
+                @Override
+                public IRubyObject call(ThreadContext context, IRubyObject self, IRubyObject args, Block block) {
+                    return script.__file__(context, self, args, block);
+                }
+
+                @Override
+                public String getFile() {
+                    return "blah";
+                }
+
+                @Override
+                public int getLine() {
+                    return -1;
+                }
+            };
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+    
+    public CompiledBlockCallback19 compileBlock19(ThreadContext context, StandardASMCompiler asmCompiler, final IterNode iterNode) {
+        final ASTCompiler19 astCompiler = new ASTCompiler19();
+        final StaticScope scope = iterNode.getScope();
+        
+        asmCompiler.startScript(scope);
+        
+        final ArgsNode argsNode = (ArgsNode)iterNode.getVarNode();
+
+        // create the closure class and instantiate it
+        final CompilerCallback closureBody = new CompilerCallback() {
+            public void call(BodyCompiler context) {
+                if (iterNode.getBodyNode() != null) {
+                    astCompiler.compile(iterNode.getBodyNode(), context, true);
+                } else {
+                    context.loadNil();
+                }
+            }
+        };
+
+        // create the closure class and instantiate it
+        final CompilerCallback closureArgs = new CompilerCallback() {
+            public void call(BodyCompiler context) {
+                // FIXME: This is temporary since the variable compilers assume we want
+                // args already on stack for assignment. We just pop and continue with
+                // 1.9 args logic.
+                context.consumeCurrentValue(); // args value
+                context.consumeCurrentValue(); // passed block
+                if (iterNode.getVarNode() != null) {
+                    if (iterNode instanceof LambdaNode) {
+                        final int required = argsNode.getRequiredArgsCount();
+                        final int opt = argsNode.getOptionalArgsCount();
+                        final int rest = argsNode.getRestArg();
+                        context.getVariableCompiler().checkMethodArity(required, opt, rest);
+                        astCompiler.compileMethodArgs(argsNode, context, true);
+                    } else {
+                        astCompiler.compileMethodArgs(argsNode, context, true);
+                    }
+                }
+            }
+        };
+
+        ASTInspector inspector = new ASTInspector();
+        inspector.inspect(iterNode.getBodyNode());
+        inspector.inspect(iterNode.getVarNode());
+        
+        NodeType argsNodeId = BlockBody.getArgumentTypeWackyHack(iterNode);
+        
+        int scopeIndex = asmCompiler.getCacheCompiler().reserveStaticScope();
+        ChildScopedBodyCompiler closureCompiler = new ChildScopedBodyCompiler19(asmCompiler, "__file__", asmCompiler.getClassname(), inspector, scope, scopeIndex);
+        
+        closureCompiler.beginMethod(argsNodeId == null ? null : closureArgs, scope);
+        
+        closureBody.call(closureCompiler);
+        
+        closureCompiler.endBody();
+        
+        // __file__ method to call static version
+        SkinnyMethodAdapter method = new SkinnyMethodAdapter(asmCompiler.getClassVisitor(), ACC_PUBLIC, "__file__", getMethodSignature(4), null, null);
+        method.start();
+
+        // invoke static __file__
+        method.aload(THIS);
+        method.aload(THREADCONTEXT_INDEX);
+        method.aload(SELF_INDEX);
+        method.aload(ARGS_INDEX);
+        method.aload(ARGS_INDEX + 1); // block
+        method.invokestatic(asmCompiler.getClassname(), "__file__", asmCompiler.getStaticMethodSignature(asmCompiler.getClassname(), 4));
+
+        method.areturn();
+        method.end();
+        
+        asmCompiler.endScript(false, false);
+        
+        byte[] bytes = asmCompiler.getClassByteArray();
+        Class blockClass = new JRubyClassLoader(context.runtime.getJRubyClassLoader()).defineClass(asmCompiler.getClassname(), bytes);
+        try {
+            final AbstractScript script = (AbstractScript)blockClass.newInstance();
+            script.setRootScope(scope);
+            
+            return new CompiledBlockCallback19() {
+
+                @Override
+                public IRubyObject call(ThreadContext context, IRubyObject self, IRubyObject[] args, Block block) {
+                    return script.__file__(context, self, args, block);
+                }
+
+                @Override
+                public String getFile() {
+                    return iterNode.getPosition().getFile();
+                }
+
+                @Override
+                public int getLine() {
+                    return iterNode.getPosition().getLine();
+                }
+            };
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -164,7 +428,7 @@ public class JITCompiler implements JITCompilerMBean {
                     String key = SexpMaker.create(methodName, method.getArgsNode(), method.getBodyNode());
                     JITClassGenerator generator = new JITClassGenerator(className, methodName, key, runtime, method, counts);
 
-                    Class<Script> sourceClass = (Class<Script>) config.getClassCache().cacheClassByKey(key, generator);
+                    Class<Script> sourceClass = (Class<Script>) config.getClassCache().cacheClassByKey(generator.digestString, generator);
 
                     if (sourceClass == null) {
                         // class could not be found nor generated; give up on JIT and bail out
@@ -177,6 +441,9 @@ public class JITCompiler implements JITCompilerMBean {
 
                     // finally, grab the script
                     Script jitCompiledScript = sourceClass.newInstance();
+
+                    // set root scope
+                    jitCompiledScript.setRootScope(method.getStaticScope());
 
                     // add to the jitted methods set
                     Set<Script> jittedMethods = runtime.getJittedMethods();

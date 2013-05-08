@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -19,6 +20,7 @@ import org.jruby.RubyArray;
 import org.jruby.RubyClass;
 import org.jruby.RubyHash;
 import org.jruby.RubyHash.Visitor;
+import org.jruby.RubyInteger;
 import org.jruby.RubyMethod;
 import org.jruby.RubyModule;
 import org.jruby.RubyObject;
@@ -35,7 +37,7 @@ import org.jruby.javasupport.Java;
 import org.jruby.javasupport.JavaClass;
 import org.jruby.javasupport.JavaMethod;
 import org.jruby.javasupport.JavaObject;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
@@ -122,12 +124,12 @@ public class JavaProxy extends RubyObject {
     // framed for invokeSuper
     @JRubyMethod(frame = true, meta = true)
     public static IRubyObject inherited(ThreadContext context, IRubyObject recv, IRubyObject subclass) {
-        IRubyObject subJavaClass = RuntimeHelpers.invoke(context, subclass, "java_class");
+        IRubyObject subJavaClass = Helpers.invoke(context, subclass, "java_class");
         if (subJavaClass.isNil()) {
-            subJavaClass = RuntimeHelpers.invoke(context, recv, "java_class");
-            RuntimeHelpers.invoke(context, subclass, "java_class=", subJavaClass);
+            subJavaClass = Helpers.invoke(context, recv, "java_class");
+            Helpers.invoke(context, subclass, "java_class=", subJavaClass);
         }
-        return RuntimeHelpers.invokeSuper(context, recv, subclass, Block.NULL_BLOCK);
+        return Helpers.invokeSuper(context, recv, subclass, Block.NULL_BLOCK);
     }
     
     @JRubyMethod(meta = true)
@@ -137,15 +139,25 @@ public class JavaProxy extends RubyObject {
     
     @JRubyMethod(name = "[]", meta = true, rest = true)
     public static IRubyObject op_aref(ThreadContext context, IRubyObject recv, IRubyObject[] args) {
-        IRubyObject javaClass = RuntimeHelpers.invoke(context, recv, "java_class");
+        IRubyObject javaClass = Helpers.invoke(context, recv, "java_class");
         if (args.length > 0) {
             // construct new array proxy (ArrayJavaProxy)
             ArrayJavaProxyCreator ajpc = new ArrayJavaProxyCreator(context.runtime);
             ajpc.setup(context, javaClass, args);
             return ajpc;
         } else {
-            return Java.get_proxy_class(javaClass, RuntimeHelpers.invoke(context, javaClass, "array_class"));
+            return Java.get_proxy_class(javaClass, Helpers.invoke(context, javaClass, "array_class"));
         }
+    }
+    
+    @JRubyMethod(meta = true)
+    public static IRubyObject new_array(ThreadContext context, IRubyObject recv, IRubyObject arg0) {
+        JavaClass javaClass = (JavaClass) Helpers.invoke(context, recv, "java_class");
+        RubyClass proxyClass = (RubyClass)recv;
+        Class componentType = javaClass.javaClass();
+        
+        // construct new array proxy (ArrayJavaProxy)
+        return new ArrayJavaProxy(context.runtime, proxyClass, Array.newInstance(componentType, (int)((RubyInteger)arg0.convertToInteger()).getLongValue()));
     }
 
     @JRubyMethod(name = "__persistent__=", meta = true)
@@ -169,7 +181,7 @@ public class JavaProxy extends RubyObject {
 
     private static Class<?> getJavaClass(ThreadContext context, RubyModule module) {
         try {
-        IRubyObject jClass = RuntimeHelpers.invoke(context, module, "java_class");
+        IRubyObject jClass = Helpers.invoke(context, module, "java_class");
 
 
         return !(jClass instanceof JavaClass) ? null : ((JavaClass) jClass).javaClass();
@@ -449,11 +461,13 @@ public class JavaProxy extends RubyObject {
     @Override
     public Object toJava(Class type) {
         Object obj = getObject();
-        if (type.isAssignableFrom(obj.getClass())) {
+        Class cls = obj.getClass();
+        
+        if (type.isAssignableFrom(cls)) {
             return obj;
-        } else {
-            return super.toJava(type);
         }
+        
+        throw getRuntime().newTypeError("failed to coerce " + cls.getName() + " to " + type.getName());
     }
 
     @Override

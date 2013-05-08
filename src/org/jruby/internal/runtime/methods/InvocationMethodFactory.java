@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -20,11 +20,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.internal.runtime.methods;
 
@@ -202,7 +202,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      */
     public DynamicMethod getCompiledMethodLazily(
             RubyModule implementationClass,
-            String method,
+            String rubyName,
+            String javaName,
             Arity arity,
             Visibility visibility,
             StaticScope scope,
@@ -213,7 +214,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
         return new CompiledMethod.LazyCompiledMethod(
                 implementationClass,
-                method,
+                rubyName,
+                javaName,
                 arity,
                 visibility,
                 scope,
@@ -235,7 +237,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      */
     public DynamicMethod getCompiledMethod(
             RubyModule implementationClass,
-            String method,
+            String rubyName,
+            String javaName,
             Arity arity,
             Visibility visibility,
             StaticScope scope,
@@ -246,7 +249,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         
         Class scriptClass = scriptObject.getClass();
         String typePath = p(scriptClass);
-        String invokerPath = getCompiledCallbackName(typePath, method);
+        String invokerPath = getCompiledCallbackName(typePath, javaName);
         try {
             Class generatedClass = tryClass(invokerPath, scriptClass);
             if (generatedClass == null) {
@@ -258,7 +261,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
                             LOG.debug("no generated handle in classloader for: {}", invokerPath);
                         }
                         byte[] invokerBytes = getCompiledMethodOffline(
-                                method,
+                                rubyName,
+                                javaName,
                                 typePath,
                                 invokerPath,
                                 arity,
@@ -282,7 +286,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
             } else {
                 params = StandardASMCompiler.getStaticMethodParams(scriptClass, 4);
             }
-            compiledMethod.setNativeCall(scriptClass, method, IRubyObject.class, params, true);
+            compiledMethod.setNativeCall(scriptClass, javaName, IRubyObject.class, params, true);
 
             return compiledMethod;
         } catch(Exception e) {
@@ -298,7 +302,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
      */
     @Override
     public byte[] getCompiledMethodOffline(
-            String method, String className, String invokerPath, Arity arity,
+            String RubyName, String method, String className, String invokerPath, Arity arity,
             StaticScope scope, CallConfiguration callConfig, String filename, int line) {
         String sup = COMPILED_SUPER_CLASS;
         ClassWriter cw;
@@ -589,13 +593,16 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         return endCallOffline(cw);
     }
     
-    private static class DescriptorInfo {
+    static class DescriptorInfo {
         private int min;
         private int max;
         private boolean frame;
         private boolean scope;
         private boolean rest;
         private boolean block;
+        private String parameterDesc;
+        
+        private static final boolean RICH_NATIVE_METHOD_PARAMETERS = false;
         
         public DescriptorInfo(List<JavaMethodDescriptor> descs) {
             min = Integer.MAX_VALUE;
@@ -660,6 +667,41 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
                 scope |= desc.anno.scope();
                 block |= desc.hasBlock;
             }
+            
+            // Core methods currently only show :req's for fixed-arity or a single
+            // :rest if it's variable arity. I have filed a bug to improve this
+            // (using the skipped logic below, when the time comes) but for now
+            // we follow suit. See https://bugs.ruby-lang.org/issues/8088
+            
+            StringBuilder descBuilder = new StringBuilder();
+            if (min == max) {
+                int i = 0;
+                for (; i < min; i++) {
+                    if (i > 0) descBuilder.append(';');
+                    descBuilder.append("q");
+                }
+               // variable arity
+            } else if (RICH_NATIVE_METHOD_PARAMETERS) {
+                int i = 0;
+                for (; i < min; i++) {
+                    if (i > 0) descBuilder.append(';');
+                    descBuilder.append("q");
+                }
+
+                for (; i < max; i++) {
+                    if (i > 0) descBuilder.append(';');
+                    descBuilder.append("o");
+                }
+
+                if (rest) {
+                    if (i > 0) descBuilder.append(';');
+                    descBuilder.append("r");
+                }
+            } else {
+                descBuilder.append("r");
+            }
+            
+            parameterDesc = descBuilder.toString();
         }
 
         @Deprecated
@@ -689,6 +731,10 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         
         public boolean isBlock() {
             return block;
+        }
+        
+        public String getParameterDesc() {
+            return parameterDesc;
         }
     }
 
@@ -795,8 +841,8 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
 
                     if (superClass == null) throw new RuntimeException("invalid multi combination");
                     String superClassString = p(superClass);
-                    int dotIndex = desc1.declaringClassName.lastIndexOf('.');
-                    ClassWriter cw = createJavaMethodCtor(generatedClassPath, desc1.declaringClassName.substring(dotIndex + 1) + "$" + desc1.name, superClassString);
+                    
+                    ClassWriter cw = createJavaMethodCtor(generatedClassPath, superClassString, info.getParameterDesc());
 
                     addAnnotatedMethodInvoker(cw, "call", superClassString, descs);
 
@@ -1117,7 +1163,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         return cw;
     }
 
-    private ClassWriter createJavaMethodCtor(String namePath, String shortPath, String sup) throws Exception {
+    private ClassWriter createJavaMethodCtor(String namePath, String sup, String parameterDesc) throws Exception {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         String sourceFile = namePath.substring(namePath.lastIndexOf('/') + 1) + ".gen";
         cw.visit(RubyInstanceConfig.JAVA_VERSION, ACC_PUBLIC + ACC_SUPER, namePath, null, sup, null);
@@ -1126,6 +1172,9 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
         mv.start();
         mv.aloadMany(0, 1, 2);
         mv.visitMethodInsn(INVOKESPECIAL, sup, "<init>", JAVA_SUPER_SIG);
+        mv.aload(0);
+        mv.ldc(parameterDesc);
+        mv.invokevirtual(p(JavaMethod.class), "setParameterDesc", sig(void.class, String.class));
         mv.voidreturn();
         mv.end();
         
@@ -1516,8 +1565,7 @@ public class InvocationMethodFactory extends MethodFactory implements Opcodes {
             if (desc.getReturnClass() == void.class) {
                 // void return type, so we need to load a nil for returning below
                 method.aload(THREADCONTEXT_INDEX);
-                method.invokevirtual(p(ThreadContext.class), "getRuntime", sig(Ruby.class));
-                method.invokevirtual(p(Ruby.class), "getNil", sig(IRubyObject.class));
+                method.getfield(p(ThreadContext.class), "nil", ci(IRubyObject.class));
             }
         }
         method.label(tryEnd);

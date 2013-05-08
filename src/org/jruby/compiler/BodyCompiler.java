@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -18,11 +18,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 
 package org.jruby.compiler;
@@ -273,6 +273,24 @@ public interface BodyCompiler {
     public void performBooleanBranch2(BranchCallback trueBranch, BranchCallback falseBranch);
     
     /**
+     * Perform a boolean branch operation based on the boolean global value
+     * on the stack. If true, invoke the true branch callback. Otherwise, invoke the false branch callback.
+     * 
+     * @param trueBranch The callback for generating code for the "true" condition
+     * @param falseBranch The callback for generating code for the "false" condition
+     */
+    public void performBooleanGlobalBranch(String globalName, BranchCallback trueBranch, BranchCallback falseBranch);
+    
+    /**
+     * Perform a boolean branch operation based on the boolean constant value
+     * on the stack. If true, invoke the true branch callback. Otherwise, invoke the false branch callback.
+     * 
+     * @param trueBranch The callback for generating code for the "true" condition
+     * @param falseBranch The callback for generating code for the "false" condition
+     */
+    public void performBooleanConstantBranch(String globalName, BranchCallback trueBranch, BranchCallback falseBranch);
+    
+    /**
      * Perform a logical short-circuited Ruby "and" operation, using Ruby notions of true and false.
      * If the value on top of the stack is false, it remains and the branch is not executed. If it is true,
      * the top of the stack is replaced with the result of the branch.
@@ -370,12 +388,54 @@ public interface BodyCompiler {
      * Define an alias for a new name to an existing oldName'd method.
      */
     public void defineAlias(CompilerCallback args);
-    
-    public void assignConstantInCurrent(String name);
-    
-    public void assignConstantInModule(String name);
-    
-    public void assignConstantInObject(String name);
+
+    /**
+     * Assign a constant on the class or module currently in scope.
+     *
+     * @param name name of the constant
+     * @param value callback to load the value
+     */
+    public void assignConstantInCurrent(String name, CompilerCallback value);
+
+    /**
+     * Assign a constant on a specific class or module.
+     *
+     * @param name name of the constant
+     * @param moduleAndValue callback to load the class/module and value
+     */
+    public void assignConstantInModule(String name, CompilerCallback moduleAndValue);
+
+    /**
+     * Assign a constant on the Object class.
+     *
+     * @param name name of the constant
+     * @param value callback to load the value
+     */
+    public void assignConstantInObject(String name, CompilerCallback value);
+
+    /**
+     * Assign a constant on the class or module currently in scope. The value
+     * is expected to be on the top of the stack.
+     *
+     * @param name name of the constant
+     */
+    public void mAssignConstantInCurrent(String name);
+
+    /**
+     * Assign a constant on a specific class or module. The class/module
+     * and value are expected to be on the top of the stack.
+     *
+     * @param name name of the constant
+     */
+    public void mAssignConstantInModule(String name);
+
+    /**
+     * Assign a constant on the Object class. The value
+     * is expected to be on the top of the stack.
+     *
+     * @param name name of the constant
+     */
+    public void mAssignConstantInObject(String name);
     
     /**
      * Retrieve the constant with the specified name available at the current point in the

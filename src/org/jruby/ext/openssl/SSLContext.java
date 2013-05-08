@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: CPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 1.0/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Common Public
+ * The contents of this file are subject to the Eclipse Public
  * License Version 1.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/cpl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v10.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -19,11 +19,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the CPL, indicate your
+ * use your version of this file under the terms of the EPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the CPL, the GPL or the LGPL.
+ * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
 package org.jruby.ext.openssl;
 
@@ -45,7 +45,6 @@ import org.jruby.RubyModule;
 import org.jruby.RubyNumeric;
 import org.jruby.RubyObject;
 import org.jruby.RubyString;
-import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.common.IRubyWarnings.ID;
 import org.jruby.exceptions.RaiseException;
@@ -56,7 +55,7 @@ import org.jruby.ext.openssl.x509store.StoreContext;
 import org.jruby.ext.openssl.x509store.X509AuxCertificate;
 import org.jruby.ext.openssl.x509store.X509Object;
 import org.jruby.ext.openssl.x509store.X509Utils;
-import org.jruby.javasupport.util.RuntimeHelpers;
+import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.BlockCallback;
@@ -68,7 +67,6 @@ import org.jruby.runtime.builtin.IRubyObject;
 /**
  * @author <a href="mailto:ola.bini@ki.se">Ola Bini</a>
  */
-@SuppressWarnings("deprecation")
 public class SSLContext extends RubyObject {
     private static final long serialVersionUID = -6203496135962974777L;
 
@@ -127,6 +125,9 @@ public class SSLContext extends RubyObject {
         for(int i=0;i<ctx_attrs.length;i++) {
             cSSLContext.addReadWriteAttribute(runtime.getCurrentContext(), ctx_attrs[i]);
         }
+        
+        cSSLContext.defineAlias("ssl_timeout", "timeout");
+        cSSLContext.defineAlias("ssl_timeout=", "timeout=");
 
         cSSLContext.defineAnnotatedMethods(SSLContext.class);
     }
@@ -138,7 +139,7 @@ public class SSLContext extends RubyObject {
     public static RaiseException newSSLError(Ruby runtime, String message) {
         return Utils.newError(runtime, "OpenSSL::SSL::SSLError", message, false);
     }
-
+    
     private String ciphers = CipherStrings.SSL_DEFAULT_CIPHER_LIST;
     private String protocol = "SSL"; // SSLv23 in OpenSSL by default
     private boolean protocolForServer = true;
@@ -527,7 +528,7 @@ public class SSLContext extends RubyObject {
         final ArrayList<X509Cert> result = new ArrayList<X509Cert>();
         ThreadContext ctx = getRuntime().getCurrentContext();
         RubyClass klass = Utils.getClassFromPath(ctx.runtime, "OpenSSL::SSL::SSLContext");
-        RuntimeHelpers.invoke(ctx, value, "each", CallBlock.newCallClosure(value, klass, Arity.NO_ARGUMENTS, new BlockCallback() {
+        Helpers.invoke(ctx, value, "each", CallBlock.newCallClosure(value, klass, Arity.NO_ARGUMENTS, new BlockCallback() {
 
             public IRubyObject call(ThreadContext context, IRubyObject[] args, Block block) {
                 Utils.checkKind(getRuntime(), args[0], "OpenSSL::X509::Certificate");
