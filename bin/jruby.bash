@@ -299,6 +299,9 @@ if [[ $darwin && -z "$JAVA_ENCODING" ]]; then
   java_args=("${java_args[@]}" "-Dfile.encoding=UTF-8")
 fi
 
+# prefer IPv4 to IPv6; see https://github.com/jruby/jruby/issues/775
+java_args=("${java_args[@]}" "-Djava.net.preferIPv4Stack=true")
+
 # Append the rest of the arguments
 ruby_args=("${ruby_args[@]}" "$@")
 
@@ -308,8 +311,8 @@ set -- "${ruby_args[@]}"
 JAVA_OPTS="$JAVA_OPTS $JAVA_MEM $JAVA_MEM_MIN $JAVA_STACK"
 
 JFFI_BOOT=""
-if [ -d "$JRUBY_HOME/lib/native/" ]; then
-  for d in $JRUBY_HOME/lib/native/*`uname -s`; do
+if [ -d "$JRUBY_HOME/lib/jni/" ]; then
+  for d in $JRUBY_HOME/lib/jni/*`uname -s`; do
     if [ -z "$JFFI_BOOT" ]; then
       JFFI_BOOT="$d"
     else

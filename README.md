@@ -1,6 +1,6 @@
 # JRuby -  A Java implementation of the Ruby language
 
-[![Build Status](https://travis-ci.org/jruby/jruby.png)](https://travis-ci.org/jruby/jruby)
+[![Build Status](https://travis-ci.org/jruby/jruby.png?branch=master)](https://travis-ci.org/jruby/jruby)
 
 Authors: Stefan Matthias Aust, Anders Bengtsson, Geert Bevin,
  Piergiuliano Bossi, Johannes Brodwall, Rocky Burt, Paul Butcher,
@@ -37,28 +37,20 @@ see the next section to build JRuby first.
 
 ## Compiling from source
 
-You will need:
-
-* JDK 1.6 or greater
-* Apache Ant (http://jakarta.apache.org/ant/) 1.7.0 or later.
-
-To compile, just type:
-
-    ant
-
-This will create a `jruby.jar` file in the project `lib` directory.
-Add `bin` to your `$PATH`, and invoke `jruby`.
+See [BUILDING](BUILDING.md) for more information.
 
 ## Testing
 
 In order to run the unit tests, copy the `build_lib/junit.jar` file to either
 `$ANT_HOME/lib/junit.jar` or `~/.ant/lib/junit.jar`.
 
-See [README.test](docs/README.test) for more information.
+See [README.test](docs/README.test.md) for more information.
 
 ## More Information
 
 Visit http://jruby.org for more information.
+
+Visit http://jruby.github.io/jruby for the Maven Site documentation.
 
 ## License
 

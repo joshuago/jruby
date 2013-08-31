@@ -3,46 +3,52 @@ namespace :spec do
   # The specs below this section will run specs, but they will not retrieve
   # the specs they run against.  This is so we can run the similiar mspec
   # runs against a stable and head version of the rubyspecs.
+  
+  desc "Run rubyspecs expected to pass in interpreted mode (version-frozen)"
+  task :ruby => :ci_interpreted_18
+  desc "Run rubyspecs expected to pass in interpreted mode (version-frozen)"
+  task :'ruby:int' => :ci_interpreted_18
+  desc "Run rubyspecs expected to pass in interpreted 1.9 mode (version-frozen)"
+  task :ruby19 => :ci_interpreted_19
+  desc "Run rubyspecs expected to pass in interpreted 1.9 mode (version-frozen)"
+  task :'ruby19:int' => :ci_interpreted_19
+  desc "Run rubyspecs expected to pass in compiled mode (version-frozen)"
+  task :'ruby:jit' => :ci_compiled_18
+  desc "Run rubyspecs expected to pass in compiled mode (version-frozen)"
+  task :'ruby19:jit' => :ci_compiled_19
+  desc "Run rubyspecs expected to pass in precompiled mode (version-frozen)"
+  task :'ruby:aot' => :ci_precompiled_18
+  desc "Run rubyspecs expected to pass in precompiled mode (version-frozen)"
+  task :'ruby19:aot' => :ci_precompiled_19
 
   desc "Run simple set of tests over both 1.8 and 1.9 modes"
   task :short => 'spec:ci_interpreted_18_19'
 
   desc "Run rubyspecs expected to pass (version-frozen)"
-  task :ci => ['spec:fetch_stable_specs', 'spec:tagged_18']
+  task :ci => ['spec:tagged_18']
   task :ci_18 => :ci
 
   desc "Run rubyspecs expected to pass (version-frozen)"
-  task :ci_19 => ['spec:fetch_stable_specs', 'spec:tagged_19']
+  task :ci_19 => ['spec:tagged_19']
 
-  desc "Run rubyspecs expected to pass in interpreted mode (version-frozen)"
-  task :ci_interpreted_18 => ['spec:fetch_stable_specs', 'spec:interpreted_18']
-
-  desc "Run rubyspecs expected to pass in interpreted 1.9 mode (version-frozen)"
-  task :ci_interpreted_19 => ['spec:fetch_stable_specs', 'spec:interpreted_19']
-
-  desc "Run rubyspecs expected to pass in compiled mode (version-frozen)"
-  task :ci_compiled_18 => ['spec:fetch_stable_specs', 'spec:compiled_18']
-
-  desc "Run rubyspecs expected to pass in compiled mode (version-frozen)"
-  task :ci_compiled_19 => ['spec:fetch_stable_specs', 'spec:compiled_19']
-
-  desc "Run rubyspecs expected to pass in precompiled mode (version-frozen)"
-  task :ci_precompiled_18 => ['spec:fetch_stable_specs', 'spec:precompiled_18']
-
-  desc "Run rubyspecs expected to pass in precompiled mode (version-frozen)"
-  task :ci_precompiled_19 => ['spec:fetch_stable_specs', 'spec:precompiled_19']
+  task :ci_interpreted_18 => ['spec:interpreted_18']
+  task :ci_interpreted_19 => ['spec:interpreted_19']
+  task :ci_compiled_18 => ['spec:compiled_18']
+  task :ci_compiled_19 => ['spec:compiled_19']
+  task :ci_precompiled_18 => ['spec:precompiled_18']
+  task :ci_precompiled_19 => ['spec:precompiled_19']
 
   desc "Run rubyspecs expected to pass in interpreted mode (version-frozen, both 1.8 and 1.9)"
-  task :ci_interpreted_18_19 => ['spec:fetch_stable_specs', 'spec:interpreted_18', 'spec:interpreted_19']
+  task :ci_interpreted_18_19 => ['spec:interpreted_18', 'spec:interpreted_19']
 
   desc "Run all the specs including failures (version-frozen)"
-  task :ci_all => ['spec:fetch_stable_specs', 'spec:all_18']
+  task :ci_all => ['spec:all_18']
 
   desc "Run all the specs including failures (version-frozen)"
-  task :ci_all_19 => ['spec:fetch_stable_specs', 'spec:all_19']
+  task :ci_all_19 => ['spec:all_19']
 
   desc "Run all the specs in precompiled mode (version-frozen)"
-  task :ci_all_precompiled_18 => ['spec:fetch_stable_specs', 'spec:all_precompiled_18']
+  task :ci_all_precompiled_18 => ['spec:all_precompiled_18']
 
   desc "Run rubyspecs expected to pass (against latest rubyspec version)"
   task :ci_latest => ['spec:fast_forward_to_rubyspec_head', 'spec:tagged_18']
@@ -82,84 +88,84 @@ namespace :spec do
   desc "Tagged 1.8 specs in interpreted mode only"
   task :interpreted_18 do
     mspec :compile_mode => "OFF", :spec_config => RUBY18_MSPEC_FILE, 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "Tagged 1.8 specs in interpreted (IR) mode only"
   task :interpreted_ir_18 do
     mspec :compile_mode => "OFFIR", :spec_config => RUBY18_MSPEC_FILE, 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "Tagged 1.8 specs in JIT mode only (threshold=0)"
   task :compiled_18 do
     mspec :compile_mode => "JIT", :spec_config => RUBY18_MSPEC_FILE, 
        :jit_threshold => 0, 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "Tagged 1.8 specs in AOT mode only"
   task :precompiled_18 do
     mspec :compile_mode => "FORCE", :spec_config => RUBY18_MSPEC_FILE, 
        :jit_threshold => 0, 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "All 1.8 specs in interpreted mode only"
   task :all_interpreted_18 do
     mspec :compile_mode => "OFF", 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "All 1.8 specs in interpreted IR mode only"
   task :all_interpreted_ir_18 do
     mspec :compile_mode => "OFFIR", 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "All 1.8 specs in JIT mode only (threshold=0)"
   task :all_compiled_18 do
     mspec :compile_mode => "JIT", :jit_threshold => 0, 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "All 1.8 specs in AOT mode only"
   task :all_precompiled_18 do
     mspec :compile_mode => "FORCE", :jit_threshold => 0, 
-       :compat => "1.8"
+       :compat => "1.8", :format => 'd'
   end
 
   desc "Tagged 1.9 specs in interpreted mode only"
   task :interpreted_19 do
     mspec :compile_mode => "OFF", :spec_config => RUBY19_MSPEC_FILE, 
-       :compat => "1.9"
+       :compat => "1.9", :format => 'd'
   end
 
   desc "Tagged 1.9 specs in JIT mode only (threshold=0)"
   task :compiled_19 do
     mspec :compile_mode => "JIT", :spec_config => RUBY19_MSPEC_FILE, 
-       :jit_threshold => 0, :compat => "1.9"
+       :jit_threshold => 0, :compat => "1.9", :format => 'd'
   end
 
   desc "Tagged 1.9 specs in AOT mode only"
   task :precompiled_19 do
     mspec :compile_mode => "FORCE", :spec_config => RUBY19_MSPEC_FILE, 
-       :jit_threshold => 0, :compat => "1.9"
+       :jit_threshold => 0, :compat => "1.9", :format => 'd'
   end
 
   desc "All 1.9 specs in interpreted mode only"
   task :all_interpreted_19 do
-    mspec :compile_mode => "OFF", :compat => "1.9"
+    mspec :compile_mode => "OFF", :compat => "1.9", :format => 'd'
   end
 
   desc "All 1.9 specs in interpreted IR mode only"
   task :all_interpreted_ir_19 do
-    mspec :compile_mode => "OFFIR", :compat => "1.9"
+    mspec :compile_mode => "OFFIR", :compat => "1.9", :format => 'd'
   end
 
   desc "All 1.9 specs in JIT mode only (threshold=0)"
   task :all_compiled_19 do
-    mspec :compile_mode => "JIT", :jit_threshold => 0, :compat => "1.9"
+    mspec :compile_mode => "JIT", :jit_threshold => 0, :compat => "1.9", :format => 'd'
   end
 
   # Parameterized rubyspec runs for e.g. TravisCI

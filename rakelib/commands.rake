@@ -20,20 +20,15 @@ end
 def initialize_paths
   self.class.const_set(:JVM_MODEL, jvm_model)
 
-  ant.path(:id => "build.classpath") do
-    fileset :dir => BUILD_LIB_DIR, :includes => "*.jar"
-  end
-
   ant.path(:id => "jruby.execute.classpath") do
-    path :refid => "build.classpath"
-    pathelement :path => JRUBY_CLASSES_DIR
+    pathelement :path => "lib/jruby.jar"
   end
 
   ant.path(:id => "test.class.path") do
     pathelement :path => File.join(BUILD_LIB_DIR, 'junit.jar')
-    pathelement :path => File.join(BUILD_LIB_DIR, 'livetribe-jsr223-2.0.6.jar')
+    pathelement :path => File.join(BUILD_LIB_DIR, 'livetribe-jsr223.jar')
     pathelement :path => File.join(BUILD_LIB_DIR, 'bsf.jar')
-    pathelement :path => File.join(BUILD_LIB_DIR, 'commons-logging-1.1.1.jar')
+    pathelement :path => File.join(BUILD_LIB_DIR, 'commons-logging.jar')
     #  pathelement :path => "${java.class.path}"/>
     pathelement :path => File.join(LIB_DIR, 'jruby.jar')
     pathelement :location => TEST_CLASSES_DIR
@@ -53,8 +48,7 @@ def jruby(java_options = {}, &code)
   puts "JAVA options: #{java_options.inspect}"
 
   ant.java(java_options) do
-    classpath :refid => 'build.classpath'
-    classpath :path => JRUBY_CLASSES_DIR
+    classpath :path => 'lib/jruby.jar'
     jvmarg :line => JVM_MODEL if JVM_MODEL
     sysproperty :key => "jruby.home", :value => BASE_DIR
     instance_eval(&code) if block_given?
